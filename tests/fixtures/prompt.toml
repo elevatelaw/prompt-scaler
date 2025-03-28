@@ -1,0 +1,12 @@
+developer = "Answer the joke with a short, appropriate punchline."
+
+[[messages]]
+user = "Why did the scarecrow win an award?"
+assistant.punchline = "Because he was outstanding in his field."
+
+[[messages]]
+user = "I’m reading a book on anti-gravity."
+assistant.punchline = "It’s impossible to put down."
+
+[[messages]]
+user = "{{joke}}"
