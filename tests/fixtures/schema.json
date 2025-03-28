@@ -1,0 +1,15 @@
+{
+  "description": "Response to a joke.",
+  "properties": {
+    "punchline": {
+      "description": "The punchline of the joke.",
+      "title": "Punchline",
+      "type": "string"
+    }
+  },
+  "required": [
+    "punchline"
+  ],
+  "title": "JokeResponse",
+  "type": "object"
+}
