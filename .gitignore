@@ -1,2 +1,4 @@
 /target
 /.venv
+/.env
+/.env.*

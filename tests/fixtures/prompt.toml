@@ -1,4 +1,6 @@
-developer = "Answer the joke with a short, appropriate punchline."
+developer = """
+Answer the joke with a short, appropriate punchline.
+"""
 
 [[messages]]
 user = "Why did the scarecrow win an award?"
