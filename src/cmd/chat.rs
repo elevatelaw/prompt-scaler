@@ -2,8 +2,12 @@
 
 use std::sync::Arc;
 
+use async_openai::{
+    Client, config::OpenAIConfig, error::OpenAIError, types::CreateChatCompletionResponse,
+};
 use futures::StreamExt;
 use keen_retry::{ExponentialJitter, RetryResult};
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tracing::field;
@@ -18,6 +22,7 @@ use crate::{
 #[instrument(level = "debug", skip_all)]
 pub async fn cmd_chat(
     input_path: Option<&Path>,
+    job_count: usize,
     prompt_path: &Path,
     schema_path: &Path,
     output_path: Option<&Path>,
@@ -34,7 +39,17 @@ pub async fn cmd_chat(
     let schema = read_json_or_toml::<Value>(schema_path).await?;
     let validator = jsonschema::async_validator_for(&schema).await?;
 
-    let state = Arc::new(ProcessorState { prompt, validator });
+    // Create our OpenAI client.
+    let client = Client::new();
+
+    // Process each record in the input stream, using
+    // `futures::StreamExt::buffered` to limit the number of concurrent jobs.
+    let state = Arc::new(ProcessorState {
+        client,
+        prompt,
+        schema,
+        validator,
+    });
     let futures = Box::into_pin(input)
         .map(move |map| {
             let state = state.clone();
@@ -44,7 +59,7 @@ pub async fn cmd_chat(
             }
         })
         .boxed();
-    let output = futures.buffered(8).boxed();
+    let output = futures.buffered(job_count).boxed();
     write_output(output_path, output).await?;
     Ok(())
 }
@@ -52,8 +67,14 @@ pub async fn cmd_chat(
 /// Shared processor state.
 #[derive(Debug)]
 struct ProcessorState {
+    /// Our OpenAI client.
+    client: Client<OpenAIConfig>,
+
     /// The prompt to use.
     prompt: ChatPrompt,
+
+    /// Our JSON Schema.
+    schema: Value,
 
     /// Our JSON Schema validator.
     validator: jsonschema::Validator,
@@ -142,17 +163,81 @@ async fn process_data(
         Ok(prompt) => prompt,
         Err(error) => {
             return RetryResult::Fatal {
-                input: (attempt_number, state, bindings),
+                input: (attempt_number + 1, state, bindings),
                 error,
             };
         }
     };
     debug!(%prompt, "Prompt");
 
-    // Placeholder implementation.
-    let response = json!({
-        "punchline": "To get to the other side!",
-    });
+    // Call OpenAI.
+    let chat_result = state
+        .client
+        .chat()
+        .create_byot(json!({
+            "model": "gpt-4o-mini",
+            "store": false,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": &state.schema.get("title"),
+                    "schema": &state.schema,
+                    "strict": true,
+                },
+            },
+            "messages": prompt,
+        }))
+        .await;
+    let response = match chat_result {
+        Ok(response) => {
+            let parse_result =
+                serde_json::from_value::<CreateChatCompletionResponse>(response);
+            match parse_result {
+                Ok(response) => response,
+                Err(error) => {
+                    return RetryResult::Fatal {
+                        input: (attempt_number + 1, state, bindings),
+                        error: anyhow::Error::from(error)
+                            .context("Error parsing OpenAI response"),
+                    };
+                }
+            }
+        }
+        Err(error) if is_known_transient(&error) => {
+            return RetryResult::Transient {
+                input: (attempt_number + 1, state, bindings),
+                error: anyhow::Error::from(error).context("Error calling OpenAI"),
+            };
+        }
+        Err(error) => {
+            return RetryResult::Fatal {
+                input: (attempt_number, state, bindings),
+                error: anyhow::Error::from(error).context("Error calling OpenAI"),
+            };
+        }
+    };
+
+    // Get the content from our response & parse as JSON.
+    let content = match response.choices.first() {
+        Some(choice) => &choice.message.content.as_deref().unwrap_or_default(),
+        None => {
+            return RetryResult::Fatal {
+                input: (attempt_number + 1, state, bindings),
+                error: anyhow::anyhow!("No choices in OpenAI response"),
+            };
+        }
+    };
+    let response = match serde_json::from_str::<Value>(content) {
+        Ok(response) => response,
+        Err(error) => {
+            return RetryResult::Fatal {
+                input: (attempt_number + 1, state, bindings),
+                error: anyhow::Error::from(error)
+                    .context("Error parsing OpenAI response content"),
+            };
+        }
+    };
+    debug!(%content, "Response");
 
     // Validate the result using JSON Schema. Schema validation failure is
     // treated as a transient retry failure, because it may be caused by a dodgy
@@ -173,5 +258,30 @@ async fn process_data(
             input: (attempt_number.saturating_add(1), state, bindings),
             error,
         },
+    }
+}
+
+/// Is this error likely to be transient?
+///
+/// By default, we assume errors are not transient, until they're been observed
+/// in the wild, investigated and determined to be transient. The prevents us
+/// from doing large numbers of retries with exponential backoff on errors that
+/// will never resolve.
+fn is_known_transient(error: &OpenAIError) -> bool {
+    match error {
+        OpenAIError::Reqwest(error) => {
+            if let Some(status) = error.status() {
+                let transient_failures = [
+                    StatusCode::TOO_MANY_REQUESTS,
+                    StatusCode::BAD_GATEWAY,
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    StatusCode::GATEWAY_TIMEOUT,
+                ];
+                transient_failures.contains(&status)
+            } else {
+                false
+            }
+        }
+        _ => false,
     }
 }

@@ -55,7 +55,7 @@ impl RenderTemplate for ChatPrompt {
         for message in &self.messages {
             messages.extend(message.render_template(handlebars, bindings)?);
         }
-        Ok(json!({ "messages": messages }))
+        Ok(Value::Array(messages))
     }
 }
 

@@ -12,7 +12,17 @@ mod prompt;
 
 /// Run LLM prompts at scale.
 #[derive(Debug, Parser)]
-#[clap(version, author)]
+#[clap(
+    version,
+    author,
+    after_help = r#"
+Environment Variables:
+  - OPENAI_API_BASE (optional): Override the server URL.
+  - OPENAI_API_KEY: The OpenAI key to use.
+
+  These variables may be set in a standard `.env` file.
+"#
+)]
 struct Opts {
     #[clap(subcommand)]
     subcmd: Cmd,
@@ -25,6 +35,10 @@ enum Cmd {
     Chat {
         /// Input data, in CSV or JSONL format. Defaults to standard input.
         input_path: Option<PathBuf>,
+
+        /// Max number of requests to process at a time.
+        #[clap(short = 'j', long = "jobs", default_value = "8")]
+        job_count: usize,
 
         /// Prompt, in TOML or JSON format.
         #[clap(short = 'p', long = "prompt")]
@@ -63,6 +77,9 @@ async fn main() -> Result<()> {
 /// Our real entry point.
 #[instrument(level = "debug", name = "main")]
 async fn real_main() -> Result<()> {
+    // Load environment variables from a `.env` file, if it exists.
+    dotenv::dotenv().ok();
+
     // Parse command-line arguments.
     let opts = Opts::parse();
     debug!("Parsed options: {:?}", opts);
@@ -71,12 +88,14 @@ async fn real_main() -> Result<()> {
     match &opts.subcmd {
         Cmd::Chat {
             input_path,
+            job_count,
             prompt_path,
             schema_path,
             output_path,
         } => {
             cmd::chat::cmd_chat(
                 input_path.as_deref(),
+                *job_count,
                 prompt_path,
                 schema_path,
                 output_path.as_deref(),
