@@ -9,6 +9,7 @@ mod cmd;
 mod io;
 mod prelude;
 mod prompt;
+mod retry;
 
 /// Run LLM prompts at scale.
 #[derive(Debug, Parser)]
@@ -39,6 +40,10 @@ enum Cmd {
         /// Max number of requests to process at a time.
         #[clap(short = 'j', long = "jobs", default_value = "8")]
         job_count: usize,
+
+        /// Model to use by default.
+        #[clap(short = 'm', long, default_value = "gpt-4o-mini")]
+        model: String,
 
         /// Prompt, in TOML or JSON format.
         #[clap(short = 'p', long = "prompt")]
@@ -89,6 +94,7 @@ async fn real_main() -> Result<()> {
         Cmd::Chat {
             input_path,
             job_count,
+            model,
             prompt_path,
             schema_path,
             output_path,
@@ -96,6 +102,7 @@ async fn real_main() -> Result<()> {
             cmd::chat::cmd_chat(
                 input_path.as_deref(),
                 *job_count,
+                model,
                 prompt_path,
                 schema_path,
                 output_path.as_deref(),

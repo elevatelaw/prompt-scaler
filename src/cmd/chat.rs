@@ -1,13 +1,14 @@
 //! The `chat` subcommand.
 
-use std::sync::Arc;
-
-use async_openai::{
-    Client, config::OpenAIConfig, error::OpenAIError, types::CreateChatCompletionResponse,
+use std::{
+    iter,
+    sync::{Arc, Mutex},
 };
+
+use anyhow::anyhow;
+use async_openai::{Client, config::OpenAIConfig, types::CreateChatCompletionResponse};
 use futures::StreamExt;
-use keen_retry::{ExponentialJitter, RetryResult};
-use reqwest::StatusCode;
+use keen_retry::{ExponentialJitter, ResolvedResult, RetryResult};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tracing::field;
@@ -16,6 +17,10 @@ use crate::{
     io::{JsonObject, read_json_or_toml, read_jsonl_or_csv, write_output},
     prelude::*,
     prompt::ChatPrompt,
+    retry::{
+        IntoRetryResult as _, is_known_openai_transient, retry_result_fatal,
+        retry_result_ok, try_with_retry_result,
+    },
 };
 
 /// Run the `chat` subcommand.
@@ -23,6 +28,7 @@ use crate::{
 pub async fn cmd_chat(
     input_path: Option<&Path>,
     job_count: usize,
+    model: &str,
     prompt_path: &Path,
     schema_path: &Path,
     output_path: Option<&Path>,
@@ -46,6 +52,7 @@ pub async fn cmd_chat(
     // `futures::StreamExt::buffered` to limit the number of concurrent jobs.
     let state = Arc::new(ProcessorState {
         client,
+        model: model.to_string(),
         prompt,
         schema,
         validator,
@@ -70,6 +77,9 @@ struct ProcessorState {
     /// Our OpenAI client.
     client: Client<OpenAIConfig>,
 
+    /// The model to use.
+    model: String,
+
     /// The prompt to use.
     prompt: ChatPrompt,
 
@@ -90,6 +100,13 @@ async fn process_record(
     let id = input_record.id.clone();
     tracing::Span::current().record("id", field::display(&id));
 
+    // Render our prompt.
+    let prompt = state
+        .prompt
+        .render_prompt(&input_record.template_bindings)
+        .context("Error rendering prompt")?;
+    debug!(%prompt, "Prompt");
+
     // If we have a transient failure, back off exponentially.
     let jitter = ExponentialJitter::FromBackoffRange {
         backoff_range_millis: 1..=30_000,
@@ -98,10 +115,11 @@ async fn process_record(
     };
 
     // Do our real work, retrying as specified.
-    let response = process_data(0, state, input_record.template_bindings)
+    let attempt_number = Mutex::new(0);
+    let result = process_data(&attempt_number, state.as_ref(), &prompt)
         .await
-        .retry_with_async(move |(attempt_number, state, bindings)| async move {
-            process_data(attempt_number, state, bindings).await
+        .retry_with_async(|_| async {
+            process_data(&attempt_number, state.as_ref(), &prompt).await
         })
         .with_exponential_jitter(|| jitter)
         .await
@@ -118,10 +136,47 @@ async fn process_record(
                 retry_errors_list.len(),
                 keen_retry::loggable_retry_errors(retry_errors_list)
             )
-        })
-        .into_result()?;
+        });
 
-    let output_record = OutputRecord { id, response };
+    let output_record = match result {
+        ResolvedResult::Ok { output, .. } => OutputRecord {
+            id,
+            response: Some(output),
+            errors: vec![],
+        },
+        ResolvedResult::Fatal { error, .. } => OutputRecord {
+            id,
+            response: None,
+            errors: vec![error.to_string()],
+        },
+        ResolvedResult::Recovered {
+            output,
+            retry_errors,
+            ..
+        } => OutputRecord {
+            id,
+            response: Some(output),
+            errors: retry_errors.into_iter().map(|e| e.to_string()).collect(),
+        },
+        ResolvedResult::GivenUp {
+            retry_errors,
+            fatal_error,
+            ..
+        }
+        | ResolvedResult::Unrecoverable {
+            retry_errors,
+            fatal_error,
+            ..
+        } => OutputRecord {
+            id,
+            response: None,
+            errors: retry_errors
+                .into_iter()
+                .map(|e| e.to_string())
+                .chain(iter::once(fatal_error.to_string()))
+                .collect(),
+        },
+    };
     Ok(serde_json::to_value(&output_record)?
         .as_object()
         .expect("output record should be an object")
@@ -147,141 +202,92 @@ struct OutputRecord {
     /// The record's unique identifier.
     id: Value,
 
-    /// The response from the LLM.
-    response: Value,
+    /// The response from the LLM. If this is present, the request succeeded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response: Option<Value>,
+
+    /// Any errors that occurred. Some errors may be present, even on success,
+    /// if the LLM recovered from a transient error.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    errors: Vec<String>,
 }
 
 /// Process the data portion of a record.
-#[instrument(level = "debug", skip(state, bindings))]
+#[instrument(level = "debug", skip(state, prompt))]
 async fn process_data(
-    attempt_number: u64,
-    state: Arc<ProcessorState>,
-    bindings: JsonObject,
-) -> RetryResult<(), (u64, Arc<ProcessorState>, JsonObject), Value, anyhow::Error> {
-    // Render our prompt.
-    let prompt = match state.prompt.render_prompt(&bindings) {
-        Ok(prompt) => prompt,
-        Err(error) => {
-            return RetryResult::Fatal {
-                input: (attempt_number + 1, state, bindings),
-                error,
-            };
-        }
+    attempt_number: &Mutex<u64>,
+    state: &ProcessorState,
+    prompt: &Value,
+) -> RetryResult<(), (), Value, anyhow::Error> {
+    // Increment our attempt number.
+    let _current_attempt = {
+        let mut attempt_number = attempt_number.lock().expect("lock poisoned");
+        let current_attempt = *attempt_number;
+        *attempt_number += 1;
+        current_attempt
     };
-    debug!(%prompt, "Prompt");
+
+    // Create our request.
+    let chat_request = json!({
+        "model": &state.model,
+        "store": false,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": &state.schema.get("title"),
+                "schema": &state.schema,
+                "strict": true,
+            },
+        },
+        "messages": prompt,
+    });
+    trace!(?chat_request, "OpenAI request");
 
     // Call OpenAI.
-    let chat_result = state
-        .client
-        .chat()
-        .create_byot(json!({
-            "model": "gpt-4o-mini",
-            "store": false,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": &state.schema.get("title"),
-                    "schema": &state.schema,
-                    "strict": true,
-                },
-            },
-            "messages": prompt,
-        }))
-        .await;
-    let response = match chat_result {
-        Ok(response) => {
-            let parse_result =
-                serde_json::from_value::<CreateChatCompletionResponse>(response);
-            match parse_result {
-                Ok(response) => response,
-                Err(error) => {
-                    return RetryResult::Fatal {
-                        input: (attempt_number + 1, state, bindings),
-                        error: anyhow::Error::from(error)
-                            .context("Error parsing OpenAI response"),
-                    };
-                }
-            }
-        }
-        Err(error) if is_known_transient(&error) => {
-            return RetryResult::Transient {
-                input: (attempt_number + 1, state, bindings),
-                error: anyhow::Error::from(error).context("Error calling OpenAI"),
-            };
-        }
-        Err(error) => {
-            return RetryResult::Fatal {
-                input: (attempt_number, state, bindings),
-                error: anyhow::Error::from(error).context("Error calling OpenAI"),
-            };
-        }
-    };
+    let chat_result = try_with_retry_result!(
+        state
+            .client
+            .chat()
+            .create_byot(chat_request)
+            .await
+            .into_retry_result(is_known_openai_transient)
+    );
+    trace!(?chat_result, "OpenAI response");
+    let response = try_with_retry_result!(
+        serde_json::from_value::<CreateChatCompletionResponse>(chat_result)
+            .context("Error parsing OpenAI response")
+            .into_fatal()
+    );
 
     // Get the content from our response & parse as JSON.
     let content = match response.choices.first() {
         Some(choice) => &choice.message.content.as_deref().unwrap_or_default(),
         None => {
-            return RetryResult::Fatal {
-                input: (attempt_number + 1, state, bindings),
-                error: anyhow::anyhow!("No choices in OpenAI response"),
-            };
+            return retry_result_fatal(anyhow!("No choices in OpenAI response"));
         }
     };
-    let response = match serde_json::from_str::<Value>(content) {
-        Ok(response) => response,
-        Err(error) => {
-            return RetryResult::Fatal {
-                input: (attempt_number + 1, state, bindings),
-                error: anyhow::Error::from(error)
-                    .context("Error parsing OpenAI response content"),
-            };
-        }
-    };
+    let response = try_with_retry_result!(
+        serde_json::from_str::<Value>(content)
+            .context("Error parsing OpenAI response content")
+            // If we didn't get JSON here, it's because the model didn't
+            // generate JSON. So give it another chance.
+            .into_transient()
+    );
     debug!(%content, "Response");
 
     // Validate the result using JSON Schema. Schema validation failure is
     // treated as a transient retry failure, because it may be caused by a dodgy
     // implementation of `response_format` by a specific LLM endpoint.
-    let validation_result = state
-        .validator
-        .validate(&response)
-        .map_err(|err| err.to_owned())
-        .with_context(|| format!("Failed to validate {}:", response));
-    match validation_result {
-        Ok(()) => RetryResult::Ok {
-            reported_input: (),
-            output: response,
-        },
-        Err(error) => RetryResult::Transient {
-            // Pass these through to the next retry. We need to do this the hard
-            // way because [`keen_retry`] doesn't want us to use `clone()`.
-            input: (attempt_number.saturating_add(1), state, bindings),
-            error,
-        },
-    }
-}
+    try_with_retry_result!(
+        state
+            .validator
+            .validate(&response)
+            .map_err(|err| err.to_owned())
+            .with_context(|| format!("Failed to validate {}:", response))
+            // Invalid JSON means the model didn't follow the schema. Let it try
+            // again.
+            .into_transient()
+    );
 
-/// Is this error likely to be transient?
-///
-/// By default, we assume errors are not transient, until they're been observed
-/// in the wild, investigated and determined to be transient. The prevents us
-/// from doing large numbers of retries with exponential backoff on errors that
-/// will never resolve.
-fn is_known_transient(error: &OpenAIError) -> bool {
-    match error {
-        OpenAIError::Reqwest(error) => {
-            if let Some(status) = error.status() {
-                let transient_failures = [
-                    StatusCode::TOO_MANY_REQUESTS,
-                    StatusCode::BAD_GATEWAY,
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    StatusCode::GATEWAY_TIMEOUT,
-                ];
-                transient_failures.contains(&status)
-            } else {
-                false
-            }
-        }
-        _ => false,
-    }
+    retry_result_ok(response)
 }
