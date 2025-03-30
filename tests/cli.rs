@@ -20,6 +20,7 @@ fn test_version() {
 }
 
 #[test]
+#[ignore = "Needs LLM credentials"]
 fn test_chat_jsonl() {
     cmd()
         .arg("chat")
@@ -33,6 +34,7 @@ fn test_chat_jsonl() {
 }
 
 #[test]
+#[ignore = "Needs LLM credentials"]
 fn test_chat_csv() {
     cmd()
         .arg("chat")
