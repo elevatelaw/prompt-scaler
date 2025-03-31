@@ -52,7 +52,7 @@ For example input and output files, see:
 
 Let's say we have three images of various beings holding signs:
 
-<img alt='Turtle holding sign saying "Go!"' src='tests/fixtures/images/turtle.jpg' style="max-width:128px"> <img alt='Capybara holding sign saying "HELLO, WORLD!"' src='tests/fixtures/images/capybara.jpg' style="max-width:128px"> <img alt='Alien holding sign saying "TAKE US TO YOUR LLMS, PLEASE!"' src='tests/fixtures/images/alien.jpg' style="max-width:128px">
+<img alt='Turtle holding sign saying "Go!"' src='tests/fixtures/images/turtle.jpg' width="128px"> <img alt='Capybara holding sign saying "HELLO, WORLD!"' src='tests/fixtures/images/capybara.jpg' width="128px"> <img alt='Alien holding sign saying "TAKE US TO YOUR LLMS, PLEASE!"' src='tests/fixtures/images/alien.jpg' width="128px">
 
 We'll hold onto the turtle an example image, and create a CSV file describing the other two:
 
