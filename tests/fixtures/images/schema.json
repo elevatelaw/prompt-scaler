@@ -1,0 +1,21 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": false,
+    "description": "Information extracted from an image.",
+    "properties": {
+        "sign_holder": {
+            "description": "A one-word description of the entity holding the sign.",
+            "type": "string"
+        },
+        "sign_text": {
+            "description": "Text appearing on the sign in the image.",
+            "type": "string"
+        }
+    },
+    "required": [
+        "sign_holder",
+        "sign_text"
+    ],
+    "type": "object"
+}
+
