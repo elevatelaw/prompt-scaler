@@ -46,7 +46,14 @@ pub async fn cmd_chat(
     let validator = jsonschema::async_validator_for(&schema).await?;
 
     // Create our OpenAI client.
-    let client = Client::new();
+    let mut client_config = OpenAIConfig::new();
+    if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+        client_config = client_config.with_api_key(api_key);
+    }
+    if let Ok(api_base) = std::env::var("OPENAI_API_BASE") {
+        client_config = client_config.with_api_base(api_base);
+    }
+    let client = Client::with_config(client_config);
 
     // Process each record in the input stream, using
     // `futures::StreamExt::buffered` to limit the number of concurrent jobs.
@@ -138,45 +145,7 @@ async fn process_record(
             )
         });
 
-    let output_record = match result {
-        ResolvedResult::Ok { output, .. } => OutputRecord {
-            id,
-            response: Some(output),
-            errors: vec![],
-        },
-        ResolvedResult::Fatal { error, .. } => OutputRecord {
-            id,
-            response: None,
-            errors: vec![error.to_string()],
-        },
-        ResolvedResult::Recovered {
-            output,
-            retry_errors,
-            ..
-        } => OutputRecord {
-            id,
-            response: Some(output),
-            errors: retry_errors.into_iter().map(|e| e.to_string()).collect(),
-        },
-        ResolvedResult::GivenUp {
-            retry_errors,
-            fatal_error,
-            ..
-        }
-        | ResolvedResult::Unrecoverable {
-            retry_errors,
-            fatal_error,
-            ..
-        } => OutputRecord {
-            id,
-            response: None,
-            errors: retry_errors
-                .into_iter()
-                .map(|e| e.to_string())
-                .chain(iter::once(fatal_error.to_string()))
-                .collect(),
-        },
-    };
+    let output_record = OutputRecord::from_resolved_result(id, result);
     Ok(serde_json::to_value(&output_record)?
         .as_object()
         .expect("output record should be an object")
@@ -210,6 +179,54 @@ struct OutputRecord {
     /// if the LLM recovered from a transient error.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     errors: Vec<String>,
+}
+
+impl OutputRecord {
+    /// Create a new output record from a [`ResolvedResult`].
+    fn from_resolved_result(
+        id: Value,
+        result: ResolvedResult<(), (), Value, anyhow::Error>,
+    ) -> Self {
+        match result {
+            ResolvedResult::Ok { output, .. } => OutputRecord {
+                id,
+                response: Some(output),
+                errors: vec![],
+            },
+            ResolvedResult::Fatal { error, .. } => OutputRecord {
+                id,
+                response: None,
+                errors: vec![error.to_string()],
+            },
+            ResolvedResult::Recovered {
+                output,
+                retry_errors,
+                ..
+            } => OutputRecord {
+                id,
+                response: Some(output),
+                errors: retry_errors.into_iter().map(|e| e.to_string()).collect(),
+            },
+            ResolvedResult::GivenUp {
+                retry_errors,
+                fatal_error,
+                ..
+            }
+            | ResolvedResult::Unrecoverable {
+                retry_errors,
+                fatal_error,
+                ..
+            } => OutputRecord {
+                id,
+                response: None,
+                errors: retry_errors
+                    .into_iter()
+                    .map(|e| e.to_string())
+                    .chain(iter::once(fatal_error.to_string()))
+                    .collect(),
+            },
+        }
+    }
 }
 
 /// Process the data portion of a record.

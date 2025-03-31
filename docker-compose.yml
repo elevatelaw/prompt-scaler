@@ -1,0 +1,22 @@
+# Docker Compose file for running a LiteLLM proxy.
+
+name: prompt_scaler_proxy
+
+services:
+  litellm:
+    image: litellm/litellm:latest
+    command:
+      - --config
+      - /app/config.yaml
+      - --detailed_debug
+    container_name: litellm
+    ports:
+      - "4000:4000"
+    environment:
+      # OpenAI
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # Anthropic
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    volumes:
+      - ./litellm_config.yml:/app/config.yaml
+    #restart: unless-stopped
