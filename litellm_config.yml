@@ -1,0 +1,19 @@
+# LiteLLM configuration as test proxy.
+model_list:
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: claude-3-5-haiku-latest
+    litellm_params:
+      model: anthropic/claude-3-5-haiku-latest
+      api_key: os.environ/ANTHROPIC_API_KEY
+      # Schemas seem to be broken.
+  - model_name: gemma3:12b
+    litellm_params:
+      model: ollama/gemma3:12b
+      api_base: http://172.17.0.1:11434
+      ssl_verify: false
+
+general_settings:
+  master_key: sk-1234
