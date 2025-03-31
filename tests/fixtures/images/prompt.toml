@@ -1,0 +1,24 @@
+# Place the actual instructions in the developer message.
+#
+# The schema will also be provided to the model automatically.
+developer = """
+Extract the specified information from the supplied images.
+"""
+
+# Example of what we want, using the turtle image.
+#
+# Including 1-3 examples will often produce much better output.
+[[messages]]
+# Example input.
+user = ""
+images = ["{{image-data-url 'tests/fixtures/images/turtle.jpg'}}"]
+
+# Expected output.
+assistant.sign_text = "Go!"
+assistant.sign_holder = "Turtle"
+
+# The prompt which contains our actual input.
+[[messages]]
+# Real input.
+user = ""
+images = ["{{image-data-url path}}"]

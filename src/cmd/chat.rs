@@ -251,14 +251,14 @@ async fn process_data(
         "response_format": {
             "type": "json_schema",
             "json_schema": {
-                "name": &state.schema.get("title"),
+                "name": &state.schema.get("title").cloned().unwrap_or_else(|| json!("ResponseFormat")),
                 "schema": &state.schema,
                 "strict": true,
             },
         },
         "messages": prompt,
     });
-    trace!(?chat_request, "OpenAI request");
+    trace!(%chat_request, "OpenAI request");
 
     // Call OpenAI.
     let chat_result = try_with_retry_result!(
@@ -269,7 +269,7 @@ async fn process_data(
             .await
             .into_retry_result(is_known_openai_transient)
     );
-    trace!(?chat_result, "OpenAI response");
+    trace!(%chat_result, "OpenAI response");
     let response = try_with_retry_result!(
         serde_json::from_value::<CreateChatCompletionResponse>(chat_result)
             .context("Error parsing OpenAI response")

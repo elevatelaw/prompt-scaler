@@ -6,6 +6,10 @@
 #
 # Run `just --list` to see all the tasks in this file.
 
-# Export our JSON Schema from Python to JSON.
-update-schema:
+# Export our JSON Schemas from Python and TypeScript to JSON.
+update-schemas:
     uv run tests/fixtures/schema.py
+    npx typescript-json-schema \
+        --required --strictNullTypes --noExtraProps \
+        -o tests/fixtures/images/schema.json \
+        tests/fixtures/images/schema.ts ImageInfo
