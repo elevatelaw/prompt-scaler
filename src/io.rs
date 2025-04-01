@@ -27,6 +27,14 @@ use tokio_stream::{Stream, wrappers::LinesStream};
 
 use crate::prelude::*;
 
+/// A type alias for a boxed future. This is used to make it easier to work with
+/// with complex futures.
+pub type BoxedFuture<Output> = Pin<Box<dyn Future<Output = Output> + Send>>;
+
+/// A type alias for a boxed stream. This is used to make it easier to work
+/// streams that return complex types.
+pub type BoxedStream<Item> = Pin<Box<dyn Stream<Item = Item> + Send>>;
+
 /// A smart async reader that uses [`AsyncPeekable`] to detect whether the input is JSON
 /// or JSONL, or something else.
 pub struct SmartReader {
@@ -144,28 +152,27 @@ where
 /// A JSON Object value, without the surrounding [`Value::Object`] wrapper.
 pub type JsonObject = Map<String, Value>;
 
-/// A stream of [`JsonObject`] values.
-pub type JsonObjectStream = Box<dyn Stream<Item = Result<JsonObject>> + Send + 'static>;
+/// A stream of [`serde_json::Value`] values.
+pub type JsonStream = BoxedStream<Result<Value>>;
 
 /// Read JSONL or CSV from a file or stdin.
 ///
 /// This function returns an async [`Stream`] of JSON [`Map`] objects.
-pub async fn read_jsonl_or_csv(path: Option<&Path>) -> Result<JsonObjectStream> {
+pub async fn read_jsonl_or_csv(path: Option<&Path>) -> Result<JsonStream> {
     let reader = SmartReader::new_from_path_or_stdin(path).await?;
     let description = Arc::new(reader.description.clone());
     if reader.is_json_like() {
         let lines = LinesStream::new(reader.lines());
-        Ok(Box::new(lines.then(move |line| {
+        Ok(Box::pin(lines.then(move |line| {
             let description = description.clone();
             async move {
                 let line = line?;
-                let map: Map<String, Value> =
-                    serde_json::from_str(&line).with_context(|| {
-                        format!(
-                            "Failed to parse JSON from line in {:?}: {:?}",
-                            description, line
-                        )
-                    })?;
+                let map: Value = serde_json::from_str(&line).with_context(|| {
+                    format!(
+                        "Failed to parse JSON from line in {:?}: {:?}",
+                        description, line
+                    )
+                })?;
                 Ok(map)
             }
         })))
@@ -180,7 +187,7 @@ pub async fn read_jsonl_or_csv(path: Option<&Path>) -> Result<JsonObjectStream> 
                 })?
                 .to_owned(),
         );
-        Ok(Box::new(reader.into_records().then(move |record| {
+        Ok(Box::pin(reader.into_records().then(move |record| {
             let description = description.clone();
             let headers = headers.clone();
             async move {
@@ -194,7 +201,7 @@ pub async fn read_jsonl_or_csv(path: Option<&Path>) -> Result<JsonObjectStream> 
                         (header.to_owned(), Value::String(value.to_owned()))
                     })
                     .collect();
-                Ok(map)
+                Ok(Value::Object(map))
             }
         })))
     }
@@ -216,10 +223,7 @@ async fn create_writer(
 }
 
 /// Write a stream of JSON [`Map`] objects to either standard output or a file.
-pub async fn write_output(
-    path: Option<&Path>,
-    stream: Pin<JsonObjectStream>,
-) -> Result<()> {
+pub async fn write_output(path: Option<&Path>, stream: JsonStream) -> Result<()> {
     let mut writer = BufWriter::new(create_writer(path).await?);
     pin_mut!(stream);
     while let Some(map) = stream.next().await {
