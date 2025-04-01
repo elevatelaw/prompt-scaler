@@ -15,6 +15,19 @@ The following variables can be specified in the environment, or using a `.env` f
 - `OPENAI_API_BASE` (optional): Base URL for an alternate implementation of the OpenAI API, for use with tools like LiteLLM or Ollama.
 - `RUST_LOG` (optional): Set to `prompt_scaler=debug,warn` or `prompt_scaler=trace,warn` to produce detailed logs. This uses the [`env-logger` syntax](https://docs.rs/env_logger/latest/env_logger/).
 
+## Tested models
+
+We have automated regression tests showing that we can talk to the following models:
+
+| Vendor | Model | Via | Text Input | Image Input | JSON Output |
+| --|--|--|--|--|--|
+| OpenAI | gpt-4o-mini | Direct, LiteLLM | ✅ | ✅ | ✅ |
+| Google | gemini-2.0-flash | LiteLLM | ✅ | ✅ | ✅ |
+| Anthropic | claude-3-5-haiku-20241022 | LiteLLM | ✅ | ✅ | ✅ |
+| Google (open) | gemma3:4b | Ollama | ✅ | ✅ | ✅ |
+
+We recommend the use [LiteLLM](https://www.litellm.ai/) to talk any API besides OpenAI and Ollama. LiteLLM currently appears to have poor Ollama support, but Ollama's native server endpoint works fine on its own.
+
 ## Example usage
 
 `prompt-scaler` is invoked as a command-line tool:
