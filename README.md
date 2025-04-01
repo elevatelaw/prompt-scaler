@@ -33,9 +33,8 @@ We recommend the use [LiteLLM](https://www.litellm.ai/) to talk any API besides 
 `prompt-scaler` is invoked as a command-line tool:
 
 ```sh
-prompt-scaler chat tests/fixtures/input.csv \
-    --prompt tests/fixtures/prompt.toml \
-    --schema tests/fixtures/schema.json \
+prompt-scaler chat tests/fixtures/texts/input.csv \
+    --prompt tests/fixtures/texts/prompt.toml \
     --model gpt-4o-mini \
     --out output.json
 ```
@@ -48,18 +47,50 @@ road,Why did the chicken cross the road?
 doctor,Why did the chicken go to the doctor?
 ```
 
-...plus an appropriate prompt and schema, this will produce [JSON Lines](https://jsonlines.org/) (JSONL) output like:
+...plus an appropriate prompt:
+
+```toml
+# Put the actual question in the developer message (aka "system message").
+developer = """
+Answer the joke with a short, appropriate punchline.
+"""
+
+# Define the schema for the response.
+[response_schema]
+description = "The response to a joke."
+
+[response_schema.properties.punchline]
+description = "The punchline of the joke."
+
+# Provide 0 or more example messages and responses.
+[[messages]]
+user.text = "Why did the scarecrow win an award?"
+
+[[messages]]
+assistant.json.punchline = "Because he was outstanding in his field."
+
+[[messages]]
+user.text = "I’m reading a book on anti-gravity."
+
+[[messages]]
+assistant.json.punchline = "It’s impossible to put down."
+
+# Finally, provide the actual input joke.
+[[messages]]
+user.text = "{{joke}}"
+```
+
+...this will produce [JSON Lines](https://jsonlines.org/) (JSONL) output like:
 
 ```jsonl
 {"id":"road","response":{"punchline":"To get to the other side!"}}
 {"id":"doctor","response":{"punchline":"He wasn't feeling very chicken!"}}
 ```
 
-For example input and output files, see:
+For example input files, see:
 
-- [input.csv](./tests/fixtures/input.csv) or [input.jsonl](tests/fixtures/input.jsonl): Input data in either CSV or JSONL format.
-- [prompt.toml](./tests/fixtures/prompt.toml): Example prompt template. Values from the input file will be filled in using [Handlebars](https://handlebarsjs.com/) templates.
-- [schema.json](./tests/fixtures/schema.json): A [JSON Schema](https://json-schema.org/) generated from [schema.py](./tests/fixtures/schema.py), specifying the output we want receive. The `description=` fields will be passed to the LLM.
+- [input.csv](./tests/fixtures/texts/input.csv) or [input.jsonl](tests/fixtures/texts/input.jsonl): Input data in either CSV or JSONL format.
+- [prompt.toml](./tests/fixtures/texts/prompt.toml): Example prompt template. Values from the input file will be filled in using [Handlebars](https://handlebarsjs.com/) templates.
 
 ### Example image usage
 
@@ -75,44 +106,27 @@ id,path
 2,tests/fixtures/images/alien.jpg
 ```
 
-#### Defining the schema
-
-Next, we need to define our output format. For example, if we have the following TypeScript:
-
-```ts
-/**
- * Information extracted from an image.
- */
-interface ImageInfo {
-    /** Text appearing on the sign in the image. */
-    sign_text: string;
-    /** A one-word description of the entity holding the sign. */
-    sign_holder: string;
-}
-```
-
-...we could convert it to a JSON Schema as follows:
-
-```sh
-npx typescript-json-schema \
-    --required --strictNullTypes --noExtraProps \
-    -o tests/fixtures/images/schema.json \
-    tests/fixtures/images/schema.ts ImageInfo
-```
-
 #### Providing a prompt
 
 Now we can define out prompt, using the `image-data-url` helper to include the images:
 
 ```toml
 # Place the actual instructions in the developer message.
-#
-# The schema will also be provided to the model automatically.
 developer = """
 Extract the specified information from the supplied images.
 """
 
-# We provide an of what we want, using the turtle image.
+# Specify what fields we want the model to respond with.
+[response_schema]
+description = "Information to extract from each image."
+
+[response_schema.properties.sign_text]
+description = "Text appearing on the sign in the image."
+
+[response_schema.properties.sign_holder]
+description = "A one-word description of the entity holding the sign."
+
+# We provide an example of what we want, using the turtle image.
 #
 # Including 1-3 examples will often produce much better output.
 [[messages]]
@@ -134,8 +148,7 @@ Finally, we could analyze our images as follows:
 
 ```sh
 prompt-scaler chat tests/fixtures/images/input.csv \
-    --prompt tests/fixtures/images/prompt.toml \
-    --schema tests/fixtures/images/schema.json
+    --prompt tests/fixtures/images/prompt.toml
 ```
 
 This will produce the following output:
@@ -146,6 +159,12 @@ This will produce the following output:
 ```
 
 This JSONL output can be easily converted to CSV or another format using Python. If you provide sample input and output, your favorite LLM can probably write the script for you!
+
+### Extracting schemas from Python or TypeScript
+
+See [tests/fixtures/external_schemas](tests/fixtures/external_schemas) and our [Justfile](Justfile) for examples.
+
+
 
 ## License
 

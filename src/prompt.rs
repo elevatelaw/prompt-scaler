@@ -6,10 +6,54 @@ use base64::prelude::BASE64_STANDARD;
 use handlebars::{
     Context, Handlebars, Helper, HelperResult, Output, RenderContext, RenderErrorReason,
 };
-use serde::Deserialize;
-use serde_json::{Map, Value, json};
+use serde_json::Map;
 
-use crate::{io::JsonObject, prelude::*};
+use crate::{io::JsonObject, prelude::*, schema::Schema};
+
+/// A chat completion prompt.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct ChatPrompt {
+    /// The developer (aka "system") message, if any.
+    pub developer: Option<String>,
+
+    /// Our schema.
+    pub response_schema: Schema,
+
+    /// Messages.
+    pub messages: Vec<Message>,
+}
+
+impl ChatPrompt {
+    /// Render the prompt as a JSON object.
+    pub fn render_prompt(&self, bindings: &JsonObject) -> Result<Value> {
+        let mut handlebars = Handlebars::new();
+        handlebars.register_helper("image-data-url", Box::new(image_data_url_helper));
+        self.render_template(&handlebars, bindings)
+    }
+}
+
+/// A message, and optionally a response (represented as a JSON object).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum Message {
+    /// A user message.
+    User {
+        /// Text provided by the user.
+        #[serde(default)]
+        text: Option<String>,
+
+        /// Images to include with the user message, provided as URLs.
+        #[serde(default)]
+        images: Vec<String>,
+    },
+
+    /// An assistant message.
+    Assistant {
+        /// The assistant response. This is always a JSON [`Value`].
+        json: Value,
+    },
+}
 
 /// Handlebars helper for converting a path to an image data URL.
 fn image_data_url_helper(
@@ -65,25 +109,6 @@ pub trait RenderTemplate {
     ) -> Result<Self::Output>;
 }
 
-/// A chat completion prompt.
-#[derive(Debug, Deserialize)]
-pub struct ChatPrompt {
-    /// The developer (aka "system") message, if any.
-    pub developer: Option<String>,
-
-    /// Messages.
-    pub messages: Vec<Message>,
-}
-
-impl ChatPrompt {
-    /// Render the prompt as a JSON object.
-    pub fn render_prompt(&self, bindings: &JsonObject) -> Result<Value> {
-        let mut handlebars = Handlebars::new();
-        handlebars.register_helper("image-data-url", Box::new(image_data_url_helper));
-        self.render_template(&handlebars, bindings)
-    }
-}
-
 impl RenderTemplate for ChatPrompt {
     type Output = Value;
 
@@ -128,28 +153,6 @@ impl RenderTemplate for ChatPrompt {
         }
         Ok(Value::Array(messages))
     }
-}
-
-/// A message, and optionally a response (represented as a JSON object).
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Message {
-    /// A user message.
-    User {
-        /// Text provided by the user.
-        #[serde(default)]
-        text: Option<String>,
-
-        /// Images to include with the user message, provided as URLs.
-        #[serde(default)]
-        images: Vec<String>,
-    },
-
-    /// An assistant message.
-    Assistant {
-        /// The assistant response. This is always a JSON [`Value`].
-        json: Value,
-    },
 }
 
 impl RenderTemplate for Message {

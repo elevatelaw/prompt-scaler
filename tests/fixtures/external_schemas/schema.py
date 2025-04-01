@@ -13,7 +13,7 @@ class JokeResponse(BaseModel):
 # Write the schema to schema.json in the same directory
 # as this file.
 main_model_schema = JokeResponse.model_json_schema()
-with open(Path(__file__).parent / "schema.json", "w") as f:
+with open(Path(__file__).parent / "schema_py.json", "w") as f:
     f.write(json.dumps(main_model_schema, indent=2))
 
 
