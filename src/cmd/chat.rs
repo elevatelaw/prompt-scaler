@@ -5,7 +5,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::anyhow;
 use async_openai::{Client, config::OpenAIConfig, types::CreateChatCompletionResponse};
 use futures::StreamExt;
 use keen_retry::{ExponentialJitter, ResolvedResult, RetryResult};

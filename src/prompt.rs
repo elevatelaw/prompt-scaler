@@ -92,6 +92,30 @@ impl RenderTemplate for ChatPrompt {
         handlebars: &Handlebars,
         bindings: &JsonObject,
     ) -> Result<Self::Output> {
+        // Make sure our messages appear in the order ((user, assistant)*, user).
+        if self.messages.is_empty() {
+            return Err(anyhow!("No messages in prompt"));
+        }
+        let mut expect_user_message = true;
+        for message in &self.messages {
+            let ok = match message {
+                Message::User { .. } if expect_user_message => true,
+                Message::Assistant { .. } if !expect_user_message => true,
+                _ => false,
+            };
+            if !ok {
+                return Err(anyhow!(
+                    "Expected alternating user and assistant messages in prompt, found {:?}",
+                    message
+                ));
+            }
+            expect_user_message = !expect_user_message;
+        }
+        if self.messages.len() % 2 == 0 {
+            return Err(anyhow!("Prompt must end with a user message"));
+        }
+
+        // Render our prompt.
         let mut messages = Vec::new();
         if let Some(developer) = &self.developer {
             messages.push(json!({
@@ -100,7 +124,7 @@ impl RenderTemplate for ChatPrompt {
             }));
         }
         for message in &self.messages {
-            messages.extend(message.render_template(handlebars, bindings)?);
+            messages.push(message.render_template(handlebars, bindings)?);
         }
         Ok(Value::Array(messages))
     }
@@ -108,56 +132,72 @@ impl RenderTemplate for ChatPrompt {
 
 /// A message, and optionally a response (represented as a JSON object).
 #[derive(Debug, Deserialize)]
-pub struct Message {
-    /// The user message.
-    pub user: String,
+#[serde(rename_all = "snake_case")]
+pub enum Message {
+    /// A user message.
+    User {
+        /// Text provided by the user.
+        #[serde(default)]
+        text: Option<String>,
 
-    /// Images to include with the user message, provided as URLs.
-    #[serde(default)]
-    pub images: Vec<String>,
+        /// Images to include with the user message, provided as URLs.
+        #[serde(default)]
+        images: Vec<String>,
+    },
 
-    /// The assistant response (optional). This is always a JSON object.
-    pub assistant: Option<JsonObject>,
+    /// An assistant message.
+    Assistant {
+        /// The assistant response. This is always a JSON [`Value`].
+        json: Value,
+    },
 }
 
 impl RenderTemplate for Message {
-    type Output = Vec<Value>;
+    type Output = Value;
 
     fn render_template(
         &self,
         handlebars: &Handlebars,
         bindings: &JsonObject,
     ) -> Result<Self::Output> {
-        let user = handlebars.render_template(&self.user, bindings)?;
-        let images = self
-            .images
-            .iter()
-            .map(|value| handlebars.render_template(value, bindings))
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut messages = if images.is_empty() {
-            vec![json!({
-                "role": "user",
-                "content": user
-            })]
-        } else {
-            let mut parts = vec![json!({ "type": "text", "text": user })];
-            for image in images {
-                parts.push(json!({
-                    "type": "image_url",
-                    "image_url": { "url": image }
-                }));
+        match self {
+            // No user content, so we bail.
+            Message::User { text: None, images } if images.is_empty() => {
+                Err(anyhow!("user message must have either text or images"))
             }
-            vec![json!({
+            // Just text, so use the simple format.
+            Message::User {
+                text: Some(text),
+                images,
+            } if images.is_empty() => Ok(json!({
                 "role": "user",
-                "content": parts
-            })]
-        };
-        if let Some(assistant) = &self.assistant {
-            let assistant = assistant.render_template(handlebars, bindings)?;
-            messages
-                .push(json!({ "role": "assistant", "content": assistant.to_string() }));
+                "content": text
+            })),
+            // We have images, and maybe text, so use the multi-part format.
+            Message::User { text, images } => {
+                let mut parts = Vec::with_capacity(1 + images.len());
+                if let Some(text) = text {
+                    parts.push(json!({ "type": "text", "text": text }));
+                }
+                for image in images {
+                    parts.push(json!({
+                        "type": "image_url",
+                        "image_url": { "url": image }
+                    }));
+                }
+                Ok(json!({
+                    "role": "user",
+                    "content": parts
+                }))
+            }
+            Message::Assistant { json } => {
+                let json = json.render_template(handlebars, bindings)?;
+                Ok(json!({
+                    "role": "assistant",
+                    "content": json.to_string()
+                }))
+            }
         }
-        Ok(messages)
     }
 }
 

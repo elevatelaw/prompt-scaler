@@ -3,12 +3,16 @@ Answer the joke with a short, appropriate punchline.
 """
 
 [[messages]]
-user = "Why did the scarecrow win an award?"
-assistant.punchline = "Because he was outstanding in his field."
+user.text = "Why did the scarecrow win an award?"
 
 [[messages]]
-user = "I’m reading a book on anti-gravity."
-assistant.punchline = "It’s impossible to put down."
+assistant.json.punchline = "Because he was outstanding in his field."
 
 [[messages]]
-user = "{{joke}}"
+user.text = "I’m reading a book on anti-gravity."
+
+[[messages]]
+assistant.json.punchline = "It’s impossible to put down."
+
+[[messages]]
+user.text = "{{joke}}"
