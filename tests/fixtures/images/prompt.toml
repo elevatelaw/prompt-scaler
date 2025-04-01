@@ -10,7 +10,7 @@ Extract the specified information from the supplied images.
 # Including 1-3 examples will often produce much better output.
 [[messages]]
 # Example input.
-user = ""
+user = "Here's an image." # Needed by Anthropic doesn't allow empty text (if we send it).
 images = ["{{image-data-url 'tests/fixtures/images/turtle.jpg'}}"]
 
 # Expected output.
@@ -20,5 +20,5 @@ assistant.sign_holder = "Turtle"
 # The prompt which contains our actual input.
 [[messages]]
 # Real input.
-user = ""
+user = "Here's an image."
 images = ["{{image-data-url path}}"]

@@ -230,7 +230,7 @@ impl OutputRecord {
 }
 
 /// Process the data portion of a record.
-#[instrument(level = "debug", skip(state, prompt))]
+#[instrument(level = "debug", skip_all, fields(attempt_number = %*attempt_number.lock().expect("lock poisoned")))]
 async fn process_data(
     attempt_number: &Mutex<u64>,
     state: &ProcessorState,
@@ -247,6 +247,7 @@ async fn process_data(
     // Create our request.
     let chat_request = json!({
         "model": &state.model,
+        // TODO: Needed for OpenAI, forbidden by some other providers, not fixed by LiteLLM.
         "store": false,
         "response_format": {
             "type": "json_schema",
