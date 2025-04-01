@@ -52,9 +52,9 @@ For example input and output files, see:
 
 Let's say we have three images of various beings holding signs:
 
-<img alt='Turtle holding sign saying "Go!"' src='tests/fixtures/images/turtle.jpg' width="128px"> <img alt='Capybara holding sign saying "HELLO, WORLD!"' src='tests/fixtures/images/capybara.jpg' width="128px"> <img alt='Alien holding sign saying "TAKE US TO YOUR LLMS, PLEASE!"' src='tests/fixtures/images/alien.jpg' width="128px">
+<img alt='Turtle holding sign saying "Go!"' src='tests/fixtures/images/turtle.jpg' width="128px"> <img alt='Capybara holding sign saying "HELLO, WORLD!"' src='tests/fixtures/images/capybara.jpg' width="128px"> <img alt='Alien holding sign saying "TAKE US TO YOUR LLMS, PLEASE"' src='tests/fixtures/images/alien.jpg' width="128px">
 
-We'll hold onto the turtle an example image, and create a CSV file describing the other two:
+We'll hold out the turtle for use as an example image, and create a CSV file describing the other two:
 
 ```csv
 id,path
@@ -99,23 +99,20 @@ developer = """
 Extract the specified information from the supplied images.
 """
 
-# Example of what we want, using the turtle image.
+# We provide an of what we want, using the turtle image.
 #
 # Including 1-3 examples will often produce much better output.
 [[messages]]
-# Example input.
-user = ""
-images = ["{{image-data-url 'tests/fixtures/images/turtle.jpg'}}"]
+user.images = ["{{image-data-url 'tests/fixtures/images/turtle.jpg'}}"]
 
 # Expected output.
-assistant.sign_text = "Go!"
-assistant.sign_holder = "Turtle"
+[[messages]]
+assistant.json.sign_text = "Go!"
+assistant.json.sign_holder = "Turtle"
 
 # The prompt which contains our actual input.
 [[messages]]
-# Real input.
-user = ""
-images = ["{{image-data-url path}}"]
+user.images = ["{{image-data-url path}}"]
 ```
 
 #### Running the LLM

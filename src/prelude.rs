@@ -2,6 +2,6 @@
 
 pub use std::path::{Path, PathBuf};
 
-pub use anyhow::{Context as _, Result};
+pub use anyhow::{Context as _, Result, anyhow};
 #[allow(unused_imports)]
 pub use tracing::{debug, error, info, instrument, trace, warn};
