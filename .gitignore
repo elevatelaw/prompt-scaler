@@ -3,3 +3,7 @@
 /.env
 /.env.*
 /node_modules
+# These contain fake credentials only.
+!/.env.litellm
+!/.env.ollama
+!/.env.litellm-proxy.template
