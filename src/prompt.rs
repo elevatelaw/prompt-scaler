@@ -113,6 +113,7 @@ pub struct Message {
     pub user: String,
 
     /// Images to include with the user message, provided as URLs.
+    #[serde(default)]
     pub images: Vec<String>,
 
     /// The assistant response (optional). This is always a JSON object.

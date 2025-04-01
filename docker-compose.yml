@@ -4,7 +4,7 @@ name: prompt_scaler_proxy
 
 services:
   litellm:
-    image: litellm/litellm:latest
+    image: ghcr.io/berriai/litellm:main-latest
     command:
       - --config
       - /app/config.yaml
@@ -17,6 +17,10 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       # Anthropic
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # Gemini
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      # Ollama
+      - OLLAMA_API_BASE=http://172.17.0.1:11434
     volumes:
       - ./litellm_config.yml:/app/config.yaml
     #restart: unless-stopped
