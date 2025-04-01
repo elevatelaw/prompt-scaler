@@ -5,6 +5,7 @@ use tracing_subscriber::{EnvFilter, filter::Directive, fmt::format::FmtSpan};
 
 use self::prelude::*;
 
+mod chat_stream;
 mod cmd;
 mod io;
 mod prelude;
