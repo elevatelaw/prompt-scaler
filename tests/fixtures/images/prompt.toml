@@ -1,11 +1,19 @@
 # Place the actual instructions in the developer message.
-#
-# The schema will also be provided to the model automatically.
 developer = """
 Extract the specified information from the supplied images.
 """
 
-# We provide an of what we want, using the turtle image.
+# Specify what fields we want the model to respond with.
+[response_schema]
+description = "Information to extract from each image."
+
+[response_schema.properties.sign_text]
+description = "Text appearing on the sign in the image."
+
+[response_schema.properties.sign_holder]
+description = "A one-word description of the entity holding the sign."
+
+# We provide an example of what we want, using the turtle image.
 #
 # Including 1-3 examples will often produce much better output.
 [[messages]]

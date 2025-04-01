@@ -2,17 +2,15 @@ developer = """
 Answer the joke with a short, appropriate punchline.
 """
 
+[response_schema]
+# Generated from `schema.py` using our `Justfile`.
+path = "tests/fixtures/external_schemas/schema_py.json"
+
 [[messages]]
 user.text = "Why did the scarecrow win an award?"
 
 [[messages]]
 assistant.json.punchline = "Because he was outstanding in his field."
-
-[[messages]]
-user.text = "I’m reading a book on anti-gravity."
-
-[[messages]]
-assistant.json.punchline = "It’s impossible to put down."
 
 [[messages]]
 user.text = "{{joke}}"

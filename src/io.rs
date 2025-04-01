@@ -15,7 +15,7 @@ use std::{pin::Pin, sync::Arc, task::Context, vec};
 
 use futures::{pin_mut, stream::StreamExt as _};
 use peekable::tokio::AsyncPeekable;
-use serde_json::{Map, Value};
+use serde_json::Map;
 use tokio::{
     fs::File,
     io::{

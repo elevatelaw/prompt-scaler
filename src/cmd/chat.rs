@@ -8,8 +8,6 @@ use std::{
 use async_openai::{Client, config::OpenAIConfig, types::CreateChatCompletionResponse};
 use futures::StreamExt;
 use keen_retry::{ExponentialJitter, ResolvedResult, RetryResult};
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use tracing::field;
 
 use crate::{
@@ -29,7 +27,6 @@ pub async fn cmd_chat(
     job_count: usize,
     model: &str,
     prompt_path: &Path,
-    schema_path: &Path,
     output_path: Option<&Path>,
 ) -> Result<()> {
     // Open up our input stream.
@@ -41,7 +38,7 @@ pub async fn cmd_chat(
     // Read our schema.
     //
     // TODO: Make sure `description` fields are present?
-    let schema = read_json_or_toml::<Value>(schema_path).await?;
+    let schema = prompt.response_schema.to_json_schema().await?;
     let validator = jsonschema::async_validator_for(&schema).await?;
 
     // Create our OpenAI client.
@@ -246,7 +243,6 @@ async fn process_data(
     // Create our request.
     let chat_request = json!({
         "model": &state.model,
-        // TODO: Needed for OpenAI, forbidden by some other providers, not fixed by LiteLLM.
         "store": false,
         "response_format": {
             "type": "json_schema",

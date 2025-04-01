@@ -56,11 +56,9 @@ fn test_chat_text_jsonl_input_litellm() {
         .env("OPENAI_API_KEY", LITELLM_API_KEY)
         .env("OPENAI_API_BASE", LITELLM_API_BASE)
         .arg("chat")
-        .arg("tests/fixtures/input.jsonl")
+        .arg("tests/fixtures/texts/input.jsonl")
         .arg("--prompt")
-        .arg("tests/fixtures/prompt.toml")
-        .arg("--schema")
-        .arg("tests/fixtures/schema.json")
+        .arg("tests/fixtures/texts/prompt.toml")
         .assert()
         .success();
 }
@@ -74,13 +72,11 @@ fn test_chat_text_csv_input_litellm() {
             .env("OPENAI_API_KEY", LITELLM_API_KEY)
             .env("OPENAI_API_BASE", LITELLM_API_BASE)
             .arg("chat")
-            .arg("tests/fixtures/input.csv")
+            .arg("tests/fixtures/texts/input.csv")
             .arg("--model")
             .arg(model)
             .arg("--prompt")
-            .arg("tests/fixtures/prompt.toml")
-            .arg("--schema")
-            .arg("tests/fixtures/schema.json")
+            .arg("tests/fixtures/texts/prompt.toml")
             .assert()
             .success();
     }
@@ -95,14 +91,33 @@ fn test_chat_text_csv_input_ollama() {
             .env("OPENAI_API_KEY", OLLAMA_API_KEY)
             .env("OPENAI_API_BASE", OLLAMA_API_BASE)
             .arg("chat")
-            .arg("tests/fixtures/input.csv")
+            .arg("tests/fixtures/texts/input.csv")
             .args(["--jobs", "1"])
             .arg("--model")
             .arg(model)
             .arg("--prompt")
-            .arg("tests/fixtures/prompt.toml")
-            .arg("--schema")
-            .arg("tests/fixtures/schema.json")
+            .arg("tests/fixtures/texts/prompt.toml")
+            .assert()
+            .success();
+    }
+}
+
+#[test]
+fn test_chat_external_schema_csv_input_litellm() {
+    // Prompts using JSON Schemas generated from various languages. See our
+    // `Justfile` for how the schemas referred to by these files are generated.
+    let prompts = ["prompt_py.toml", "prompt_ts.toml"];
+    for prompt in prompts {
+        println!("Testing schema prompt: {}", prompt);
+        cmd()
+            .env("OPENAI_API_KEY", LITELLM_API_KEY)
+            .env("OPENAI_API_BASE", LITELLM_API_BASE)
+            .arg("chat")
+            .arg("tests/fixtures/external_schemas/input.csv")
+            .arg("--prompt")
+            .arg(format!("tests/fixtures/external_schemas/{prompt}"))
+            .arg("--model")
+            .arg(LITELLM_CHEAP_MODELS[0])
             .assert()
             .success();
     }
@@ -122,8 +137,6 @@ fn test_chat_image_csv_input_litellm() {
             .arg(model)
             .arg("--prompt")
             .arg("tests/fixtures/images/prompt.toml")
-            .arg("--schema")
-            .arg("tests/fixtures/images/schema.json")
             .assert()
             .success();
     }
@@ -144,8 +157,6 @@ fn test_chat_image_csv_input_ollama() {
             .arg(model)
             .arg("--prompt")
             .arg("tests/fixtures/images/prompt.toml")
-            .arg("--schema")
-            .arg("tests/fixtures/images/schema.json")
             .assert()
             .success();
     }

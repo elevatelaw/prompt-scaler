@@ -1,0 +1,16 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": false,
+    "description": "Response to a joke.",
+    "properties": {
+        "punchline": {
+            "description": "The punchline of the joke",
+            "type": "string"
+        }
+    },
+    "required": [
+        "punchline"
+    ],
+    "type": "object"
+}
+

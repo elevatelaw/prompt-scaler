@@ -8,8 +8,8 @@
 
 # Export our JSON Schemas from Python and TypeScript to JSON.
 update-schemas:
-    uv run tests/fixtures/schema.py
+    uv run tests/fixtures/external_schemas/schema.py
     npx typescript-json-schema \
         --required --strictNullTypes --noExtraProps \
-        -o tests/fixtures/images/schema.json \
-        tests/fixtures/images/schema.ts ImageInfo
+        -o tests/fixtures/external_schemas/schema_ts.json \
+        tests/fixtures/external_schemas/schema.ts ImageInfo

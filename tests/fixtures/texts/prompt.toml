@@ -1,0 +1,28 @@
+# Put the actual question in the developer message (aka "system message").
+developer = """
+Answer the joke with a short, appropriate punchline.
+"""
+
+# Define the schema for the response.
+[response_schema]
+description = "The response to a joke."
+
+[response_schema.properties.punchline]
+description = "The punchline of the joke."
+
+# Provide 0 or more example messages and responses.
+[[messages]]
+user.text = "Why did the scarecrow win an award?"
+
+[[messages]]
+assistant.json.punchline = "Because he was outstanding in his field."
+
+[[messages]]
+user.text = "I’m reading a book on anti-gravity."
+
+[[messages]]
+assistant.json.punchline = "It’s impossible to put down."
+
+# Finally, provide the actual input joke.
+[[messages]]
+user.text = "{{joke}}"

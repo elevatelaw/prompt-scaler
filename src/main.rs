@@ -10,6 +10,7 @@ mod io;
 mod prelude;
 mod prompt;
 mod retry;
+mod schema;
 
 /// Run LLM prompts at scale.
 #[derive(Debug, Parser)]
@@ -48,10 +49,6 @@ enum Cmd {
         /// Prompt, in TOML or JSON format.
         #[clap(short = 'p', long = "prompt")]
         prompt_path: PathBuf,
-
-        /// Output schema, in TOML or JSON format.
-        #[clap(short = 's', long = "schema")]
-        schema_path: PathBuf,
 
         /// Output location, in CSV or JSONL format. Defaults to standard output.
         #[clap(short = 'o', long = "out")]
@@ -96,7 +93,6 @@ async fn real_main() -> Result<()> {
             job_count,
             model,
             prompt_path,
-            schema_path,
             output_path,
         } => {
             cmd::chat::cmd_chat(
@@ -104,7 +100,6 @@ async fn real_main() -> Result<()> {
                 *job_count,
                 model,
                 prompt_path,
-                schema_path,
                 output_path.as_deref(),
             )
             .await?;
