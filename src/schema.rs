@@ -185,7 +185,14 @@ description = "Text appearing on the sign in the image."
 description = "A one-word description of the entity holding the sign."
 "#;
         let schema: SimpleSchema = toml::from_str(schema_toml).unwrap();
-        let schema_json = schema.to_json_schema().unwrap();
+        let mut schema_json = schema.to_json_schema().unwrap();
+        // Sort `required` properties to make the test deterministic.
+        if let required @ Value::Array(_) = &mut schema_json["required"] {
+            let mut strs =
+                serde_json::from_value::<Vec<String>>(required.clone()).unwrap();
+            strs.sort();
+            *required = serde_json::to_value(strs).unwrap();
+        }
         let expected_json = json!({
             "description": "Information to extract from each image.",
             "type": "object",
