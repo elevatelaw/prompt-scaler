@@ -6,11 +6,12 @@ use std::{
 };
 
 use async_openai::{Client, config::OpenAIConfig, types::CreateChatCompletionResponse};
-use futures::{FutureExt as _, StreamExt};
+use futures::FutureExt as _;
 use keen_retry::{ExponentialJitter, ResolvedResult, RetryResult};
 use tracing::field;
 
 use crate::{
+    client::create_client,
     io::{BoxedFuture, BoxedStream, JsonObject},
     prelude::*,
     prompt::ChatPrompt,
@@ -18,6 +19,7 @@ use crate::{
         IntoRetryResult as _, is_known_openai_transient, retry_result_fatal,
         retry_result_ok, try_with_retry_result,
     },
+    work_items::WorkQueue,
 };
 
 /// An input record.
@@ -31,6 +33,14 @@ pub struct InputRecord {
     /// CSV file, which is inherently "flat".
     #[serde(flatten)]
     pub template_bindings: JsonObject,
+}
+
+impl InputRecord {
+    /// Deserialize from a JSON [`Value`].
+    pub fn from_json(value: Value) -> Result<Self> {
+        serde_json::from_value::<InputRecord>(value.clone())
+            .with_context(|| format!("Failed to parse input record: {}", value))
+    }
 }
 
 /// An output record.
@@ -95,6 +105,18 @@ impl OutputRecord {
             },
         }
     }
+
+    /// Serialize to a JSON value.
+    pub fn to_json(&self) -> Result<Value> {
+        serde_json::to_value(self)
+            .with_context(|| format!("Failed to serialize output record: {:?}", self))
+    }
+}
+
+/// Return value of [`process_chat_stream`].
+pub struct ChatStreamInfo {
+    pub stream: BoxedStream<BoxedFuture<Result<OutputRecord>>>,
+    pub queue: WorkQueue<InputRecord, OutputRecord>,
 }
 
 /// Process a stream of input records, using `prompt` and `model` to generate
@@ -104,28 +126,35 @@ impl OutputRecord {
 /// onto them while we process the stream.
 #[instrument(level = "debug", skip(input, prompt))]
 pub async fn process_chat_stream(
+    concurrency_limit: usize,
     input: BoxedStream<Result<InputRecord>>,
     prompt: ChatPrompt,
     model: String,
-) -> Result<BoxedStream<BoxedFuture<Result<OutputRecord>>>> {
+) -> Result<ChatStreamInfo> {
+    // Create our work queue.
+    let queue = create_chat_work_queue(concurrency_limit, prompt, model).await?;
+    let handle = queue.handle();
+    Ok(ChatStreamInfo {
+        stream: handle.process_stream(input).await,
+        queue,
+    })
+}
+
+/// Make a [`WorkQueue`] that handles chats.
+pub async fn create_chat_work_queue(
+    concurrency_limit: usize,
+    prompt: ChatPrompt,
+    model: String,
+) -> Result<WorkQueue<InputRecord, OutputRecord>> {
+    // Create our OpenAI client.
+    let client = create_client()?;
+
     // Read our schema.
     //
     // TODO: Make sure `description` fields are present?
     let schema = prompt.response_schema.to_json_schema().await?;
     let validator = jsonschema::async_validator_for(&schema).await?;
 
-    // Create our OpenAI client.
-    let mut client_config = OpenAIConfig::new();
-    if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
-        client_config = client_config.with_api_key(api_key);
-    }
-    if let Ok(api_base) = std::env::var("OPENAI_API_BASE") {
-        client_config = client_config.with_api_base(api_base);
-    }
-    let client = Client::with_config(client_config);
-
-    // Process each record in the input stream, using
-    // `futures::StreamExt::buffered` to limit the number of concurrent jobs.
     let state = Arc::new(ProcessorState {
         client,
         model,
@@ -133,17 +162,15 @@ pub async fn process_chat_stream(
         schema,
         validator,
     });
-    let futures = input
-        .map(move |map| {
-            let state = state.clone();
-            async move {
-                let map = map?;
-                process_record(state, map).await
-            }
-            .boxed()
-        })
-        .boxed();
-    Ok(futures)
+
+    // Define worker function.
+    let work_fn = move |input| {
+        let state = state.clone();
+        process_record(state, input).boxed()
+    };
+
+    // Create our work queue.
+    WorkQueue::new(concurrency_limit, Arc::new(work_fn))
 }
 
 /// Shared processor state.

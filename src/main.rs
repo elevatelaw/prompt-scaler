@@ -6,12 +6,14 @@ use tracing_subscriber::{EnvFilter, filter::Directive, fmt::format::FmtSpan};
 use self::prelude::*;
 
 mod chat_stream;
+mod client;
 mod cmd;
 mod io;
 mod prelude;
 mod prompt;
 mod retry;
 mod schema;
+mod work_items;
 
 /// Run LLM prompts at scale.
 #[derive(Debug, Parser)]
