@@ -19,18 +19,88 @@
 //! which are much more agnostic about what's going on. You won't normally need
 //! to work with these directly.
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use futures::{
     FutureExt, SinkExt as _, StreamExt,
     channel::{mpsc, oneshot},
 };
+use serde::de::DeserializeOwned;
 use tokio::task::JoinHandle;
 
 use crate::{
-    io::{BoxedFuture, BoxedStream},
+    async_utils::io::{BoxedFuture, BoxedStream, read_jsonl_or_csv, write_output},
     prelude::*,
 };
+
+/// Trait implemented by input records to a [`WorkItemProcessor`].
+pub trait WorkInput: DeserializeOwned + Send + 'static {
+    /// Convert from a JSON value to the input type.
+    fn from_json(value: Value) -> Result<Self> {
+        serde_json::from_value::<Self>(value).context("failed to deserialize input")
+    }
+
+    /// Read a stream from a [`Path`] or from standard input.
+    async fn read_stream(path: Option<&Path>) -> Result<BoxedStream<Result<Self>>> {
+        Ok(read_jsonl_or_csv(path)
+            .await?
+            .map(|value| Self::from_json(value?))
+            .boxed())
+    }
+}
+
+/// Trait implemented by output records from a [`WorkItemProcessor`].
+pub trait WorkOutput: Sized + Serialize + Send + 'static {
+    /// Should we count this output as a failure?
+    fn is_failure(&self) -> bool;
+
+    /// Convert from the output type to a JSON value.
+    fn into_json(self) -> Result<Value> {
+        serde_json::to_value::<Self>(self).context("failed to serialize output")
+    }
+
+    /// Write a stream of outputs to a [`Path`] or to standard output.
+    async fn write_stream(
+        path: Option<&Path>,
+        stream: BoxedStream<Result<Self>>,
+        allowed_failure_rate: f32,
+    ) -> Result<()> {
+        let failure_count = Arc::new(AtomicUsize::new(0));
+        let total_count = Arc::new(AtomicUsize::new(0));
+
+        let failure_count_clone = failure_count.clone();
+        let total_count_clone = total_count.clone();
+        let output = stream
+            .map(move |value| {
+                let value = value?;
+                total_count_clone.fetch_add(1, Ordering::SeqCst);
+                if value.is_failure() {
+                    failure_count_clone.fetch_add(1, Ordering::SeqCst);
+                }
+                value.into_json()
+            })
+            .boxed();
+        write_output(path, output).await?;
+
+        let total_count = total_count.load(Ordering::SeqCst);
+        let failure_count = failure_count.load(Ordering::SeqCst);
+        let failure_rate = failure_count as f32 / total_count as f32;
+        if failure_rate > allowed_failure_rate {
+            Err(anyhow::anyhow!(
+                "{}/{} ({:.2}%) of outputs were failures, but only {:.2}% were allowed",
+                failure_count,
+                total_count,
+                failure_rate * 100.0,
+                allowed_failure_rate * 100.0
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
 
 /// Work items are processed by [`WorkItemProcessor`]s. They contain an input,
 /// and a one-shot channel on which to return the result.
@@ -48,8 +118,8 @@ pub struct WorkItem<Input, Output> {
 /// This is fairly bare bones; you'll probably want to use [`WorkQueue`] and
 /// [`WorkQueueHandle`] in normal usage.
 pub trait WorkItemProcessor {
-    type Input: Send + 'static;
-    type Output: Send + 'static;
+    type Input: WorkInput;
+    type Output: WorkOutput;
 
     /// Process a work item. The result will be sent to `item.tx`.
     ///
@@ -101,8 +171,8 @@ pub struct WorkQueueHandle<Input, Output> {
 
 impl<Input, Output> WorkQueueHandle<Input, Output>
 where
-    Input: Send + 'static,
-    Output: Send + 'static,
+    Input: WorkInput,
+    Output: WorkOutput,
 {
     /// Process a stream of inputs, returning a stream of futures that will
     /// yield outputs. Typically used with [`futures::StreamExt::buffered`] or
@@ -141,8 +211,8 @@ impl<Input, Output> Clone for WorkQueueHandle<Input, Output> {
 
 impl<Input, Output> WorkItemProcessor for WorkQueueHandle<Input, Output>
 where
-    Input: Send + 'static,
-    Output: Send + 'static,
+    Input: WorkInput,
+    Output: WorkOutput,
 {
     type Input = Input;
     type Output = Output;

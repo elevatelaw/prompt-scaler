@@ -22,7 +22,8 @@ static LITELLM_API_BASE: &str = "http://localhost:4000/v1";
 /// our `litellm_config.yml` setup.
 static LITELLM_CHEAP_MODELS: &[&str] = &[
     "gpt-4o-mini",
-    "claude-3-5-haiku-20241022",
+    // Disabled because LiteLLM does not drop `store` parameter.
+    //"claude-3-5-haiku-20241022",
     "gemini-2.0-flash",
 ];
 
@@ -160,4 +161,37 @@ fn test_chat_image_csv_input_ollama() {
             .assert()
             .success();
     }
+}
+
+#[test]
+#[ignore = "Needs LiteLLM running"]
+fn test_ocr_pdf() {
+    cmd()
+        .env("OPENAI_API_KEY", LITELLM_API_KEY)
+        .env("OPENAI_API_BASE", LITELLM_API_BASE)
+        .arg("ocr")
+        .arg("tests/fixtures/ocr/input.csv")
+        .arg("--jobs")
+        .arg("3")
+        .arg("--model")
+        .arg("gemini-2.0-flash")
+        .assert()
+        .success();
+}
+
+#[test]
+#[ignore = "Needs LiteLLM running"]
+fn test_ocr_rasterized() {
+    cmd()
+        .env("OPENAI_API_KEY", LITELLM_API_KEY)
+        .env("OPENAI_API_BASE", LITELLM_API_BASE)
+        .arg("ocr")
+        .arg("tests/fixtures/ocr/input.csv")
+        .arg("--jobs")
+        .arg("3")
+        .arg("--model")
+        .arg("gemini-2.0-flash")
+        .arg("--rasterize")
+        .assert()
+        .success();
 }

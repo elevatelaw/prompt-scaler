@@ -7,3 +7,4 @@
 !/.env.litellm
 !/.env.ollama
 !/.env.litellm-proxy.template
+.DS_Store

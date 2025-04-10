@@ -2,9 +2,10 @@
 
 use std::collections::HashMap;
 
+use schemars::{JsonSchema, schema_for};
 use serde_json::Map;
 
-use crate::{io::read_json_or_toml, prelude::*};
+use crate::{async_utils::io::read_json_or_toml, prelude::*};
 
 /// Either an external or an internal schema.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -16,17 +17,36 @@ pub enum Schema {
         path: PathBuf,
     },
 
-    /// An internal schema, using a very simplified version of JSON Schema
-    /// format. If this is insufficient for your needs, consider using an
-    /// external schema.
+    /// A schema provided as a [`Value`]. This is mostly used by Rust code
+    /// that already has the schema in memory.
+    JsonValue {
+        /// The schema as a JSON Value.
+        json: Value,
+    },
+
+    /// An internal schema (one stored in the prompt file), using a very
+    /// simplified version of JSON Schema format. If this is insufficient for
+    /// your needs, consider using an external schema.
     Internal(SimpleSchema),
 }
 
 impl Schema {
+    /// Create a [`Schema`] from a Rust type using [`schemars`].
+    pub fn from_type<T>() -> Self
+    where
+        T: JsonSchema,
+    {
+        let schema = schema_for!(T);
+        let json =
+            serde_json::to_value(schema).expect("failed to convert schema to JSON");
+        Self::JsonValue { json }
+    }
+
     /// Convert to a JSON Schema.
     pub async fn to_json_schema(&self) -> Result<Value> {
         match self {
             Schema::External { path } => read_json_or_toml::<Value>(path).await,
+            Schema::JsonValue { json } => Ok(json.clone()),
             Schema::Internal(schema) => {
                 let mut schema_json = schema.to_json_schema()?;
                 schema_json["$schema"] =

@@ -1,4 +1,8 @@
 # LiteLLM configuration as test proxy.
+litellm_settings:
+  # See what we're actually sending and receiving.
+  # Very helpful for debugging.
+  log_raw_request_response: True
 model_list:
   - model_name: gpt-4o-mini
     litellm_params:
@@ -8,7 +12,9 @@ model_list:
     litellm_params:
       model: anthropic/claude-3-5-haiku-20241022
       api_key: os.environ/ANTHROPIC_API_KEY
-      # Schemas seem to be broken.
+      # drop_params does not seem to work here?
+      drop_params: True
+      additional_drop_params: ["store"]
   - model_name: gemini-2.0-flash
     litellm_params:
       model: gemini/gemini-2.0-flash

@@ -1,0 +1,3 @@
+id,path
+capybara,tests/fixtures/images/capybara.jpg
+two_pages,tests/fixtures/ocr/two_pages.pdf

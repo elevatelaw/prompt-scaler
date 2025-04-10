@@ -3,17 +3,18 @@ use std::str::FromStr;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{EnvFilter, filter::Directive, fmt::format::FmtSpan};
 
-use self::prelude::*;
+use self::{page_iter::PageIterOptions, prelude::*};
 
-mod chat_stream;
-mod client;
+mod async_utils;
 mod cmd;
-mod io;
+mod data_url;
+mod llm_client;
+mod page_iter;
 mod prelude;
 mod prompt;
+mod queues;
 mod retry;
 mod schema;
-mod work_items;
 
 /// Run LLM prompts at scale.
 #[derive(Debug, Parser)]
@@ -52,6 +53,37 @@ enum Cmd {
         /// Prompt, in TOML or JSON format.
         #[clap(short = 'p', long = "prompt")]
         prompt_path: PathBuf,
+
+        /// What portion of inputs should we allow to fail? Specified as a
+        /// number between 0.0 and 1.0.
+        #[clap(long, default_value = "0.01")]
+        allowed_failure_rate: f32,
+
+        /// Output location, in CSV or JSONL format. Defaults to standard output.
+        #[clap(short = 'o', long = "out")]
+        output_path: Option<PathBuf>,
+    },
+    /// OCR images and PDFs. The input file should have `id` and `path` fields.
+    Ocr {
+        /// Input data, in CSV or JSONL format. Defaults to standard input.
+        input_path: Option<PathBuf>,
+
+        /// DPI to use for PDF files when converting to images.
+        #[clap(flatten)]
+        page_iter_opts: PageIterOptions,
+
+        /// Max number of requests to process at a time.
+        #[clap(short = 'j', long = "jobs", default_value = "8")]
+        job_count: usize,
+
+        /// Model to use by default.
+        #[clap(short = 'm', long, default_value = "gemini-2.0-flash")]
+        model: String,
+
+        /// What portion of inputs should we allow to fail? Specified as a
+        /// number between 0.0 and 1.0.
+        #[clap(long, default_value = "0.01")]
+        allowed_failure_rate: f32,
 
         /// Output location, in CSV or JSONL format. Defaults to standard output.
         #[clap(short = 'o', long = "out")]
@@ -96,6 +128,7 @@ async fn real_main() -> Result<()> {
             job_count,
             model,
             prompt_path,
+            allowed_failure_rate,
             output_path,
         } => {
             cmd::chat::cmd_chat(
@@ -103,6 +136,25 @@ async fn real_main() -> Result<()> {
                 *job_count,
                 model,
                 prompt_path,
+                *allowed_failure_rate,
+                output_path.as_deref(),
+            )
+            .await?;
+        }
+        Cmd::Ocr {
+            input_path,
+            page_iter_opts,
+            job_count,
+            model,
+            allowed_failure_rate,
+            output_path,
+        } => {
+            cmd::ocr::cmd_ocr(
+                input_path.as_deref(),
+                page_iter_opts,
+                *job_count,
+                model,
+                *allowed_failure_rate,
                 output_path.as_deref(),
             )
             .await?;
