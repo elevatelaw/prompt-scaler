@@ -8,23 +8,22 @@ use std::{
 use async_openai::{Client, config::OpenAIConfig, types::CreateChatCompletionResponse};
 use futures::FutureExt as _;
 use keen_retry::{ExponentialJitter, ResolvedResult, RetryResult};
-use tracing::field;
 
+use super::work::{WorkInput, WorkOutput, WorkQueue};
 use crate::{
-    client::create_client,
-    io::{BoxedFuture, BoxedStream, JsonObject},
+    async_utils::io::{BoxedFuture, BoxedStream, JsonObject},
+    llm_client::create_llm_client,
     prelude::*,
     prompt::ChatPrompt,
     retry::{
         IntoRetryResult as _, is_known_openai_transient, retry_result_fatal,
         retry_result_ok, try_with_retry_result,
     },
-    work_items::WorkQueue,
 };
 
 /// An input record.
 #[derive(Clone, Debug, Deserialize)]
-pub struct InputRecord {
+pub struct ChatInput {
     /// The record's unique identifier.
     pub id: Value,
 
@@ -35,17 +34,11 @@ pub struct InputRecord {
     pub template_bindings: JsonObject,
 }
 
-impl InputRecord {
-    /// Deserialize from a JSON [`Value`].
-    pub fn from_json(value: Value) -> Result<Self> {
-        serde_json::from_value::<InputRecord>(value.clone())
-            .with_context(|| format!("Failed to parse input record: {}", value))
-    }
-}
+impl WorkInput for ChatInput {}
 
 /// An output record.
 #[derive(Clone, Debug, Serialize)]
-pub struct OutputRecord {
+pub struct ChatOutput {
     /// The record's unique identifier.
     pub id: Value,
 
@@ -59,19 +52,19 @@ pub struct OutputRecord {
     pub errors: Vec<String>,
 }
 
-impl OutputRecord {
+impl ChatOutput {
     /// Create a new output record from a [`ResolvedResult`].
     fn from_resolved_result(
         id: Value,
         result: ResolvedResult<(), (), Value, anyhow::Error>,
     ) -> Self {
         match result {
-            ResolvedResult::Ok { output, .. } => OutputRecord {
+            ResolvedResult::Ok { output, .. } => ChatOutput {
                 id,
                 response: Some(output),
                 errors: vec![],
             },
-            ResolvedResult::Fatal { error, .. } => OutputRecord {
+            ResolvedResult::Fatal { error, .. } => ChatOutput {
                 id,
                 response: None,
                 errors: vec![error.to_string()],
@@ -80,7 +73,7 @@ impl OutputRecord {
                 output,
                 retry_errors,
                 ..
-            } => OutputRecord {
+            } => ChatOutput {
                 id,
                 response: Some(output),
                 errors: retry_errors.into_iter().map(|e| e.to_string()).collect(),
@@ -94,7 +87,7 @@ impl OutputRecord {
                 retry_errors,
                 fatal_error,
                 ..
-            } => OutputRecord {
+            } => ChatOutput {
                 id,
                 response: None,
                 errors: retry_errors
@@ -105,18 +98,18 @@ impl OutputRecord {
             },
         }
     }
+}
 
-    /// Serialize to a JSON value.
-    pub fn to_json(&self) -> Result<Value> {
-        serde_json::to_value(self)
-            .with_context(|| format!("Failed to serialize output record: {:?}", self))
+impl WorkOutput for ChatOutput {
+    fn is_failure(&self) -> bool {
+        self.response.is_none()
     }
 }
 
 /// Return value of [`process_chat_stream`].
 pub struct ChatStreamInfo {
-    pub stream: BoxedStream<BoxedFuture<Result<OutputRecord>>>,
-    pub queue: WorkQueue<InputRecord, OutputRecord>,
+    pub stream: BoxedStream<BoxedFuture<Result<ChatOutput>>>,
+    pub queue: WorkQueue<ChatInput, ChatOutput>,
 }
 
 /// Process a stream of input records, using `prompt` and `model` to generate
@@ -127,7 +120,7 @@ pub struct ChatStreamInfo {
 #[instrument(level = "debug", skip(input, prompt))]
 pub async fn process_chat_stream(
     concurrency_limit: usize,
-    input: BoxedStream<Result<InputRecord>>,
+    input: BoxedStream<Result<ChatInput>>,
     prompt: ChatPrompt,
     model: String,
 ) -> Result<ChatStreamInfo> {
@@ -145,9 +138,9 @@ pub async fn create_chat_work_queue(
     concurrency_limit: usize,
     prompt: ChatPrompt,
     model: String,
-) -> Result<WorkQueue<InputRecord, OutputRecord>> {
+) -> Result<WorkQueue<ChatInput, ChatOutput>> {
     // Create our OpenAI client.
-    let client = create_client()?;
+    let client = create_llm_client()?;
 
     // Read our schema.
     //
@@ -193,20 +186,23 @@ struct ProcessorState {
 }
 
 /// Process a single JSON Object.
-#[instrument(level = "debug", skip_all, fields(id = field::Empty))]
+#[instrument(level = "debug", skip_all, fields(id = %input_record.id))]
 async fn process_record(
     state: Arc<ProcessorState>,
-    input_record: InputRecord,
-) -> Result<OutputRecord> {
+    input_record: ChatInput,
+) -> Result<ChatOutput> {
     let id = input_record.id.clone();
-    tracing::Span::current().record("id", field::display(&id));
 
     // Render our prompt.
+    trace!(
+        template_bindings = ?input_record.template_bindings,
+        "Template bindings"
+    );
     let prompt = state
         .prompt
         .render_prompt(&input_record.template_bindings)
         .context("Error rendering prompt")?;
-    debug!(%prompt, "Prompt");
+    trace!(%prompt, "Prompt");
 
     // If we have a transient failure, back off exponentially.
     let jitter = ExponentialJitter::FromBackoffRange {
@@ -224,6 +220,11 @@ async fn process_record(
         })
         .with_exponential_jitter(|| jitter)
         .await
+        .inspect_fatal(|_, fatal_error| {
+            error!(
+                "FAILED with error {fatal_error:?}"
+            )
+        })
         .inspect_recovered(|_, _, retry_errors_list| {
             warn!(
                 "suceeded after retrying {} times (failed attempts: [{}])",
@@ -239,7 +240,7 @@ async fn process_record(
             )
         });
 
-    Ok(OutputRecord::from_resolved_result(id, result))
+    Ok(ChatOutput::from_resolved_result(id, result))
 }
 
 /// Process the data portion of a record.
@@ -274,7 +275,7 @@ async fn process_data(
     trace!(%chat_request, "OpenAI request");
 
     // Call OpenAI.
-    let chat_result = try_with_retry_result!(
+    let chat_result: Value = try_with_retry_result!(
         state
             .client
             .chat()
@@ -282,7 +283,7 @@ async fn process_data(
             .await
             .into_retry_result(is_known_openai_transient)
     );
-    trace!(%chat_result, "OpenAI response");
+    debug!(%chat_result, "OpenAI response");
     let response = try_with_retry_result!(
         serde_json::from_value::<CreateChatCompletionResponse>(chat_result)
             .context("Error parsing OpenAI response")
@@ -290,15 +291,24 @@ async fn process_data(
     );
 
     // Get the content from our response & parse as JSON.
-    let content = match response.choices.first() {
-        Some(choice) => &choice.message.content.as_deref().unwrap_or_default(),
+    let choice = match response.choices.first() {
+        Some(choice) => choice,
         None => {
             return retry_result_fatal(anyhow!("No choices in OpenAI response"));
         }
     };
+    if choice.finish_reason == Some(async_openai::types::FinishReason::ContentFilter) {
+        return retry_result_fatal(anyhow!(
+            "Content filter triggered (may also be a RECITATION error for Gemini models)"
+        ));
+    }
+    let content = choice.message.content.as_deref().unwrap_or_default();
     let response = try_with_retry_result!(
         serde_json::from_str::<Value>(content)
-            .context("Error parsing OpenAI response content")
+            .with_context(|| format!(
+                "Error parsing OpenAI response content: {:?}",
+                content
+            ))
             // If we didn't get JSON here, it's because the model didn't
             // generate JSON. So give it another chance.
             .into_transient()

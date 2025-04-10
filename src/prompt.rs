@@ -2,13 +2,14 @@
 
 use std::fs;
 
-use base64::prelude::BASE64_STANDARD;
 use handlebars::{
     Context, Handlebars, Helper, HelperResult, Output, RenderContext, RenderErrorReason,
 };
 use serde_json::Map;
 
-use crate::{io::JsonObject, prelude::*, schema::Schema};
+use crate::{
+    async_utils::io::JsonObject, data_url::data_url, prelude::*, schema::Schema,
+};
 
 /// A chat completion prompt.
 #[derive(Debug, Deserialize)]
@@ -28,6 +29,7 @@ impl ChatPrompt {
     /// Render the prompt as a JSON object.
     pub fn render_prompt(&self, bindings: &JsonObject) -> Result<Value> {
         let mut handlebars = Handlebars::new();
+        handlebars.register_escape_fn(|s| s.to_owned());
         handlebars.register_helper("image-data-url", Box::new(image_data_url_helper));
         self.render_template(&handlebars, bindings)
     }
@@ -87,11 +89,7 @@ fn image_data_url_helper(
     let bytes = fs::read(path).map_err(|err| {
         RenderErrorReason::Other(format!("error reading {}: {}", path, err))
     })?;
-    let data_url = format!(
-        "data:{};base64,{}",
-        mime.mime_type(),
-        base64::display::Base64Display::new(bytes.as_slice(), &BASE64_STANDARD),
-    );
+    let data_url = data_url(mime.mime_type(), &bytes);
     out.write(&data_url)?;
     Ok(())
 }
@@ -185,7 +183,7 @@ impl RenderTemplate for Message {
                 for image in images {
                     parts.push(json!({
                         "type": "image_url",
-                        "image_url": { "url": image }
+                        "image_url": { "url": handlebars.render_template(image, bindings)? }
                     }));
                 }
                 Ok(json!({

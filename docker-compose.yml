@@ -4,7 +4,8 @@ name: prompt_scaler_proxy
 
 services:
   litellm:
-    image: ghcr.io/berriai/litellm:main-latest
+    # See https://github.com/BerriAI/litellm/issues/9888 for an issue introduced in 1.65.4.
+    image: ghcr.io/berriai/litellm:main-v1.65.0-stable
     command:
       - --config
       - /app/config.yaml

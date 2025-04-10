@@ -5,7 +5,7 @@ use async_openai::{Client, config::OpenAIConfig};
 use crate::prelude::*;
 
 /// Create an OpenAI-compatible client using the default configuration.
-pub fn create_client() -> Result<Client<OpenAIConfig>> {
+pub fn create_llm_client() -> Result<Client<OpenAIConfig>> {
     let mut client_config = OpenAIConfig::new();
     if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
         client_config = client_config.with_api_key(api_key);
