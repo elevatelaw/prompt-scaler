@@ -2,7 +2,7 @@
 
 pub mod llm;
 pub mod pdftotext;
-//pub mod tesseract;
+pub mod tesseract;
 
 use std::sync::Arc;
 
@@ -52,6 +52,7 @@ pub async fn ocr_engine_for_model(
 ) -> Result<(Arc<dyn OcrEngine>, JoinWorker)> {
     let (ocr_engine, worker) = match model.as_str() {
         "pdftotext" => pdftotext::PdfToTextOcrEngine::new(page_iter_opts)?,
+        "tesseract" => tesseract::TesseractOcrEngine::new(page_iter_opts)?,
         _ => llm::LlmOcrEngine::new(concurrency_limit, prompt, model).await?,
     };
     Ok((ocr_engine, worker))
