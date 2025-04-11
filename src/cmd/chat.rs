@@ -31,7 +31,7 @@ pub async fn cmd_chat(
     // Build our chat stream.
     let ChatStreamInfo {
         stream: futures,
-        queue,
+        worker,
     } = process_chat_stream(job_count, input, prompt, model.to_owned()).await?;
 
     // Resolve our individual LLM requests concurrently, and convert them back to JSON.
@@ -41,5 +41,5 @@ pub async fn cmd_chat(
     ChatOutput::write_stream(output_path, output, allowed_failure_rate).await?;
 
     // Wait for our work queue's background task to exit.
-    queue.close().await
+    worker.join().await
 }

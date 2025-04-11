@@ -29,10 +29,12 @@ use futures::{
     channel::{mpsc, oneshot},
 };
 use serde::de::DeserializeOwned;
-use tokio::task::JoinHandle;
 
 use crate::{
-    async_utils::io::{BoxedFuture, BoxedStream, read_jsonl_or_csv, write_output},
+    async_utils::{
+        BoxedFuture, BoxedStream, JoinWorker,
+        io::{read_jsonl_or_csv, write_output},
+    },
     prelude::*,
 };
 
@@ -235,10 +237,6 @@ where
 pub struct WorkQueue<Input, Output> {
     /// Queue for submitting work items.
     tx: mpsc::Sender<WorkItem<Input, Output>>,
-
-    /// Handle to an async background worker that pulls results from the queue
-    /// and passes them along.
-    worker_handle: JoinHandle<()>,
 }
 
 impl<Input, Output> WorkQueue<Input, Output>
@@ -251,7 +249,10 @@ where
     /// Note that up to `concurrency_limit` work may be waiting at any one time, and another
     /// `concurrency_limit` work items may be in progress. This means that the total number
     /// of work items in the system at any time may be up to `2 * concurrency_limit`.
-    pub fn new(concurrency_limit: usize, work_fn: WorkFn<Input, Output>) -> Result<Self> {
+    pub fn new(
+        concurrency_limit: usize,
+        work_fn: WorkFn<Input, Output>,
+    ) -> Result<(Self, JoinWorker)> {
         let (tx, rx) = mpsc::channel(concurrency_limit);
         let worker = tokio::spawn(async move {
             rx.for_each_concurrent(
@@ -266,11 +267,9 @@ where
                 },
             )
             .await;
+            Ok(())
         });
-        Ok(Self {
-            tx,
-            worker_handle: worker,
-        })
+        Ok((Self { tx }, JoinWorker::from_handle(worker)))
     }
 
     /// Get a handle for submitting items to the work queue.
@@ -278,17 +277,5 @@ where
         WorkQueueHandle {
             tx: self.tx.clone(),
         }
-    }
-
-    /// Attempt to close the work queue. This will wait until all sender handles
-    /// are eventually shut down. If any sender handles are "leaked", this may
-    /// block forever.
-    pub async fn close(self) -> Result<()> {
-        let Self { tx, worker_handle } = self;
-        drop(tx);
-        worker_handle
-            .await
-            .context("failed to join worker thread")?;
-        Ok(())
     }
 }
