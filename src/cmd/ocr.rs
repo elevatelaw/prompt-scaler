@@ -6,7 +6,10 @@ use crate::{
     page_iter::PageIterOptions,
     prelude::*,
     queues::{
-        ocr::{OcrInput, OcrOutput, OcrStreamInfo, default_ocr_prompt, ocr_files},
+        ocr::{
+            OcrInput, OcrOutput, OcrStreamInfo, engines::llm::default_ocr_prompt,
+            ocr_files,
+        },
         work::{WorkInput as _, WorkOutput as _},
     },
 };
@@ -27,7 +30,7 @@ pub async fn cmd_ocr(
     // Open up our input stream and parse into records.
     let input = OcrInput::read_stream(input_path).await?;
 
-    let OcrStreamInfo { stream, queue } = ocr_files(
+    let OcrStreamInfo { stream, worker } = ocr_files(
         input,
         page_iter_opts.to_owned(),
         job_count,
@@ -39,5 +42,5 @@ pub async fn cmd_ocr(
 
     OcrOutput::write_stream(output_path, output, allowed_failure_rate).await?;
 
-    queue.close().await
+    worker.join().await
 }

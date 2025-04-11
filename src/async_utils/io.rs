@@ -23,17 +23,11 @@ use tokio::{
         AsyncWriteExt as _, BufReader, BufWriter, ReadBuf,
     },
 };
-use tokio_stream::{Stream, wrappers::LinesStream};
+use tokio_stream::wrappers::LinesStream;
 
 use crate::prelude::*;
 
-/// A type alias for a boxed future. This is used to make it easier to work with
-/// with complex futures.
-pub type BoxedFuture<Output> = Pin<Box<dyn Future<Output = Output> + Send>>;
-
-/// A type alias for a boxed stream. This is used to make it easier to work
-/// streams that return complex types.
-pub type BoxedStream<Item> = Pin<Box<dyn Stream<Item = Item> + Send>>;
+use super::BoxedStream;
 
 /// A smart async reader that uses [`AsyncPeekable`] to detect whether the input is JSON
 /// or JSONL, or something else.

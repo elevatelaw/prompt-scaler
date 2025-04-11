@@ -195,3 +195,19 @@ fn test_ocr_rasterized() {
         .assert()
         .success();
 }
+
+#[test]
+fn test_ocr_pdftotext() {
+    cmd()
+        .arg("ocr")
+        .arg("tests/fixtures/ocr/input.csv")
+        .arg("--jobs")
+        .arg("3")
+        // Our image test case won't work, so allow more failures than usual.
+        .arg("--allowed-failure-rate")
+        .arg("0.5")
+        .arg("--model")
+        .arg("pdftotext")
+        .assert()
+        .success();
+}

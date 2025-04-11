@@ -11,7 +11,7 @@ use keen_retry::{ExponentialJitter, ResolvedResult, RetryResult};
 
 use super::work::{WorkInput, WorkOutput, WorkQueue};
 use crate::{
-    async_utils::io::{BoxedFuture, BoxedStream, JsonObject},
+    async_utils::{BoxedFuture, BoxedStream, JoinWorker, io::JsonObject},
     llm_client::create_llm_client,
     prelude::*,
     prompt::ChatPrompt,
@@ -109,7 +109,7 @@ impl WorkOutput for ChatOutput {
 /// Return value of [`process_chat_stream`].
 pub struct ChatStreamInfo {
     pub stream: BoxedStream<BoxedFuture<Result<ChatOutput>>>,
-    pub queue: WorkQueue<ChatInput, ChatOutput>,
+    pub worker: JoinWorker,
 }
 
 /// Process a stream of input records, using `prompt` and `model` to generate
@@ -125,11 +125,12 @@ pub async fn process_chat_stream(
     model: String,
 ) -> Result<ChatStreamInfo> {
     // Create our work queue.
-    let queue = create_chat_work_queue(concurrency_limit, prompt, model).await?;
+    let (queue, worker) =
+        create_chat_work_queue(concurrency_limit, prompt, model).await?;
     let handle = queue.handle();
     Ok(ChatStreamInfo {
         stream: handle.process_stream(input).await,
-        queue,
+        worker,
     })
 }
 
@@ -138,7 +139,7 @@ pub async fn create_chat_work_queue(
     concurrency_limit: usize,
     prompt: ChatPrompt,
     model: String,
-) -> Result<WorkQueue<ChatInput, ChatOutput>> {
+) -> Result<(WorkQueue<ChatInput, ChatOutput>, JoinWorker)> {
     // Create our OpenAI client.
     let client = create_llm_client()?;
 

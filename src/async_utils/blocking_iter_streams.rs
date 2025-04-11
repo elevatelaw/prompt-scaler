@@ -10,7 +10,7 @@ use std::{
 
 use futures::{FutureExt as _, Stream};
 
-use super::io::BoxedFuture;
+use super::BoxedFuture;
 use crate::prelude::*;
 
 /// A [`BlockingIterStream`] can be in one of two states:
