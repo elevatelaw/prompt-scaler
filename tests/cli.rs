@@ -37,7 +37,10 @@ static OLLAMA_FAST_MODELS: &[&str] = &["gemma3:4b"];
 
 /// Create a new `Command` with our binary.
 fn cmd() -> Command {
-    Command::cargo_bin("prompt-scaler").unwrap()
+    let mut cmd = Command::cargo_bin("prompt-scaler").unwrap();
+    // Disable color so any RUST_LOG output is readable.
+    cmd.env("NO_COLOR", "1");
+    cmd
 }
 
 #[test]
@@ -208,6 +211,33 @@ fn test_ocr_pdftotext() {
         .arg("0.5")
         .arg("--model")
         .arg("pdftotext")
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_ocr_tesseract() {
+    cmd()
+        .arg("ocr")
+        .arg("tests/fixtures/ocr/input.csv")
+        .arg("--jobs")
+        .arg("3")
+        .arg("--model")
+        .arg("tesseract")
+        .arg("--rasterize")
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_ocr_textract() {
+    cmd()
+        .arg("ocr")
+        .arg("tests/fixtures/ocr/input.csv")
+        .arg("--jobs")
+        .arg("3")
+        .arg("--model")
+        .arg("textract")
         .assert()
         .success();
 }
