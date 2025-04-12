@@ -1,0 +1,230 @@
+//! OCR using AWS Textract.
+
+use std::collections::{HashMap, HashSet};
+use std::env;
+use std::sync::Arc;
+
+use aws_config::BehaviorVersion;
+use aws_sdk_textract::types::{Block, FeatureType, RelationshipType};
+use aws_sdk_textract::{primitives::Blob, types::BlockType};
+
+use crate::prelude::*;
+
+use crate::async_utils::JoinWorker;
+
+use super::{OcrEngine, OcrPageInput, OcrPageOutput};
+
+/// OCR engine wrapping the AWS Textract API.
+pub struct TextractOcrEngine {
+    /// AWS Textract client.
+    client: aws_sdk_textract::Client,
+
+    /// Includes layout debug information in the output.
+    debug: bool,
+}
+
+impl TextractOcrEngine {
+    /// Create a new `textract` engine.
+    #[allow(clippy::new_ret_no_self)]
+    pub async fn new() -> Result<(Arc<dyn OcrEngine>, JoinWorker)> {
+        let config = aws_config::load_defaults(BehaviorVersion::v2025_01_17()).await;
+        let client = aws_sdk_textract::Client::new(&config);
+        let debug = env::var("TEXTRACT_DEBUG").is_ok();
+        Ok((Arc::new(Self { client, debug }), JoinWorker::noop()))
+    }
+}
+
+#[async_trait]
+impl OcrEngine for TextractOcrEngine {
+    #[instrument(level = "debug", skip_all, fields(id = %input.id, page = %input.page_idx))]
+    async fn ocr_page(&self, input: OcrPageInput) -> Result<OcrPageOutput> {
+        let mut errors = Vec::new();
+
+        // TODO: We may need to convert GIF and WEBP to a supported format.
+
+        // Build our document.
+        let document = aws_sdk_textract::types::Document::builder()
+            .bytes(Blob::new(input.page.data.clone()))
+            .build();
+
+        // Use the Textract API to process the image.
+        //
+        // TODO: Retry non-fatal errors as we discover them. See the
+        // LLM chat client for details.
+        let response = self
+            .client
+            .analyze_document()
+            .document(document)
+            .set_feature_types(Some(vec![FeatureType::Layout]))
+            .send()
+            .await;
+        match response {
+            Err(e) => {
+                let err = format!("AWS Textract error: {}", e);
+                error!("{err}");
+                errors.push(err);
+                return Ok(OcrPageOutput { text: None, errors });
+            }
+            Ok(document) => {
+                trace!("Document response: {document:#?}");
+
+                // Build a table of blocks by ID.
+                let mut blocks_by_id = HashMap::new();
+                for block in document.blocks() {
+                    let Some(block_id) = block.id() else {
+                        continue;
+                    };
+                    blocks_by_id.insert(block_id, block);
+                }
+
+                // Create our output state.
+                let mut output = OutputState::new(self.debug, blocks_by_id);
+
+                // Iterate over layout blocks and extract their child text.
+                for block in document.blocks() {
+                    // We only want layout blocks with text, which should
+                    // contain all the text and come in a reasonable order.
+                    trace!(?block, "Textract layout block");
+                    let Some(block_type) = block.block_type() else {
+                        continue;
+                    };
+                    if !block_type.as_str().starts_with("LAYOUT_") {
+                        continue;
+                    }
+
+                    // Print the block.
+                    let bytes_written = output.bytes_written();
+                    output.write_block(block, false)?;
+                    if output.bytes_written() > bytes_written {
+                        // We wrote something, so add a newline.
+                        output.write_text("\n");
+                    }
+                }
+
+                let text = output.output;
+                debug!(%text, "Extraced text");
+                Ok(OcrPageOutput {
+                    text: Some(text),
+                    errors,
+                })
+            }
+        }
+    }
+}
+
+/// Our output state.
+#[derive(Debug)]
+struct OutputState<'a> {
+    /// The output string.
+    output: String,
+
+    /// Should we output debug information?
+    debug: bool,
+
+    /// Blocks by ID.
+    blocks_by_id: HashMap<&'a str, &'a Block>,
+
+    /// The set of already printed blocks.
+    printed_block_ids: HashSet<&'a str>,
+}
+
+impl<'a> OutputState<'a> {
+    /// Create a new output state.
+    fn new(debug: bool, blocks_by_id: HashMap<&'a str, &'a Block>) -> Self {
+        Self {
+            output: String::new(),
+            debug,
+            blocks_by_id,
+            printed_block_ids: HashSet::new(),
+        }
+    }
+
+    /// How many bytes have we written?
+    fn bytes_written(&self) -> usize {
+        self.output.len()
+    }
+
+    /// Write some text to the output.
+    fn write_text(&mut self, text: &str) {
+        self.output.push_str(text);
+    }
+
+    /// Write a block recursively.
+    fn write_block(&mut self, block: &'a Block, printed_parent: bool) -> Result<()> {
+        // Check to make sure we haven't already printed this block.
+        if let Some(id) = block.id() {
+            if !self.printed_block_ids.insert(id) {
+                return Ok(());
+            }
+        }
+
+        // If we haven't printed a parent already, print this block.
+        let mut printed_self = false;
+        if !printed_parent {
+            self.block_start(block);
+            if let Some(text) = block.text() {
+                self.output.push_str(text);
+                match block.block_type() {
+                    Some(BlockType::Line) => {
+                        self.output.push('\n');
+                    }
+                    Some(BlockType::Word) => {
+                        self.output.push(' ');
+                    }
+                    _ => {}
+                }
+                printed_self = true;
+            }
+        }
+
+        // Recurse into the children.
+        for relationship in block.relationships() {
+            if relationship.r#type() == Some(&RelationshipType::Child) {
+                for id in relationship.ids() {
+                    if let Some(child_block) = self.blocks_by_id.get(&id[..]) {
+                        self.write_block(child_block, printed_self)?;
+                    } else {
+                        return Err(anyhow!("Textract child block {} not found", id));
+                    }
+                }
+            }
+        }
+
+        if !printed_parent {
+            self.block_end(block);
+        }
+        Ok(())
+    }
+
+    /// Print block start.
+    fn block_start(&mut self, block: &Block) {
+        if self.debug {
+            self.output.push('<');
+            if let Some(block_type) = block.block_type() {
+                self.output.push_str(block_type.as_str());
+            } else {
+                self.output.push_str("UNKNOWN");
+            }
+            self.output.push_str(" id=\"");
+            if let Some(block_id) = block.id() {
+                self.output.push_str(block_id);
+            } else {
+                self.output.push_str("UNKNOWN");
+            }
+            self.output.push_str("\">");
+        }
+    }
+
+    /// Print block end.
+    fn block_end(&mut self, block: &Block) {
+        if self.debug {
+            self.output.push_str("</");
+            if let Some(block_type) = block.block_type() {
+                self.output.push_str(block_type.as_str());
+            } else {
+                self.output.push_str("UNKNOWN");
+            }
+            self.output.push('>');
+        }
+    }
+}
