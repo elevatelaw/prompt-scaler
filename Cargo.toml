@@ -2,6 +2,15 @@
 name = "prompt-scaler"
 version = "0.1.0"
 edition = "2024"
+authors = ["eric.kidd@elevate.law"]
+
+description = "Run parameterized LLM prompts at scale, including OCR."
+categories = ["command-line-utilities", "template-engine"]
+keywords = ["llm", "ocr"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+homepage = "https://github.com/elevatelaw/prompt-scaler"
+repository = "https://github.com/elevatelaw/prompt-scaler"
 
 [dependencies]
 anyhow = "1.0.97"
