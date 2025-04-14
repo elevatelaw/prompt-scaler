@@ -3,10 +3,12 @@
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::Arc;
+use std::time::Duration;
 
 use aws_config::BehaviorVersion;
 use aws_sdk_textract::types::{Block, FeatureType, RelationshipType};
 use aws_sdk_textract::{primitives::Blob, types::BlockType};
+use leaky_bucket::RateLimiter;
 
 use crate::prelude::*;
 
@@ -19,6 +21,9 @@ pub struct TextractOcrEngine {
     /// AWS Textract client.
     client: aws_sdk_textract::Client,
 
+    /// A rate limiter to avoid hitting API limits.
+    rate_limiter: RateLimiter,
+
     /// Includes layout debug information in the output.
     debug: bool,
 }
@@ -26,11 +31,26 @@ pub struct TextractOcrEngine {
 impl TextractOcrEngine {
     /// Create a new `textract` engine.
     #[allow(clippy::new_ret_no_self)]
-    pub async fn new() -> Result<(Arc<dyn OcrEngine>, JoinWorker)> {
+    pub async fn new(
+        concurrency_limit: usize,
+    ) -> Result<(Arc<dyn OcrEngine>, JoinWorker)> {
         let config = aws_config::load_defaults(BehaviorVersion::v2025_01_17()).await;
         let client = aws_sdk_textract::Client::new(&config);
+        let rate_limiter = RateLimiter::builder()
+            .initial(concurrency_limit)
+            .refill(concurrency_limit)
+            .max(concurrency_limit)
+            .interval(Duration::from_secs(1))
+            .build();
         let debug = env::var("TEXTRACT_DEBUG").is_ok();
-        Ok((Arc::new(Self { client, debug }), JoinWorker::noop()))
+        Ok((
+            Arc::new(Self {
+                client,
+                rate_limiter,
+                debug,
+            }),
+            JoinWorker::noop(),
+        ))
     }
 }
 
@@ -38,6 +58,10 @@ impl TextractOcrEngine {
 impl OcrEngine for TextractOcrEngine {
     #[instrument(level = "debug", skip_all, fields(id = %input.id, page = %input.page_idx))]
     async fn ocr_page(&self, input: OcrPageInput) -> Result<OcrPageOutput> {
+        // Rate limit the request.
+        self.rate_limiter.acquire_one().await;
+
+        // Keep track of errors.
         let mut errors = Vec::new();
 
         // TODO: We may need to convert GIF and WEBP to a supported format.
@@ -60,7 +84,7 @@ impl OcrEngine for TextractOcrEngine {
             .await;
         match response {
             Err(e) => {
-                let err = format!("AWS Textract error: {}", e);
+                let err = format!("AWS Textract error: {:?}", e);
                 error!("{err}");
                 errors.push(err);
                 return Ok(OcrPageOutput { text: None, errors });
