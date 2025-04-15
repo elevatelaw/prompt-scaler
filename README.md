@@ -164,11 +164,8 @@ This JSONL output can be easily converted to CSV or another format using Python.
 
 See [tests/fixtures/external_schemas](tests/fixtures/external_schemas) and our [Justfile](Justfile) for examples.
 
-
-
 ## License
 
-License TBD, probably MIT+Apache 2, like Rust.
+Copyright 2025 Elevate. Some earlier code copyright 2024 Eric Kidd, and used with permission.
 
-Copyright 2025 Elevate.
-Some earlier code copyright ???? Eric Kidd.
+This software is licensed under either the [Apache License, Version 2.0](./LICENSE-APACHE.txt) or the [MIT License](./LICENSE-MIT.txt), at your option.
