@@ -49,7 +49,7 @@ pub struct PageIter {
     ///
     /// This is released by [`Drop`].
     #[allow(dead_code)]
-    tmpdir: Option<tempdir::TempDir>,
+    tmpdir: Option<tempfile::TempDir>,
     /// The MIME type of our outputs.
     mime_type: String,
     /// Iterator over the page files in the temporary directory.
@@ -125,7 +125,7 @@ impl PageIter {
             .context("failed to get filename from PDF path")?;
 
         // Create a temporary directory to hold the PDF files.
-        let tmpdir = tempdir::TempDir::new("pages")?;
+        let tmpdir = tempfile::TempDir::with_prefix("pages")?;
         let tmpdir_path = tmpdir.path().to_owned();
 
         // Run pdfseparate to split the PDF into separate files.
@@ -157,7 +157,7 @@ impl PageIter {
             .context("failed to get filename from PDF path")?;
 
         // Create a temporary directory to hold the PNG files.
-        let tmpdir = tempdir::TempDir::new("pages")?;
+        let tmpdir = tempfile::TempDir::with_prefix("pages")?;
         let tmpdir_path = tmpdir.path().to_owned();
 
         // Run pdftocairo to convert the PDF to PNG files.
@@ -182,7 +182,7 @@ impl PageIter {
     /// Create a [`PageIter`] from a [`tempdir::TempDir`] full of files
     /// named in lexixal order, plus a MIME type.
     pub async fn from_tempdir(
-        tmpdir: tempdir::TempDir,
+        tmpdir: tempfile::TempDir,
         mime_type: String,
     ) -> Result<Self> {
         // Get the path to the temporary directory.

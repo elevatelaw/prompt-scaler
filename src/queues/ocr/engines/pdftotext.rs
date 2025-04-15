@@ -50,7 +50,7 @@ impl OcrEngine for PdfToTextOcrEngine {
         }
 
         // Write our input to a temporary file.
-        let tmpdir = tempdir::TempDir::new("pdftotext")?;
+        let tmpdir = tempfile::TempDir::with_prefix("pdftotext")?;
         let input_path = tmpdir.path().join("input.pdf");
         let output_path = tmpdir.path().join("output.txt");
         let mut input_file =
