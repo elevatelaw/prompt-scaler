@@ -3,8 +3,10 @@
 use futures::StreamExt;
 
 use crate::{
+    async_utils::io::read_json_or_toml,
     page_iter::PageIterOptions,
     prelude::*,
+    prompt::ChatPrompt,
     queues::{
         ocr::{
             OcrInput, OcrOutput, OcrStreamInfo, engines::llm::default_ocr_prompt,
@@ -21,11 +23,15 @@ pub async fn cmd_ocr(
     page_iter_opts: &PageIterOptions,
     job_count: usize,
     model: &str,
+    prompt_path: Option<&Path>,
     allowed_failure_rate: f32,
     output_path: Option<&Path>,
 ) -> Result<()> {
     // Get our OCR prompt.
-    let prompt = default_ocr_prompt();
+    let prompt = match prompt_path {
+        Some(path) => read_json_or_toml::<ChatPrompt>(path).await?,
+        None => default_ocr_prompt(),
+    };
 
     // Open up our input stream and parse into records.
     let input = OcrInput::read_stream(input_path).await?;

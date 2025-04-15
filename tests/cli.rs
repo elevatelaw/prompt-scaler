@@ -200,6 +200,25 @@ fn test_ocr_rasterized() {
 }
 
 #[test]
+#[ignore = "Needs LiteLLM running"]
+fn test_ocr_custom_prompt() {
+    cmd()
+        .env("OPENAI_API_KEY", LITELLM_API_KEY)
+        .env("OPENAI_API_BASE", LITELLM_API_BASE)
+        .arg("ocr")
+        .arg("tests/fixtures/ocr/input.csv")
+        .arg("--jobs")
+        .arg("3")
+        .arg("--prompt")
+        // Same prompt as usual, but pass it explicitly.
+        .arg("src/queues/ocr/engines/llm/default_ocr_prompt.toml")
+        .arg("--model")
+        .arg("gemini-2.0-flash")
+        .assert()
+        .success();
+}
+
+#[test]
 fn test_ocr_pdftotext() {
     cmd()
         .arg("ocr")

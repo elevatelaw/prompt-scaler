@@ -80,6 +80,11 @@ enum Cmd {
         #[clap(short = 'm', long, default_value = "gemini-2.0-flash")]
         model: String,
 
+        /// Prompt, in TOML or JSON format. The `response_schema` field will be
+        /// ignored. Defaults to a generic OCR prompt.
+        #[clap(short = 'p', long = "prompt")]
+        prompt_path: Option<PathBuf>,
+
         /// What portion of inputs should we allow to fail? Specified as a
         /// number between 0.0 and 1.0.
         #[clap(long, default_value = "0.01")]
@@ -146,6 +151,7 @@ async fn real_main() -> Result<()> {
             page_iter_opts,
             job_count,
             model,
+            prompt_path,
             allowed_failure_rate,
             output_path,
         } => {
@@ -154,6 +160,7 @@ async fn real_main() -> Result<()> {
                 page_iter_opts,
                 *job_count,
                 model,
+                prompt_path.as_deref(),
                 *allowed_failure_rate,
                 output_path.as_deref(),
             )
