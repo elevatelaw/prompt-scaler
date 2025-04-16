@@ -164,6 +164,47 @@ This JSONL output can be easily converted to CSV or another format using Python.
 
 See [tests/fixtures/external_schemas](tests/fixtures/external_schemas) and our [Justfile](Justfile) for examples.
 
+### OCR Prompts
+
+`prompt-scaler` also provides a special OCR mode that handles page-splitting and page-merging. It also provides three extra `--model` values that support non-LLM models:
+
+- `textract`: AWS Textract.
+- `tesseract`: Open-source Tesseract OCR engine.
+- `pdftotect`: Extraction of "searchable" text already in a PDF.
+
+To use OCR mode, you will need to install `poppler-utils` and `tesseract-ocr`. On Ubuntu, you can run:
+
+```sh
+apt install poppler-utils tesseract-ocr
+```
+
+On MacOS X, you can run:
+
+```sh
+brew install poppler-utils tesseract
+```
+
+The input format is a CSV (or JSONL) file listing PDFs and images to OCR:
+
+```csv
+id,path,password
+```
+
+The `password` column is optional, but it may be used to supply the "owner" password for decrypting PDFs. To perform the OCR, run:
+
+```sh
+prompt-scaler ocr input.csv --model textract -o output.jsonl
+```
+
+The output format is still being refined, but it currently contains the following fields:
+
+- `id: any`: Document ID (from the input).
+- `errors: string[]`: A list of any errors that occurred, including transient errors that were recovered from.
+- `failed_page_count: number`: The number of pages that failed to OCR.
+- `pages: (string | null)[]`: An array of strings or NULL values, containing the text for each page. May use Markdown formatting depending on the OCR model and prompt.
+
+More output fields will be added, possibly including such things as quality indicators or text bounding boxes, if available. And some field names may change. We may also add a "direct to CSV" output mode. But for now, see the scripts in [`scripts/`](./scripts/) for examples of how to convert the JSONL output to other formats.
+
 ## License
 
 Copyright 2025 Elevate. Some earlier code copyright 2024 Eric Kidd, and used with permission.

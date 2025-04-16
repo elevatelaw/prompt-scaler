@@ -46,7 +46,7 @@ pub struct OcrOutput {
     /// The text extracted from the PDF. If errors occur on specific pages,
     /// those pages will be `None`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub extracted_text: Vec<Option<String>>,
+    pub pages: Vec<Option<String>>,
 
     /// How many pages failed to OCR?
     pub failed_page_count: usize,
@@ -149,23 +149,23 @@ async fn ocr_file(
         .into_iter()
         .collect::<Result<Vec<_>>>()?;
 
-    // Turn out `ChatResponse`s ito a `PdfOutput` record.
+    // Turn out `ChatResponse`s into a `PdfOutput` record.
     let mut errors = vec![];
     let mut failed_page_count = 0;
-    let mut extracted_text = vec![];
+    let mut pages = vec![];
     for chat_output in chat_outputs {
         errors.extend(chat_output.errors);
         if let Some(text) = chat_output.text {
-            extracted_text.push(Some(text));
+            pages.push(Some(text));
         } else {
             // No LLM response.
             failed_page_count += 1;
-            extracted_text.push(None);
+            pages.push(None);
         }
     }
     Ok(OcrOutput {
         id,
-        extracted_text,
+        pages,
         failed_page_count,
         errors,
     })

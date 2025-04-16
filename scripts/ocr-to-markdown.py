@@ -25,7 +25,7 @@ def main(input_jsonl: str, output_dir: str):
             # Read a JSONL line.
             data = json.loads(line)
             id: str = data["id"]
-            extracted_text: List[Union[str, None]] = data["extracted_text"]
+            extracted_text: List[Union[str, None]] = data["pages"]
 
             # Insert markers for missing pages.
             final_text: List[str] = []

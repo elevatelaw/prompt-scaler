@@ -130,7 +130,7 @@ def output_results(data_dir: str, model: ModelInfo, output_jsonl_path: str) -> M
             # Read a JSONL line.
             data = json.loads(line)
             rel_path: str = data["id"]
-            extracted_text: List[Union[str, None]] = data["extracted_text"]
+            extracted_text: List[Union[str, None]] = data["pages"]
 
             # Write our Markdown output.
             markdown_output_path: str = os.path.join(data_dir, model.build_path(rel_path, "md"))
