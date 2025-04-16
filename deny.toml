@@ -46,3 +46,8 @@ private = { ignore = true }
 # Allow multiple versions of one dependency. This is harmless but
 # increases binary sizes.
 multiple-versions = "allow"
+
+# Do not allow C version of OpenSSL because it makes the binary far
+# harder to port to other platforms. We want rustls, which is much more
+# portable.
+deny = ["openssl-sys"]

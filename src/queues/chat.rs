@@ -147,7 +147,7 @@ pub async fn create_chat_work_queue(
     //
     // TODO: Make sure `description` fields are present?
     let schema = prompt.response_schema.to_json_schema().await?;
-    let validator = jsonschema::async_validator_for(&schema).await?;
+    let validator = jsonschema::validator_for(&schema)?;
 
     let state = Arc::new(ProcessorState {
         client,
