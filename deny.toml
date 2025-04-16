@@ -1,0 +1,48 @@
+
+[advisories]
+ignore = [
+    # "Unmaintained" advisories for `backoff`, which we use indirectly
+    # via `async-openai`. This does not represent known security issues;
+    # just an upstream using a crate with an inactive maintainer.
+    #
+    # We may be able to replace `async-openai` or send a PR upstream.
+    "RUSTSEC-2025-0012",
+    "RUSTSEC-2024-0384",
+]
+
+[graph]
+# What platforms do we care about licenses on? This allows us
+# to ignore platform-specific dependencies that we pull in.
+targets = [
+    { triple = "x86_64-unknown-linux-musl" },
+    { triple = "x86_64-pc-windows-msvc" },
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "aarch64-apple-darwin" },
+]
+
+[licenses]
+# List of explictly allowed licenses
+# See https://spdx.org/licenses/ for list of possible licenses
+# [possible values: any SPDX 3.7 short identifier (+ optional exception)].
+allow = [
+    # Standard open source licenses used in the Rust community.
+    "MIT",
+    "Apache-2.0",
+    # Needed by a few things.
+    "Unicode-3.0",
+    # Other common licenses.
+    "BSD-3-Clause",
+    "ISC",
+    "MIT-0",
+    # For `keen-retry`. This is a less well-written attempt at what
+    # the Creative Commons "CC0" public domain dedication does.
+    "Unlicense",
+]
+
+# Ignore license fields for crates defined locally in this repository.
+private = { ignore = true }
+
+[bans]
+# Allow multiple versions of one dependency. This is harmless but
+# increases binary sizes.
+multiple-versions = "allow"

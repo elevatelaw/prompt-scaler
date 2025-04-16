@@ -120,7 +120,7 @@ async fn main() -> Result<()> {
 #[instrument(level = "debug", name = "main")]
 async fn real_main() -> Result<()> {
     // Load environment variables from a `.env` file, if it exists.
-    dotenv::dotenv().ok();
+    dotenvy::dotenv().ok();
 
     // Parse command-line arguments.
     let opts = Opts::parse();
