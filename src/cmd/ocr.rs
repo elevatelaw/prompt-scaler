@@ -14,11 +14,14 @@ use crate::{
         },
         work::{WorkInput as _, WorkOutput as _},
     },
+    ui::{ProgressConfig, Ui},
 };
 
 /// The `ocr` subcommand.
 #[instrument(level = "debug", skip_all)]
+#[allow(clippy::too_many_arguments)]
 pub async fn cmd_ocr(
+    ui: Ui,
     input_path: Option<&Path>,
     page_iter_opts: &PageIterOptions,
     job_count: usize,
@@ -34,7 +37,17 @@ pub async fn cmd_ocr(
     };
 
     // Open up our input stream and parse into records.
-    let input = OcrInput::read_stream(input_path).await?;
+    let input = OcrInput::read_stream(ui.clone(), input_path).await?;
+
+    // Configure our progress bar.
+    let pb = ui.new_from_size_hint(
+        &ProgressConfig {
+            emoji: "📄",
+            msg: "OCRing files",
+            done_msg: "OCRed files",
+        },
+        input.size_hint(),
+    );
 
     let OcrStreamInfo { stream, worker } = ocr_files(
         input,
@@ -44,7 +57,7 @@ pub async fn cmd_ocr(
         model.to_owned(),
     )
     .await?;
-    let output = stream.buffered(job_count).boxed();
+    let output = pb.wrap_stream(stream.buffered(job_count)).boxed();
 
     OcrOutput::write_stream(output_path, output, allowed_failure_rate).await?;
 

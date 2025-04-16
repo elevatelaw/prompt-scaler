@@ -13,7 +13,7 @@
 
 use std::{pin::Pin, sync::Arc, task::Context, vec};
 
-use futures::{pin_mut, stream::StreamExt as _};
+use futures::{TryStreamExt, pin_mut, stream::StreamExt as _};
 use peekable::tokio::AsyncPeekable;
 use serde_json::Map;
 use tokio::{
@@ -25,9 +25,12 @@ use tokio::{
 };
 use tokio_stream::wrappers::LinesStream;
 
-use crate::prelude::*;
+use crate::{
+    prelude::*,
+    ui::{ProgressConfig, Ui},
+};
 
-use super::BoxedStream;
+use super::{BoxedStream, size_hint::WithSizeHintExt};
 
 /// A smart async reader that uses [`AsyncPeekable`] to detect whether the input is JSON
 /// or JSONL, or something else.
@@ -143,6 +146,43 @@ where
     }
 }
 
+/// Count JSONL or CSV records in a file.
+#[instrument(level = "debug", skip_all, fields(path = %path.display()))]
+pub async fn count_jsonl_or_csv_records(
+    ui: &Ui,
+    path: &Path,
+) -> Result<(usize, Option<usize>)> {
+    // If this isn't a file, we can't count records. This may happen if our
+    // input is a named pipe from a tool like Pachyderm.
+    if !path.is_file() {
+        return Ok((0, None));
+    }
+
+    // Create a progress indicator.
+    let spinner = ui.new_spinner(&ProgressConfig {
+        emoji: "🧮",
+        msg: "Counting input records",
+        done_msg: "Counted input records",
+    });
+
+    // Count records.
+    let reader = SmartReader::new_from_path_or_stdin(Some(path)).await?;
+    let count = if reader.is_json_like() {
+        let lines = LinesStream::new(reader.lines());
+        lines
+            .try_fold(0, |acc, _line| async move { Ok(acc + 1) })
+            .await?
+    } else {
+        csv_async::AsyncReaderBuilder::new()
+            .create_reader(reader)
+            .into_byte_records()
+            .try_fold(0, |acc, _record| async move { Ok(acc + 1) })
+            .await?
+    };
+    spinner.finish_with_message(format!("Found {count} records"));
+    Ok((count, Some(count)))
+}
+
 /// A JSON Object value, without the surrounding [`Value::Object`] wrapper.
 pub type JsonObject = Map<String, Value>;
 
@@ -152,11 +192,16 @@ pub type JsonStream = BoxedStream<Result<Value>>;
 /// Read JSONL or CSV from a file or stdin.
 ///
 /// This function returns an async [`Stream`] of JSON [`Map`] objects.
-pub async fn read_jsonl_or_csv(path: Option<&Path>) -> Result<JsonStream> {
+pub async fn read_jsonl_or_csv(ui: Ui, path: Option<&Path>) -> Result<JsonStream> {
+    let size_hint = match path {
+        Some(path) => count_jsonl_or_csv_records(&ui, path).await?,
+        None => (0, None),
+    };
+
     let reader = SmartReader::new_from_path_or_stdin(path).await?;
     let description = Arc::new(reader.description.clone());
     if reader.is_json_like() {
-        let lines = LinesStream::new(reader.lines());
+        let lines = LinesStream::new(reader.lines()).with_size_hint(size_hint);
         Ok(Box::pin(lines.then(move |line| {
             let description = description.clone();
             async move {
@@ -181,23 +226,28 @@ pub async fn read_jsonl_or_csv(path: Option<&Path>) -> Result<JsonStream> {
                 })?
                 .to_owned(),
         );
-        Ok(Box::pin(reader.into_records().then(move |record| {
-            let description = description.clone();
-            let headers = headers.clone();
-            async move {
-                let record = record.with_context(|| {
-                    format!("Failed to read CSV record from {:?}", description)
-                })?;
-                let map: Map<String, Value> = headers
-                    .iter()
-                    .zip(record.iter())
-                    .map(|(header, value)| {
-                        (header.to_owned(), Value::String(value.to_owned()))
-                    })
-                    .collect();
-                Ok(Value::Object(map))
-            }
-        })))
+        Ok(Box::pin(
+            reader
+                .into_records()
+                .with_size_hint(size_hint)
+                .then(move |record| {
+                    let description = description.clone();
+                    let headers = headers.clone();
+                    async move {
+                        let record = record.with_context(|| {
+                            format!("Failed to read CSV record from {:?}", description)
+                        })?;
+                        let map: Map<String, Value> = headers
+                            .iter()
+                            .zip(record.iter())
+                            .map(|(header, value)| {
+                                (header.to_owned(), Value::String(value.to_owned()))
+                            })
+                            .collect();
+                        Ok(Value::Object(map))
+                    }
+                }),
+        ))
     }
 }
 

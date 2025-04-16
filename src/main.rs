@@ -1,7 +1,11 @@
 use std::str::FromStr;
 
 use clap::{Parser, Subcommand};
-use tracing_subscriber::{EnvFilter, filter::Directive, fmt::format::FmtSpan};
+use tracing_subscriber::{
+    EnvFilter, Layer as _, filter::Directive, fmt::format::FmtSpan, layer::SubscriberExt,
+    util::SubscriberInitExt as _,
+};
+use ui::Ui;
 
 use self::{page_iter::PageIterOptions, prelude::*};
 
@@ -15,6 +19,7 @@ mod prompt;
 mod queues;
 mod retry;
 mod schema;
+mod ui;
 
 /// Run LLM prompts at scale.
 #[derive(Debug, Parser)]
@@ -96,35 +101,55 @@ enum Cmd {
     },
 }
 
+impl Cmd {
+    /// Are we using stdout for output?
+    fn using_stdout_for_output(&self) -> bool {
+        match self {
+            Cmd::Chat { output_path, .. } => output_path.is_none(),
+            Cmd::Ocr { output_path, .. } => output_path.is_none(),
+        }
+    }
+}
+
 /// Our entry point, which can return an error. [`anyhow::Result`] will
 /// automatically print a nice error message with optional backtrace.
 #[tokio::main]
 async fn main() -> Result<()> {
+    let ui = Ui::init();
+
     // Initialize tracing.
     let directive =
         Directive::from_str("info").expect("built-in directive should be valid");
     let env_filter = EnvFilter::builder()
         .with_default_directive(directive)
         .from_env_lossy();
-    tracing_subscriber::fmt::Subscriber::builder()
-        .with_env_filter(env_filter)
+
+    let subscriber = tracing_subscriber::fmt::layer()
         .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
-        .with_writer(std::io::stderr)
-        .init();
+        .with_writer(ui.get_stderr_writer())
+        .with_filter(env_filter);
+
+    // We can stack multiple layers here if we need to.
+    tracing_subscriber::registry().with(subscriber).init();
 
     // Call our real `main` function now that logging is set up.
-    real_main().await
+    real_main(ui).await
 }
 
 /// Our real entry point.
-#[instrument(level = "debug", name = "main")]
-async fn real_main() -> Result<()> {
+#[instrument(level = "debug", name = "main", skip_all)]
+async fn real_main(ui: Ui) -> Result<()> {
     // Load environment variables from a `.env` file, if it exists.
     dotenvy::dotenv().ok();
 
     // Parse command-line arguments.
     let opts = Opts::parse();
     debug!("Parsed options: {:?}", opts);
+
+    // Hide the progress bar if we're using stdout for output.
+    if opts.subcmd.using_stdout_for_output() {
+        ui.hide_progress_bars();
+    }
 
     // Run the appropriate subcommand.
     match &opts.subcmd {
@@ -137,6 +162,7 @@ async fn real_main() -> Result<()> {
             output_path,
         } => {
             cmd::chat::cmd_chat(
+                ui,
                 input_path.as_deref(),
                 *job_count,
                 model,
@@ -156,6 +182,7 @@ async fn real_main() -> Result<()> {
             output_path,
         } => {
             cmd::ocr::cmd_ocr(
+                ui,
                 input_path.as_deref(),
                 page_iter_opts,
                 *job_count,

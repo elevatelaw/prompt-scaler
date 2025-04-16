@@ -236,7 +236,6 @@ fn test_ocr_pdftotext() {
 }
 
 #[test]
-#[ignore = "Slightly expensive and needs AWS credentials"]
 fn test_ocr_tesseract() {
     cmd()
         .arg("ocr")
@@ -251,6 +250,7 @@ fn test_ocr_tesseract() {
 }
 
 #[test]
+#[ignore = "Slightly expensive and needs AWS credentials"]
 fn test_ocr_textract() {
     cmd()
         .arg("ocr")

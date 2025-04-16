@@ -10,7 +10,7 @@ use std::{
 
 use futures::{FutureExt as _, Stream};
 
-use super::BoxedFuture;
+use super::{BoxedFuture, size_hint::decrement_size_hint};
 use crate::prelude::*;
 
 /// A [`BlockingIterStream`] can be in one of two states:
@@ -36,6 +36,7 @@ where
     I: Iterator<Item = Result<T>> + Send + Unpin + 'static,
     T: Send + 'static,
 {
+    size_hint: (usize, Option<usize>),
     state: Option<BlockingIterStreamState<I, T>>,
 }
 
@@ -47,6 +48,7 @@ where
     /// Create a new [`BlockingIterStream`] from an iterator.
     pub fn new(iter: I) -> Self {
         Self {
+            size_hint: iter.size_hint(),
             state: Some(BlockingIterStreamState::Iter(iter)),
         }
     }
@@ -73,6 +75,10 @@ where
         // Either create a new future to wait on, or use the existing one.
         let mut future = match state {
             BlockingIterStreamState::Iter(mut iter) => {
+                // Update our size hint before we temporarily give our iterator
+                // away, subtracting 1 because we'll be calling `iter.next()`.
+                this.size_hint = decrement_size_hint(iter.size_hint());
+
                 // Run `iter.next()` on a background worker thread, to avoid
                 // blocking the executor. This takes ownership of `iter`, but
                 // we'll need to give it back later. Async Rust is fun!
@@ -95,6 +101,14 @@ where
                 this.state = Some(BlockingIterStreamState::Waiting(future));
                 Poll::Pending
             }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self.state {
+            // Use a current size_hint if we have one.
+            Some(BlockingIterStreamState::Iter(ref iter)) => iter.size_hint(),
+            _ => self.size_hint,
         }
     }
 }

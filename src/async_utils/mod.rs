@@ -16,6 +16,7 @@ use crate::prelude::*;
 
 pub mod blocking_iter_streams;
 pub mod io;
+pub mod size_hint;
 
 /// A type alias for a boxed future. This is used to make it easier to work with
 /// with complex futures.

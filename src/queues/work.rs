@@ -36,6 +36,7 @@ use crate::{
         io::{read_jsonl_or_csv, write_output},
     },
     prelude::*,
+    ui::Ui,
 };
 
 /// Trait implemented by input records to a [`WorkItemProcessor`].
@@ -46,8 +47,11 @@ pub trait WorkInput: DeserializeOwned + Send + 'static {
     }
 
     /// Read a stream from a [`Path`] or from standard input.
-    async fn read_stream(path: Option<&Path>) -> Result<BoxedStream<Result<Self>>> {
-        Ok(read_jsonl_or_csv(path)
+    async fn read_stream(
+        ui: Ui,
+        path: Option<&Path>,
+    ) -> Result<BoxedStream<Result<Self>>> {
+        Ok(read_jsonl_or_csv(ui, path)
             .await?
             .map(|value| Self::from_json(value?))
             .boxed())
