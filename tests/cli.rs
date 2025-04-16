@@ -107,6 +107,7 @@ fn test_chat_text_csv_input_ollama() {
 }
 
 #[test]
+#[ignore = "Needs LiteLLM running"]
 fn test_chat_external_schema_csv_input_litellm() {
     // Prompts using JSON Schemas generated from various languages. See our
     // `Justfile` for how the schemas referred to by these files are generated.
@@ -235,6 +236,7 @@ fn test_ocr_pdftotext() {
 }
 
 #[test]
+#[ignore = "Slightly expensive and needs AWS credentials"]
 fn test_ocr_tesseract() {
     cmd()
         .arg("ocr")
