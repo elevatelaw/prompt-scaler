@@ -94,6 +94,10 @@ pub enum SimpleSchemaDetails {
         /// The type of this scalar.
         #[serde(default)]
         r#type: ScalarType,
+
+        /// Allowed enum values.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        r#enum: Option<Vec<Value>>,
     },
 }
 
@@ -145,10 +149,13 @@ impl ToJsonSchema for SimpleSchema {
                 schema["description"] = description;
                 Ok(schema)
             }
-            SimpleSchemaDetails::Scalar { r#type } => {
+            SimpleSchemaDetails::Scalar { r#type, r#enum } => {
                 let mut schema = json!({
                     "type": r#type.to_json_schema()?,
                 });
+                if let Some(enum_values) = r#enum {
+                    schema["enum"] = Value::Array(enum_values.clone());
+                }
                 schema["description"] = description;
                 Ok(schema)
             }
