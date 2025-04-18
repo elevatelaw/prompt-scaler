@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>OCR Benchmark Input</title>
+    <style>
+        html {
+            margin: 0 auto;
+            max-width: 1024px;
+            background-color: #f0f0f0;
+        }
+
+        body {
+            background-color: #fff;
+            padding: 1lh;
+        }
+
+        table.summary th.text,
+        table.summary td.text {
+            text-align: left;
+        }
+
+        table.summary th.numeric,
+        table.summary td.numeric {
+            text-align: right;
+        }
+
+        img.input {
+            max-width: 100%;
+            max-height: 600px;
+            border: 1px solid grey;
+        }
+
+        .tablist button {
+            padding: .4rem .8rem;
+            border: none;
+            background: #eee;
+            cursor: pointer;
+            font: inherit;
+        }
+
+        .tablist button[aria-selected="true"] {
+            background: #fff;
+            border-bottom: 2px solid #007acc;
+            /* active “underline” */
+            font-weight: 600;
+        }
+
+        .tabpanel {
+            display: none;
+            padding: 1rem;
+            border: 1px solid #ccc;
+        }
+
+        .tabpanel[aria-hidden="false"] {
+            display: block;
+        }
+
+        table.metadata th {
+            text-align: left;
+        }
+
+        blockquote {
+            overflow: auto;
+            max-width: 100%;
+            max-height: 400px;
+            font-size: 10px;
+        }
+
+        span.added {
+            background-color: #cfc;
+        }
+
+        span.changed {
+            background-color: #ccf;
+        }
+
+        span.removed {
+            background-color: #fcc;
+        }
+
+        td.flagged {
+            border: 2px solid red;
+        }
+
+        .ground-truth-issues .jaqqard {
+            opacity: 0.4;
+            text-decoration: line-through;
+        }
+
+        .jaqqard-100 {
+            background-color: #8f8;
+        }
+
+        .jaqqard-95 {
+            background-color: #bf8;
+        }
+
+        .jaqqard-90 {
+            background-color: #ff8;
+        }
+
+        .jaqqard-80 {
+            background-color: #fb8;
+        }
+
+        .jaqqard-00 {
+            background-color: #f88;
+        }
+    </style>
+
+    <script>
+        /** Assign a jaqqard-xx class to elem based on its value. */
+        function assignJaqqardClass(elem) {
+            const jaqqard_value = parseFloat(elem.innerText);
+            if (jaqqard_value >= 0.999) {
+                elem.classList.add("jaqqard-100");
+            } else if (jaqqard_value >= 0.95) {
+                elem.classList.add("jaqqard-95");
+            } else if (jaqqard_value >= 0.9) {
+                elem.classList.add("jaqqard-90");
+            } else if (jaqqard_value >= 0.8) {
+                elem.classList.add("jaqqard-80");
+            } else {
+                elem.classList.add("jaqqard-00");
+            }
+        }
+
+        /** Assign jaqqard-xx classes to all .jaqqard elements. */
+        function assignJaqqardClasses() {
+            const jaqqard_elements = document.querySelectorAll(".jaqqard");
+            for (const elem of jaqqard_elements) {
+                assignJaqqardClass(elem);
+            }
+        }
+
+        /** Initialize the tabs. */
+        function initializeTabs() {
+            // Generic tab initialiser — works for any .tabs group
+            document.querySelectorAll('.tabs').forEach(tabs => {
+                const buttons = tabs.querySelectorAll('[role="tab"]');
+                const panels = tabs.querySelectorAll('[role="tabpanel"]');
+
+                function activate(idx) {
+                    buttons.forEach((btn, i) => {
+                        const selected = i === idx;
+                        btn.setAttribute('aria-selected', selected);
+                        panels[i].setAttribute('aria-hidden', !selected);
+                    });
+                    buttons[idx].focus();               // ensure keyboard users stay oriented
+                }
+
+                // Click
+                buttons.forEach((btn, i) =>
+                    btn.addEventListener('click', () => activate(i))
+                );
+
+                // Arrow‑key navigation (← →)
+                tabs.addEventListener('keydown', e => {
+                    if (!['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+                    const current = [...buttons].indexOf(document.activeElement);
+                    const next = (current + (e.key === 'ArrowRight' ? 1 : buttons.length - 1)) % buttons.length;
+                    activate(next);
+                    e.preventDefault();
+                });
+            });
+        }
+
+        /* Assign jaqqard classes when the page loads. */
+        window.addEventListener("load", function () {
+            assignJaqqardClasses();
+            initializeTabs();
+        });
+    </script>
+</head>
+
+<body>
+
+    <h1>OCR Benchmark Input Sample</h1>
+
+    <p>The <a href="https://huggingface.co/datasets/getomni-ai/ocr-benchmark">data for this benchmark</a> was published
+        by <a href="https://getomni.ai/">OmniAI</a>. It consists of a mix of 1,000 challenging single-page images,
+        including handwriting,
+        photos, and extremely dense tables.</p>
+
+    <h2>Summary</h2>
+
+    <table class="summary">
+        <thead>
+            <tr>
+                <th class="text">ID</th>
+                <th class="text">Format</th>
+                <th class="text">Quality</th>
+                {% for model in models %}
+                <th class="numeric">{{ model }}</th>
+                {% endfor %}
+                <th class="text">Ground truth issues</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for image in images %}
+            <tr {% if image.ground_truth_issue is not none %}class="ground-truth-issues" {% endif %}>
+                <td class="text"><a href="#{{ image.id }}">{{ image.id }}</a></td>
+                <td class="text">{{ image.metadata.format }}</td>
+                <td class="text">{{ image.metadata.document_quality.value }}</td>
+                {% for model in models %}
+                <td class="numeric jaqqard {% if image.model_results[model].result_is_flagged() %}flagged{% endif %}">
+                    {{ image.model_results[model].jaqqard_similarity | round(2) }}
+                </td>
+                {% endfor %}
+                <td class="text">{{ image.ground_truth_issue or "" }}</td>
+            </tr>
+            {% endfor %}
+
+            <tr>
+                <th class="numeric" colspan=3><strong>Average</strong></th>
+                {% for model in models %}
+                <td class="numeric jaqqard">{{ avg_jaqqard_scores[model] | round(2) }}</td>
+                {% endfor %}
+                <td class="text"></td>
+            </tr>
+        </tbody>
+    </table>
+
+    {% for image in images %}
+
+    <h2 id="{{ image.id }}">Image #{{ image.id }}</h2>
+
+    <p>
+        <a href="{{ image.rel_path() }}">
+            <img class="input" src="{{ image.rel_path() }}" alt="Image #{{ image.id }}" />
+        </a>
+    </p>
+
+    <table class="metadata">
+        <tr>
+            <th>Format:</th>
+            <td>{{ image.metadata.format }}</td>
+        </tr>
+        <tr>
+            <th>Quality:</th>
+            <td>{{ image.metadata.document_quality.value }}</td>
+        </tr>
+        {% if image.metadata.rotation is not none %}
+        <tr>
+            <th>Rotation:</th>
+            <td>{{ image.metadata.rotation }}</td>
+        </tr>
+        {% endif %}
+    </table>
+
+    <div class="tabs">
+        <div class="tablist">
+            {% for model in models %}
+            {% set model_result = image.model_results[model] %}
+            <button class="tablink" role="tab" aria-controls="{{ image.id }}-{{ model }}"
+                aria-selected="{{ loop.first | string | lower }}">
+                {{ model }} ({{ model_result.jaqqard_similarity | round(2) }})
+            </button>
+            {% endfor %}
+            <button class="tablink" role="tab" aria-controls="{{ image.id }}-expected" aria-selected="false">
+                Expected
+            </button>
+        </div>
+
+        {% for model in models %}
+        {% set model_result = image.model_results[model] %}
+
+        <section class="tabpanel" role="tabpanel" id="{{ image.id }}-{{ model }}"
+            aria-hidden="{{ (not loop.first) | string | lower }}">
+
+            <blockquote>{{ model_result.extracted_markdown | md }}</blockquote>
+
+            {% if model_result.missing_tokens %}
+            <p>Removed:
+                {% for token in model_result.missing_tokens %}
+                <span class="removed">{{ token }}</span>
+                {% if not loop.last %}, {% endif %}
+                {% endfor %}
+            </p>
+            {% endif %}
+
+            {% if model_result.output.analysis %}
+            <pre class="analysis">{{ model_result.output.analysis | json }}</pre>
+            {% endif %}
+        </section>
+        {% endfor %}
+
+        <section class="tabpanel" role="tabpanel" id="{{ image.id }}-expected" aria-hidden="true">
+            <blockquote>{{ image.true_markdown_output | md }}</blockquote>
+        </section>
+    </div>
+
+    {% endfor %}
+
+</body>
+
+</html>

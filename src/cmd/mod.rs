@@ -2,3 +2,4 @@
 
 pub mod chat;
 pub mod ocr;
+pub mod schema;

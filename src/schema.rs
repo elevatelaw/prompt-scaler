@@ -2,13 +2,13 @@
 
 use std::collections::HashMap;
 
-use schemars::{JsonSchema, schema_for};
+use schemars::{JsonSchema, SchemaGenerator, r#gen::SchemaSettings};
 use serde_json::Map;
 
 use crate::{async_utils::io::read_json_or_toml, prelude::*};
 
 /// Either an external or an internal schema.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(untagged, deny_unknown_fields, rename_all = "snake_case")]
 pub enum Schema {
     /// An external schema, provided as a URL.
@@ -36,7 +36,13 @@ impl Schema {
     where
         T: JsonSchema,
     {
-        let schema = schema_for!(T);
+        // Gemini 2.0 Flash doesn't like `definitions` in the schema,
+        // so inline all subschemas.
+        let mut settings = SchemaSettings::draft07();
+        settings.inline_subschemas = true;
+        let generator = SchemaGenerator::new(settings);
+
+        let schema = generator.into_root_schema_for::<T>();
         let json =
             serde_json::to_value(schema).expect("failed to convert schema to JSON");
         Self::JsonValue { json }
@@ -58,7 +64,7 @@ impl Schema {
 }
 
 /// A simplified version of JSON Schema, used for validation.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct SimpleSchema {
     /// A description of this value.
@@ -70,7 +76,7 @@ pub struct SimpleSchema {
 }
 
 /// The details of a schema.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(untagged, deny_unknown_fields, rename_all = "snake_case")]
 pub enum SimpleSchemaDetails {
     /// An array.
@@ -102,7 +108,7 @@ pub enum SimpleSchemaDetails {
 }
 
 /// Basic types we support.
-#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Default, Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub enum ScalarType {
     /// A string.

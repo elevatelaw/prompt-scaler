@@ -5,6 +5,8 @@ use std::fs;
 use handlebars::{
     Context, Handlebars, Helper, HelperResult, Output, RenderContext, RenderErrorReason,
 };
+use handlebars_concat::HandlebarsConcat;
+use schemars::JsonSchema;
 use serde_json::Map;
 
 use crate::{
@@ -12,7 +14,7 @@ use crate::{
 };
 
 /// A chat completion prompt.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct ChatPrompt {
     /// The developer (aka "system") message, if any.
@@ -31,12 +33,13 @@ impl ChatPrompt {
         let mut handlebars = Handlebars::new();
         handlebars.register_escape_fn(|s| s.to_owned());
         handlebars.register_helper("image-data-url", Box::new(image_data_url_helper));
+        handlebars.register_helper("concat", Box::new(HandlebarsConcat));
         self.render_template(&handlebars, bindings)
     }
 }
 
 /// A message, and optionally a response (represented as a JSON object).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Message {
     /// A user message.

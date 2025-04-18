@@ -75,6 +75,9 @@ impl OcrEngine for TesseractOcrEngine {
         Ok(OcrPageOutput {
             text: Some(text),
             errors,
+            analysis: None,
+            estimated_cost: None,
+            token_usage: None,
         })
     }
 }

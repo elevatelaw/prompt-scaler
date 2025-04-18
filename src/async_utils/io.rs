@@ -252,7 +252,7 @@ pub async fn read_jsonl_or_csv(ui: Ui, path: Option<&Path>) -> Result<JsonStream
 }
 
 /// Create an [`AsyncWrite`] for a file or stdout.
-async fn create_writer(
+pub async fn create_writer(
     path: Option<&Path>,
 ) -> Result<Box<dyn AsyncWrite + Unpin + Send + Sync + 'static>> {
     match path {

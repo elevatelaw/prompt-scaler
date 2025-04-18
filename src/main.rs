@@ -5,9 +5,8 @@ use tracing_subscriber::{
     EnvFilter, Layer as _, filter::Directive, fmt::format::FmtSpan, layer::SubscriberExt,
     util::SubscriberInitExt as _,
 };
-use ui::Ui;
 
-use self::{page_iter::PageIterOptions, prelude::*};
+use self::{page_iter::PageIterOptions, prelude::*, ui::Ui};
 
 mod async_utils;
 mod cmd;
@@ -99,6 +98,8 @@ enum Cmd {
         #[clap(short = 'o', long = "out")]
         output_path: Option<PathBuf>,
     },
+    /// Print schemas for input and output formats.
+    Schema(cmd::schema::SchemaOpts),
 }
 
 impl Cmd {
@@ -107,6 +108,7 @@ impl Cmd {
         match self {
             Cmd::Chat { output_path, .. } => output_path.is_none(),
             Cmd::Ocr { output_path, .. } => output_path.is_none(),
+            Cmd::Schema(opts) => opts.output_path.is_none(),
         }
     }
 }
@@ -192,6 +194,9 @@ async fn real_main(ui: Ui) -> Result<()> {
                 output_path.as_deref(),
             )
             .await?;
+        }
+        Cmd::Schema(schema_opts) => {
+            cmd::schema::cmd_schema(schema_opts).await?;
         }
     }
     Ok(())

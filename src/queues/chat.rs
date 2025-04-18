@@ -2,17 +2,19 @@
 
 use std::{
     iter,
+    ops::AddAssign,
     sync::{Arc, Mutex},
 };
 
 use async_openai::{Client, config::OpenAIConfig, types::CreateChatCompletionResponse};
 use futures::FutureExt as _;
 use keen_retry::{ExponentialJitter, ResolvedResult, RetryResult};
+use schemars::JsonSchema;
 
 use super::work::{WorkInput, WorkOutput, WorkQueue};
 use crate::{
     async_utils::{BoxedFuture, BoxedStream, JoinWorker, io::JsonObject},
-    llm_client::create_llm_client,
+    llm_client::{LiteLlmModel, create_llm_client, litellm_model_info},
     prelude::*,
     prompt::ChatPrompt,
     retry::{
@@ -22,7 +24,7 @@ use crate::{
 };
 
 /// An input record.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct ChatInput {
     /// The record's unique identifier.
     pub id: Value,
@@ -37,7 +39,7 @@ pub struct ChatInput {
 impl WorkInput for ChatInput {}
 
 /// An output record.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, JsonSchema, Serialize)]
 pub struct ChatOutput {
     /// The record's unique identifier.
     pub id: Value,
@@ -48,35 +50,55 @@ pub struct ChatOutput {
 
     /// Any errors that occurred. Some errors may be present, even on success,
     /// if the LLM recovered from a transient error.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<String>,
+
+    /// Estimated cost, if we have the data to compute it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_cost: Option<f64>,
+
+    /// The token usage for this request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_usage: Option<TokenUsage>,
 }
 
 impl ChatOutput {
     /// Create a new output record from a [`ResolvedResult`].
     fn from_resolved_result(
         id: Value,
-        result: ResolvedResult<(), (), Value, anyhow::Error>,
+        model: Option<&LiteLlmModel>,
+        result: ResolvedResult<(), (), (Option<TokenUsage>, Value), anyhow::Error>,
     ) -> Self {
+        let estimate_cost =
+            |usage: Option<&TokenUsage>| usage.and_then(|u| u.estimate_cost(model));
         match result {
-            ResolvedResult::Ok { output, .. } => ChatOutput {
+            ResolvedResult::Ok {
+                output: (token_usage, response),
+                ..
+            } => ChatOutput {
                 id,
-                response: Some(output),
+                response: Some(response),
                 errors: vec![],
+                estimated_cost: estimate_cost(token_usage.as_ref()),
+                token_usage,
             },
             ResolvedResult::Fatal { error, .. } => ChatOutput {
                 id,
                 response: None,
                 errors: vec![error.to_string()],
+                estimated_cost: None,
+                token_usage: None,
             },
             ResolvedResult::Recovered {
-                output,
+                output: (token_usage, response),
                 retry_errors,
                 ..
             } => ChatOutput {
                 id,
-                response: Some(output),
+                response: Some(response),
                 errors: retry_errors.into_iter().map(|e| e.to_string()).collect(),
+                estimated_cost: estimate_cost(token_usage.as_ref()),
+                token_usage,
             },
             ResolvedResult::GivenUp {
                 retry_errors,
@@ -95,6 +117,8 @@ impl ChatOutput {
                     .map(|e| e.to_string())
                     .chain(iter::once(fatal_error.to_string()))
                     .collect(),
+                estimated_cost: None,
+                token_usage: None,
             },
         }
     }
@@ -103,6 +127,55 @@ impl ChatOutput {
 impl WorkOutput for ChatOutput {
     fn is_failure(&self) -> bool {
         self.response.is_none()
+    }
+
+    fn cost_estimate(&self) -> Option<f64> {
+        self.estimated_cost
+    }
+
+    fn token_usage(&self) -> Option<&TokenUsage> {
+        self.token_usage.as_ref()
+    }
+
+    fn errors(&self) -> &[String] {
+        &self.errors
+    }
+}
+
+/// Token usage.
+#[derive(Clone, Debug, Default, JsonSchema, Serialize)]
+pub struct TokenUsage {
+    /// How many tokens were used in the prompt?
+    pub prompt_tokens: u64,
+
+    /// How many tokens were used in the response?
+    pub completion_tokens: u64,
+}
+
+impl TokenUsage {
+    /// Was our token usage zero?
+    pub fn is_zero(&self) -> bool {
+        self.prompt_tokens == 0 && self.completion_tokens == 0
+    }
+
+    /// Estimate the cost of this token usage.
+    pub fn estimate_cost(&self, model: Option<&LiteLlmModel>) -> Option<f64> {
+        if let Some(model) = model {
+            let input_cost =
+                self.prompt_tokens as f64 * model.model_info.input_cost_per_token;
+            let output_cost =
+                self.completion_tokens as f64 * model.model_info.output_cost_per_token;
+            Some(input_cost + output_cost)
+        } else {
+            None
+        }
+    }
+}
+
+impl AddAssign for TokenUsage {
+    fn add_assign(&mut self, other: Self) {
+        self.prompt_tokens += other.prompt_tokens;
+        self.completion_tokens += other.completion_tokens;
     }
 }
 
@@ -143,10 +216,19 @@ pub async fn create_chat_work_queue(
     // Create our OpenAI client.
     let client = create_llm_client()?;
 
+    // See if we can get LiteLLM info for this model.
+    let model_info = litellm_model_info(&model).await;
+    if let Some(model_info) = model_info {
+        debug!(model_info = %model_info.to_string(), "Model info");
+    } else {
+        debug!(model = %model, "Model info not available");
+    }
+
     // Read our schema.
     //
     // TODO: Make sure `description` fields are present?
     let schema = prompt.response_schema.to_json_schema().await?;
+    debug!(%schema, "Schema");
     let validator = jsonschema::validator_for(&schema)?;
 
     let state = Arc::new(ProcessorState {
@@ -155,6 +237,7 @@ pub async fn create_chat_work_queue(
         prompt,
         schema,
         validator,
+        model_info,
     });
 
     // Define worker function.
@@ -184,6 +267,9 @@ struct ProcessorState {
 
     /// Our JSON Schema validator.
     validator: jsonschema::Validator,
+
+    /// Model information, if available.
+    model_info: Option<&'static LiteLlmModel>,
 }
 
 /// Process a single JSON Object.
@@ -241,7 +327,11 @@ async fn process_record(
             )
         });
 
-    Ok(ChatOutput::from_resolved_result(id, result))
+    Ok(ChatOutput::from_resolved_result(
+        id,
+        state.model_info,
+        result,
+    ))
 }
 
 /// Process the data portion of a record.
@@ -250,7 +340,7 @@ async fn process_data(
     attempt_number: &Mutex<u64>,
     state: &ProcessorState,
     prompt: &Value,
-) -> RetryResult<(), (), Value, anyhow::Error> {
+) -> RetryResult<(), (), (Option<TokenUsage>, Value), anyhow::Error> {
     // Increment our attempt number.
     let _current_attempt = {
         let mut attempt_number = attempt_number.lock().expect("lock poisoned");
@@ -291,6 +381,12 @@ async fn process_data(
             .into_fatal()
     );
 
+    // How many tokens did we use?
+    let token_usage = response.usage.map(|usage| TokenUsage {
+        prompt_tokens: u64::from(usage.prompt_tokens),
+        completion_tokens: u64::from(usage.completion_tokens),
+    });
+
     // Get the content from our response & parse as JSON.
     let choice = match response.choices.first() {
         Some(choice) => choice,
@@ -330,5 +426,5 @@ async fn process_data(
             .into_transient()
     );
 
-    retry_result_ok(response)
+    retry_result_ok((token_usage, response))
 }

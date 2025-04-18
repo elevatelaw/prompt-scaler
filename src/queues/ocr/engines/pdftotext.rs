@@ -46,6 +46,9 @@ impl OcrEngine for PdfToTextOcrEngine {
             return Ok(OcrPageOutput {
                 text: None,
                 errors: vec!["pdftotext only works with PDFs".to_string()],
+                analysis: None,
+                estimated_cost: None,
+                token_usage: None,
             });
         }
 
@@ -79,6 +82,9 @@ impl OcrEngine for PdfToTextOcrEngine {
         Ok(OcrPageOutput {
             text: Some(text),
             errors,
+            analysis: None,
+            estimated_cost: None,
+            token_usage: None,
         })
     }
 }

@@ -1,0 +1,3 @@
+[submodule "ocr-benchmark"]
+	path = benchmarks/ocr/data
+	url = https://huggingface.co/datasets/getomni-ai/ocr-benchmark

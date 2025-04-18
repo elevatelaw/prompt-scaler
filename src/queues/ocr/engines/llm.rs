@@ -12,6 +12,7 @@ use crate::{
     prompt::ChatPrompt,
     queues::{
         chat::{ChatInput, ChatOutput, create_chat_work_queue},
+        ocr::OcrAnalysis,
         work::{WorkItemProcessor as _, WorkQueue},
     },
     schema::Schema,
@@ -40,6 +41,9 @@ pub fn default_ocr_prompt() -> ChatPrompt {
 struct PageChatResponse {
     /// The complete text of the page, in Markdown format.
     full_markdown: String,
+
+    /// Analysis of the page.
+    analysis: OcrAnalysis,
 }
 
 /// An LLM-based OCR engine.
@@ -105,6 +109,9 @@ impl OcrEngine for LlmOcrEngine {
         Ok(OcrPageOutput {
             text: Some(response.full_markdown),
             errors,
+            analysis: Some(response.analysis),
+            estimated_cost: chat_output.estimated_cost,
+            token_usage: chat_output.token_usage,
         })
     }
 }

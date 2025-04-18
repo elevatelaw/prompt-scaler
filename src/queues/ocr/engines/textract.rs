@@ -16,6 +16,9 @@ use crate::async_utils::JoinWorker;
 
 use super::{OcrEngine, OcrPageInput, OcrPageOutput};
 
+/// Our estimated page cost, based on the options we use.
+const ESTIMATED_PAGE_COST: f64 = 0.004;
+
 /// OCR engine wrapping the AWS Textract API.
 pub struct TextractOcrEngine {
     /// AWS Textract client.
@@ -87,7 +90,13 @@ impl OcrEngine for TextractOcrEngine {
                 let err = format!("AWS Textract error: {:?}", e);
                 error!("{err}");
                 errors.push(err);
-                return Ok(OcrPageOutput { text: None, errors });
+                return Ok(OcrPageOutput {
+                    text: None,
+                    errors,
+                    analysis: None,
+                    estimated_cost: None,
+                    token_usage: None,
+                });
             }
             Ok(document) => {
                 trace!("Document response: {document:#?}");
@@ -130,6 +139,9 @@ impl OcrEngine for TextractOcrEngine {
                 Ok(OcrPageOutput {
                     text: Some(text),
                     errors,
+                    analysis: None,
+                    estimated_cost: Some(ESTIMATED_PAGE_COST),
+                    token_usage: None,
                 })
             }
         }

@@ -19,10 +19,7 @@
 //! which are much more agnostic about what's going on. You won't normally need
 //! to work with these directly.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-};
+use std::sync::{Arc, Mutex};
 
 use futures::{
     FutureExt, SinkExt as _, StreamExt,
@@ -38,6 +35,8 @@ use crate::{
     prelude::*,
     ui::Ui,
 };
+
+use super::chat::TokenUsage;
 
 /// Trait implemented by input records to a [`WorkItemProcessor`].
 pub trait WorkInput: DeserializeOwned + Send + 'static {
@@ -58,10 +57,38 @@ pub trait WorkInput: DeserializeOwned + Send + 'static {
     }
 }
 
+/// Counters associated with a work item.
+#[derive(Clone, Debug, Default)]
+pub struct WorkItemCounters {
+    /// How many records did we process?
+    pub total_record_count: usize,
+
+    /// How many records did we fail to process?
+    pub failure_count: usize,
+
+    /// How many non-fatal errors did we encounter?
+    pub non_fatal_error_count: usize,
+
+    /// How much money do we think we spent?
+    pub cost_estimate: f64,
+
+    /// How many tokens did we use?
+    pub token_usage: TokenUsage,
+}
+
 /// Trait implemented by output records from a [`WorkItemProcessor`].
 pub trait WorkOutput: Sized + Serialize + Send + 'static {
     /// Should we count this output as a failure?
     fn is_failure(&self) -> bool;
+
+    /// How much money do we think we spent?
+    fn cost_estimate(&self) -> Option<f64>;
+
+    /// How many tokens did we use?
+    fn token_usage(&self) -> Option<&TokenUsage>;
+
+    /// Get any errors that occurred during processing.
+    fn errors(&self) -> &[String];
 
     /// Convert from the output type to a JSON value.
     fn into_json(self) -> Result<Value> {
@@ -70,39 +97,83 @@ pub trait WorkOutput: Sized + Serialize + Send + 'static {
 
     /// Write a stream of outputs to a [`Path`] or to standard output.
     async fn write_stream(
+        ui: &Ui,
         path: Option<&Path>,
         stream: BoxedStream<Result<Self>>,
         allowed_failure_rate: f32,
     ) -> Result<()> {
-        let failure_count = Arc::new(AtomicUsize::new(0));
-        let total_count = Arc::new(AtomicUsize::new(0));
+        let counters = Arc::new(Mutex::new(WorkItemCounters::default()));
 
-        let failure_count_clone = failure_count.clone();
-        let total_count_clone = total_count.clone();
+        let counters_clone = counters.clone();
         let output = stream
             .map(move |value| {
                 let value = value?;
-                total_count_clone.fetch_add(1, Ordering::SeqCst);
+
+                // Hold a sync lock, but just for an instant to update counters.
+                let mut counters = counters_clone.lock().expect("lock poisoned");
+                counters.total_record_count += 1;
                 if value.is_failure() {
-                    failure_count_clone.fetch_add(1, Ordering::SeqCst);
+                    counters.failure_count += 1;
+                } else if !value.errors().is_empty() {
+                    counters.non_fatal_error_count += value.errors().len();
                 }
+                if let Some(cost) = value.cost_estimate() {
+                    counters.cost_estimate += cost;
+                }
+                if let Some(token_usage) = value.token_usage() {
+                    counters.token_usage += token_usage.clone();
+                }
+                drop(counters);
+
+                // Convert the value to JSON.
                 value.into_json()
             })
             .boxed();
         write_output(path, output).await?;
 
-        let total_count = total_count.load(Ordering::SeqCst);
-        let failure_count = failure_count.load(Ordering::SeqCst);
-        let failure_rate = failure_count as f32 / total_count as f32;
+        let counters = (*counters.lock().expect("lock poisoned")).to_owned();
+        if !counters.token_usage.is_zero() {
+            ui.display_message(
+                "📈",
+                &format!(
+                    "{} input tokens and {} output tokens used",
+                    counters.token_usage.prompt_tokens,
+                    counters.token_usage.completion_tokens,
+                ),
+            );
+        }
+        if counters.cost_estimate > 0.0 {
+            ui.display_message(
+                "💸",
+                &format!("Estimated cost: US${:.8}", counters.cost_estimate),
+            );
+        }
+        let failure_rate =
+            counters.failure_count as f32 / counters.total_record_count as f32;
         if failure_rate > allowed_failure_rate {
             Err(anyhow::anyhow!(
                 "{}/{} ({:.2}%) of outputs were failures, but only {:.2}% were allowed",
-                failure_count,
-                total_count,
+                counters.failure_count,
+                counters.total_record_count,
                 failure_rate * 100.0,
                 allowed_failure_rate * 100.0
             ))
         } else {
+            if counters.non_fatal_error_count > 0 {
+                ui.display_message(
+                    "⚠️",
+                    &format!(
+                        "{} non-fatal errors encountered",
+                        counters.non_fatal_error_count
+                    ),
+                );
+            }
+            if counters.failure_count > 0 {
+                ui.display_message(
+                    "❌",
+                    &format!("{} records could not be processed", counters.failure_count),
+                );
+            }
             Ok(())
         }
     }

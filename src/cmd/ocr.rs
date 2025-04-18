@@ -59,7 +59,7 @@ pub async fn cmd_ocr(
     .await?;
     let output = pb.wrap_stream(stream.buffered(job_count)).boxed();
 
-    OcrOutput::write_stream(output_path, output, allowed_failure_rate).await?;
+    OcrOutput::write_stream(&ui, output_path, output, allowed_failure_rate).await?;
 
     worker.join().await
 }

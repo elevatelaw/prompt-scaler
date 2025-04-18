@@ -5,7 +5,9 @@
 
 use std::{borrow::Cow, io, sync::Arc, time::Duration};
 
-use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
+use indicatif::{
+    MultiProgress, ProgressBar, ProgressDrawTarget, ProgressFinish, ProgressStyle,
+};
 
 /// Application UI state.
 #[derive(Clone)]
@@ -59,7 +61,7 @@ impl Ui {
         pb.set_prefix(config.emoji.to_owned());
         pb.set_message(config.msg.to_owned());
         pb.enable_steady_tick(Duration::from_millis(250));
-        pb.with_finish(indicatif::ProgressFinish::WithMessage(Cow::Owned(
+        pb.with_finish(ProgressFinish::WithMessage(Cow::Owned(
             config.done_msg.to_owned(),
         )))
     }
@@ -73,7 +75,7 @@ impl Ui {
         sp.set_prefix(config.emoji.to_owned());
         sp.set_message(config.msg.to_owned());
         sp.enable_steady_tick(Duration::from_millis(250));
-        sp.with_finish(indicatif::ProgressFinish::WithMessage(Cow::Owned(
+        sp.with_finish(ProgressFinish::WithMessage(Cow::Owned(
             config.done_msg.to_owned(),
         )))
     }
@@ -91,6 +93,20 @@ impl Ui {
             ),
             _ => self.new_spinner(config),
         }
+    }
+
+    /// Display a message to the user. This is formatted like a spinner
+    /// for consistency.
+    pub fn display_message(&self, emoji: &str, msg: &str) {
+        let mut sp = ProgressBar::new_spinner().with_style(default_spinner_style());
+        sp = self.multi_progress.add(sp);
+        #[cfg(test)]
+        sp.set_draw_target(ProgressDrawTarget::hidden());
+        sp.set_prefix(emoji.to_owned());
+        sp.set_message(msg.to_owned());
+        sp.tick();
+        sp = sp.with_finish(ProgressFinish::AndLeave);
+        sp.finish();
     }
 }
 

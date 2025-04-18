@@ -8,3 +8,4 @@
 !/.env.ollama
 !/.env.litellm-proxy.template
 .DS_Store
+__pycache__

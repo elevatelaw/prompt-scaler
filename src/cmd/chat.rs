@@ -50,7 +50,7 @@ pub async fn cmd_chat(
     let output = pb.wrap_stream(futures.buffered(job_count)).boxed();
 
     // Write out our output.
-    ChatOutput::write_stream(output_path, output, allowed_failure_rate).await?;
+    ChatOutput::write_stream(&ui, output_path, output, allowed_failure_rate).await?;
 
     // Wait for our work queue's background task to exit.
     worker.join().await
