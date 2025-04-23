@@ -31,6 +31,7 @@ allow = [
     # Needed by a few things.
     "Unicode-3.0",
     # Other common licenses.
+    "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
     "MIT-0",
