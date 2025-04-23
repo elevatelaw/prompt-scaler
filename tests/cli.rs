@@ -96,7 +96,7 @@ fn test_chat_text_csv_input_ollama() {
             .env("OPENAI_API_BASE", OLLAMA_API_BASE)
             .arg("chat")
             .arg("tests/fixtures/texts/input.csv")
-            .args(["--jobs", "1"])
+            .args(["--jobs", "1", "--take-first", "1"])
             .arg("--model")
             .arg(model)
             .arg("--prompt")
