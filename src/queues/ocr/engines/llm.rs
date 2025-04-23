@@ -101,15 +101,15 @@ impl OcrEngine for LlmOcrEngine {
         };
         let chat_output = chat_handle.process_blocking(input).await?;
         let errors = chat_output.errors;
-        let response = serde_json::from_value::<PageChatResponse>(
+        let response = serde_json::from_value::<Option<PageChatResponse>>(
             chat_output.response.unwrap_or_default(),
         )
         .context("failed to parse LLM OCR response")?;
 
         Ok(OcrPageOutput {
-            text: Some(response.full_markdown),
+            text: response.as_ref().map(|r| r.full_markdown.to_owned()),
             errors,
-            analysis: Some(response.analysis),
+            analysis: response.map(|r| r.analysis),
             estimated_cost: chat_output.estimated_cost,
             token_usage: chat_output.token_usage,
         })
