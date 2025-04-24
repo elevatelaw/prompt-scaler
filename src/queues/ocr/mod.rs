@@ -12,24 +12,26 @@ use self::engines::OcrPageInput;
 use crate::{
     async_utils::{
         BoxedFuture, BoxedStream, JoinWorker, blocking_iter_streams::BlockingIterStream,
+        io::write_output_csv,
     },
+    cmd::StreamOpts,
     page_iter::{PageIter, PageIterOptions},
     prelude::*,
     prompt::ChatPrompt,
+    ui::Ui,
 };
 
 use super::{
     chat::TokenUsage,
-    work::{WorkInput, WorkOutput},
+    work::{
+        WorkInput, WorkItemCounterExt as _, WorkOutput, WorkOutputCounters, WorkStatus,
+    },
 };
 
 /// A input record describing a file to OCR.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct OcrInput {
-    /// The ID of the record.
-    pub id: Value,
-
     /// The path to the PDF file.
     pub path: PathBuf,
 
@@ -38,59 +40,78 @@ pub struct OcrInput {
     pub password: Option<String>,
 }
 
-impl WorkInput for OcrInput {}
-
 /// An output record describing an OCRed PDF.
-#[derive(Debug, JsonSchema, Serialize)]
+#[derive(Clone, Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct OcrOutput {
-    /// The ID of the record.
-    pub id: Value,
-
     /// The input path.
     pub path: PathBuf,
 
     /// The text extracted from the PDF. If errors occur on specific pages,
-    /// those pages will be `None`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub pages: Vec<Option<String>>,
-
-    /// How many pages failed to OCR?
-    pub failed_page_count: usize,
-
-    /// Any errors that occurred during processing. Note that because of retries,
-    /// even successfully processed documents may have errors.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub errors: Vec<String>,
-
-    /// Our estimated cost.
-    pub estimated_cost: Option<f64>,
-
-    /// The token usage for this request.
+    /// those pages will be replaced with `**COULD_NOT_OCR_PAGE**`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub token_usage: Option<TokenUsage>,
+    pub text: Option<String>,
 
     /// Any defects in the page that make it difficult to OCR.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub analysis: Option<OcrAnalysis>,
 }
 
-impl WorkOutput for OcrOutput {
-    fn is_failure(&self) -> bool {
-        self.failed_page_count > 0
+impl WorkOutput<OcrOutput> {
+    /// Convert this output record to a flat version for CSV output.
+    fn to_flat(&self) -> FlatOcrOutput {
+        FlatOcrOutput {
+            id: if let Value::String(id) = &self.id {
+                id.clone()
+            } else {
+                serde_json::to_string(&self.id).expect("failed to convert ID to string")
+            },
+            status: self.status,
+            path: self.data.path.clone(),
+            errors: if self.errors.is_empty() {
+                None
+            } else {
+                Some(self.errors.join("\n\n"))
+            },
+            text: self.data.text.clone(),
+        }
     }
 
-    fn cost_estimate(&self) -> Option<f64> {
-        self.estimated_cost
+    /// Write a stream of outputs to a [`Path`] or to standard output.
+    pub async fn write_stream_to_csv(
+        ui: &Ui,
+        path: Option<&Path>,
+        stream: BoxedStream<Result<Self>>,
+        stream_opts: &StreamOpts,
+    ) -> Result<()> {
+        let (stream, counters) = WorkOutputCounters::wrap_stream(stream);
+        let output = stream.map(|output| Ok(output?.to_flat())).boxed();
+        write_output_csv(path, output).await?;
+        counters.finish(ui, stream_opts)
     }
+}
 
-    fn token_usage(&self) -> Option<&TokenUsage> {
-        self.token_usage.as_ref()
-    }
+/// Flat version of [`WorkOutput<OcrOutput>`], for CSV output.
+///
+/// Does not contain anything but essential fields.
+#[derive(Clone, Debug, JsonSchema, Serialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct FlatOcrOutput {
+    /// The ID of the input record.
+    pub id: String,
 
-    fn errors(&self) -> &[String] {
-        &self.errors
-    }
+    /// The status of the output record.
+    pub status: WorkStatus,
+
+    /// Any errors that occurred during processing.
+    pub errors: Option<String>,
+
+    /// The path to the PDF file.
+    pub path: PathBuf,
+
+    /// The text extracted from the PDF. If errors occur on specific pages,
+    /// those pages will be replaced with `**COULD_NOT_OCR_PAGE**`.
+    pub text: Option<String>,
 }
 
 /// How was this image generated?
@@ -129,7 +150,7 @@ impl ImageSource {
 }
 
 /// Flags describing defects in the page that make it difficult to OCR.
-#[derive(Debug, Default, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OcrAnalysis {
     /// The source of this image.
@@ -184,7 +205,7 @@ impl OcrAnalysis {
 
 /// Return value of [`process_chat_stream`].
 pub struct OcrStreamInfo {
-    pub stream: BoxedStream<BoxedFuture<Result<OcrOutput>>>,
+    pub stream: BoxedStream<BoxedFuture<Result<WorkOutput<OcrOutput>>>>,
     pub worker: JoinWorker,
 }
 
@@ -196,7 +217,7 @@ pub struct OcrStreamInfo {
 /// filled at all times.
 #[instrument(level = "debug", skip_all)]
 pub async fn ocr_files(
-    input: BoxedStream<Result<OcrInput>>,
+    input: BoxedStream<Result<WorkInput<OcrInput>>>,
     page_iter_opts: PageIterOptions,
     job_count: usize,
     prompt: ChatPrompt,
@@ -227,24 +248,27 @@ pub async fn ocr_files(
 /// Process a PDF file and extract text from it. The text is returned as an array of pages.
 #[instrument(level = "debug", skip_all, fields(id = %ocr_input.id))]
 async fn ocr_file(
-    ocr_input: OcrInput,
+    ocr_input: WorkInput<OcrInput>,
     page_iter_opts: &PageIterOptions,
     concurrency_limit: usize,
     engine: Arc<dyn engines::OcrEngine>,
-) -> Result<OcrOutput> {
+) -> Result<WorkOutput<OcrOutput>> {
     let id = ocr_input.id.clone();
 
     // Create a page stream, using BlockingIterStream to avoid blocking the
     // async executor with slow PDF processing.
     let page_stream = BlockingIterStream::new(
         PageIter::from_path(
-            &ocr_input.path,
+            &ocr_input.data.path,
             page_iter_opts,
-            ocr_input.password.as_deref(),
+            ocr_input.data.password.as_deref(),
         )
         .await
         .with_context(|| {
-            format!("failed to create page iterator for {:?}", ocr_input.path)
+            format!(
+                "failed to create page iterator for {:?}",
+                ocr_input.data.path
+            )
         })?,
     );
 
@@ -268,9 +292,8 @@ async fn ocr_file(
         .into_iter()
         .collect::<Result<Vec<_>>>()?;
 
-    // Turn out `ChatResponse`s into a `PdfOutput` record.
+    // Turn our `ChatResponse`s into a `PdfOutput` record.
     let mut errors = vec![];
-    let mut failed_page_count = 0;
     let mut pages = vec![];
     let mut analysis = OcrAnalysis::default();
     let mut analysis_present = false;
@@ -292,21 +315,26 @@ async fn ocr_file(
             }
         } else {
             // No LLM response.
-            failed_page_count += 1;
             pages.push(None);
         }
     }
-    Ok(OcrOutput {
+    let good_page_count = pages.iter().filter(|p| p.is_some()).count();
+    let total_page_count = pages.len();
+    let text = pages
+        .into_iter()
+        .map(|p| p.unwrap_or_else(|| "**COULD_NOT_OCR_PAGE**".to_owned()))
+        .collect::<Vec<String>>()
+        .join("\n\n");
+    Ok(WorkOutput {
         id,
-        path: ocr_input.path,
-        pages,
-        failed_page_count,
-        errors,
-        analysis: if analysis_present && env::var("EXPERIMENTAL_OCR_ANALYSIS").is_ok() {
-            Some(analysis)
+        status: if good_page_count == total_page_count {
+            WorkStatus::Ok
+        } else if good_page_count > 0 {
+            WorkStatus::Incomplete
         } else {
-            None
+            WorkStatus::Failed
         },
+        errors,
         estimated_cost: if estimated_cost > 0.0 {
             Some(estimated_cost)
         } else {
@@ -316,6 +344,20 @@ async fn ocr_file(
             None
         } else {
             Some(token_usage)
+        },
+        data: OcrOutput {
+            path: ocr_input.data.path,
+            text: if good_page_count > 0 {
+                Some(text)
+            } else {
+                None
+            },
+            analysis: if analysis_present && env::var("EXPERIMENTAL_OCR_ANALYSIS").is_ok()
+            {
+                Some(analysis)
+            } else {
+                None
+            },
         },
     })
 }

@@ -286,3 +286,25 @@ pub async fn write_output(path: Option<&Path>, stream: JsonStream) -> Result<()>
     writer.flush().await.context("Failed to flush output")?;
     Ok(())
 }
+
+/// Write output as CSV.
+pub async fn write_output_csv<T>(
+    path: Option<&Path>,
+    stream: BoxedStream<Result<T>>,
+) -> Result<()>
+where
+    T: serde::Serialize,
+{
+    let writer = BufWriter::new(create_writer(path).await?);
+    let mut writer = csv_async::AsyncSerializer::from_writer(writer);
+    pin_mut!(stream);
+    while let Some(record) = stream.next().await {
+        let record = record?;
+        writer
+            .serialize(record)
+            .await
+            .context("Failed to write CSV record to output")?;
+    }
+    writer.flush().await.context("Failed to flush output")?;
+    Ok(())
+}

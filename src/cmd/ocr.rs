@@ -1,5 +1,7 @@
 //! The `ocr` subcommand.
 
+use std::ffi::OsStr;
+
 use clap::Args;
 use futures::StreamExt;
 
@@ -13,7 +15,7 @@ use crate::{
             OcrInput, OcrOutput, OcrStreamInfo, engines::llm::default_ocr_prompt,
             ocr_files,
         },
-        work::{WorkInput as _, WorkOutput as _},
+        work::{WorkInput, WorkOutput},
     },
     ui::{ProgressConfig, Ui},
 };
@@ -37,7 +39,8 @@ pub struct OcrOpts {
     #[clap(short = 'p', long = "prompt")]
     pub prompt_path: Option<PathBuf>,
 
-    /// Output location, in CSV or JSONL format. Defaults to standard output.
+    /// Output location, in CSV or JSONL format. Defaults to standard output and
+    /// JSONL.
     #[clap(short = 'o', long = "out")]
     pub output_path: Option<PathBuf>,
 
@@ -57,7 +60,9 @@ pub async fn cmd_ocr(ui: Ui, opts: &OcrOpts) -> Result<()> {
     };
 
     // Open up our input stream and parse into records.
-    let input = OcrInput::read_stream(ui.clone(), opts.input_path.as_deref()).await?;
+    let input =
+        WorkInput::<OcrInput>::read_stream(ui.clone(), opts.input_path.as_deref())
+            .await?;
     let input = opts.stream_opts.apply_stream_input_opts(input);
 
     // Configure our progress bar.
@@ -82,13 +87,25 @@ pub async fn cmd_ocr(ui: Ui, opts: &OcrOpts) -> Result<()> {
         .wrap_stream(stream.buffered(opts.stream_opts.job_count))
         .boxed();
 
-    OcrOutput::write_stream(
-        &ui,
-        opts.output_path.as_deref(),
-        output,
-        opts.stream_opts.allowed_failure_rate,
-    )
-    .await?;
-
+    match opts.output_path.as_deref() {
+        Some(path) if path.extension() == Some(OsStr::new("csv")) => {
+            WorkOutput::<OcrOutput>::write_stream_to_csv(
+                &ui,
+                opts.output_path.as_deref(),
+                output,
+                &opts.stream_opts,
+            )
+            .await?;
+        }
+        _ => {
+            WorkOutput::write_stream(
+                &ui,
+                opts.output_path.as_deref(),
+                output,
+                &opts.stream_opts,
+            )
+            .await?;
+        }
+    }
     worker.join().await
 }

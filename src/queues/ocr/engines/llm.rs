@@ -13,7 +13,7 @@ use crate::{
     queues::{
         chat::{ChatInput, ChatOutput, create_chat_work_queue},
         ocr::OcrAnalysis,
-        work::{WorkItemProcessor as _, WorkQueue},
+        work::{WorkInput, WorkItemProcessor as _, WorkQueue},
     },
     schema::Schema,
 };
@@ -92,17 +92,17 @@ impl OcrEngine for LlmOcrEngine {
             Value::String(EXAMPLE_OUTPUT.to_string()),
         );
 
-        let input = ChatInput {
+        let input = WorkInput {
             id: Value::Array(vec![
                 input.id.clone(),
                 Value::Number(input.page_idx.into()),
             ]),
-            template_bindings,
+            data: ChatInput { template_bindings },
         };
         let chat_output = chat_handle.process_blocking(input).await?;
         let errors = chat_output.errors;
         let response = serde_json::from_value::<Option<PageChatResponse>>(
-            chat_output.response.unwrap_or_default(),
+            chat_output.data.response.unwrap_or_default(),
         )
         .context("failed to parse LLM OCR response")?;
 

@@ -25,6 +25,7 @@ use futures::{
     FutureExt, SinkExt as _, StreamExt,
     channel::{mpsc, oneshot},
 };
+use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 
 use crate::{
@@ -32,21 +33,38 @@ use crate::{
         BoxedFuture, BoxedStream, JoinWorker,
         io::{read_jsonl_or_csv, write_output},
     },
+    cmd::StreamOpts,
     prelude::*,
     ui::Ui,
 };
 
 use super::chat::TokenUsage;
 
-/// Trait implemented by input records to a [`WorkItemProcessor`].
-pub trait WorkInput: DeserializeOwned + Send + 'static {
+/// Input record for a [`WorkItemProcessor`].
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WorkInput<T>
+where
+    T: 'static,
+{
+    /// The unique ID of the work item.
+    pub id: Value,
+
+    /// The input data for the work item.
+    #[serde(flatten)]
+    pub data: T,
+}
+
+impl<T> WorkInput<T>
+where
+    T: DeserializeOwned + Send + 'static,
+{
     /// Convert from a JSON value to the input type.
-    fn from_json(value: Value) -> Result<Self> {
+    pub fn from_json(value: Value) -> Result<Self> {
         serde_json::from_value::<Self>(value).context("failed to deserialize input")
     }
 
     /// Read a stream from a [`Path`] or from standard input.
-    async fn read_stream(
+    pub async fn read_stream(
         ui: Ui,
         path: Option<&Path>,
     ) -> Result<BoxedStream<Result<Self>>> {
@@ -57,9 +75,82 @@ pub trait WorkInput: DeserializeOwned + Send + 'static {
     }
 }
 
+/// Output status of a work item.
+#[derive(Clone, Copy, Debug, JsonSchema, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkStatus {
+    // The work item was successful.
+    Ok,
+
+    // Partial data.
+    Incomplete,
+
+    // The work item failed.
+    Failed,
+}
+
+/// Output record from a [`WorkItemProcessor`].
+#[derive(Clone, Debug, JsonSchema, Serialize)]
+pub struct WorkOutput<T>
+where
+    T: 'static,
+{
+    /// The unique ID of the work item.
+    pub id: Value,
+
+    /// What is the status of this work item?
+    pub status: WorkStatus,
+
+    /// How much money do we think we spent?
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_cost: Option<f64>,
+
+    /// How many tokens did we use?
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_usage: Option<TokenUsage>,
+
+    /// Any errors that occurred during processing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<String>,
+
+    /// The output data for the work item.
+    #[serde(flatten)]
+    pub data: T,
+}
+
+/// Trait implemented by output records from a [`WorkItemProcessor`].
+impl<T> WorkOutput<T>
+where
+    T: Clone + Serialize + Send + 'static,
+{
+    /// Convert from the output type to a JSON value.
+    pub fn to_json(&self) -> Result<Value> {
+        serde_json::to_value::<Self>((*self).to_owned())
+            .context("failed to serialize output")
+    }
+
+    /// Write a stream of outputs to a [`Path`] or to standard output.
+    pub async fn write_stream(
+        ui: &Ui,
+        path: Option<&Path>,
+        stream: BoxedStream<Result<Self>>,
+        stream_opts: &StreamOpts,
+    ) -> Result<()> {
+        let (stream, counters) = WorkOutputCounters::wrap_stream(stream);
+        let output = stream
+            .map(|value| {
+                let value = value?;
+                value.to_json()
+            })
+            .boxed();
+        write_output(path, output).await?;
+        counters.finish(ui, stream_opts)
+    }
+}
+
 /// Counters associated with a work item.
 #[derive(Clone, Debug, Default)]
-pub struct WorkItemCounters {
+pub struct WorkOutputCounters {
     /// How many records did we process?
     pub total_record_count: usize,
 
@@ -76,62 +167,58 @@ pub struct WorkItemCounters {
     pub token_usage: TokenUsage,
 }
 
-/// Trait implemented by output records from a [`WorkItemProcessor`].
-pub trait WorkOutput: Sized + Serialize + Send + 'static {
-    /// Should we count this output as a failure?
-    fn is_failure(&self) -> bool;
-
-    /// How much money do we think we spent?
-    fn cost_estimate(&self) -> Option<f64>;
-
-    /// How many tokens did we use?
-    fn token_usage(&self) -> Option<&TokenUsage>;
-
-    /// Get any errors that occurred during processing.
-    fn errors(&self) -> &[String];
-
-    /// Convert from the output type to a JSON value.
-    fn into_json(self) -> Result<Value> {
-        serde_json::to_value::<Self>(self).context("failed to serialize output")
-    }
-
-    /// Write a stream of outputs to a [`Path`] or to standard output.
-    async fn write_stream(
-        ui: &Ui,
-        path: Option<&Path>,
-        stream: BoxedStream<Result<Self>>,
-        allowed_failure_rate: f32,
-    ) -> Result<()> {
-        let counters = Arc::new(Mutex::new(WorkItemCounters::default()));
-
+impl WorkOutputCounters {
+    /// Wrap a stream with counters.
+    pub fn wrap_stream<T>(
+        stream: BoxedStream<Result<WorkOutput<T>>>,
+    ) -> (
+        BoxedStream<Result<WorkOutput<T>>>,
+        Arc<Mutex<WorkOutputCounters>>,
+    ) {
+        let counters = Arc::new(Mutex::new(Self::default()));
         let counters_clone = counters.clone();
-        let output = stream
+        let stream = stream
             .map(move |value| {
                 let value = value?;
-
-                // Hold a sync lock, but just for an instant to update counters.
-                let mut counters = counters_clone.lock().expect("lock poisoned");
-                counters.total_record_count += 1;
-                if value.is_failure() {
-                    counters.failure_count += 1;
-                } else if !value.errors().is_empty() {
-                    counters.non_fatal_error_count += value.errors().len();
-                }
-                if let Some(cost) = value.cost_estimate() {
-                    counters.cost_estimate += cost;
-                }
-                if let Some(token_usage) = value.token_usage() {
-                    counters.token_usage += token_usage.clone();
-                }
-                drop(counters);
-
-                // Convert the value to JSON.
-                value.into_json()
+                counters_clone.update(&value);
+                Ok(value)
             })
             .boxed();
-        write_output(path, output).await?;
+        (stream, counters)
+    }
+}
 
-        let counters = (*counters.lock().expect("lock poisoned")).to_owned();
+/// We actually want to put methods in `Mutex<WorkOutputCounters>`, because
+/// that's the type we actually work with. To do that, we need to define an
+/// extension trait with the methods we want.
+pub trait WorkItemCounterExt {
+    /// Update counters for a work item.
+    fn update<T>(&self, item: &WorkOutput<T>);
+
+    /// Display counter values to the user.
+    fn finish(self: Arc<Self>, ui: &Ui, stream_opts: &StreamOpts) -> Result<()>;
+}
+
+impl WorkItemCounterExt for Mutex<WorkOutputCounters> {
+    fn update<T>(&self, item: &WorkOutput<T>) {
+        // Hold a sync lock, but just for an instant to update counters.
+        let mut counters = self.lock().expect("lock poisoned");
+        counters.total_record_count += 1;
+        if item.status != WorkStatus::Ok {
+            counters.failure_count += 1;
+        } else if !item.errors.is_empty() {
+            counters.non_fatal_error_count += item.errors.len();
+        }
+        if let Some(cost) = item.estimated_cost {
+            counters.cost_estimate += cost;
+        }
+        if let Some(token_usage) = &item.token_usage {
+            counters.token_usage += token_usage.clone();
+        }
+    }
+
+    fn finish(self: Arc<Self>, ui: &Ui, stream_opts: &StreamOpts) -> Result<()> {
+        let counters = self.lock().expect("lock poisoned").to_owned();
         if !counters.token_usage.is_zero() {
             ui.display_message(
                 "📈",
@@ -150,13 +237,13 @@ pub trait WorkOutput: Sized + Serialize + Send + 'static {
         }
         let failure_rate =
             counters.failure_count as f32 / counters.total_record_count as f32;
-        if failure_rate > allowed_failure_rate {
+        if failure_rate > stream_opts.allowed_failure_rate {
             Err(anyhow::anyhow!(
                 "{}/{} ({:.2}%) of outputs were failures, but only {:.2}% were allowed",
                 counters.failure_count,
                 counters.total_record_count,
                 failure_rate * 100.0,
-                allowed_failure_rate * 100.0
+                stream_opts.allowed_failure_rate * 100.0
             ))
         } else {
             if counters.non_fatal_error_count > 0 {
@@ -182,12 +269,16 @@ pub trait WorkOutput: Sized + Serialize + Send + 'static {
 /// Work items are processed by [`WorkItemProcessor`]s. They contain an input,
 /// and a one-shot channel on which to return the result.
 #[derive(Debug)]
-pub struct WorkItem<Input, Output> {
+pub struct WorkItem<InputData, OutputData>
+where
+    InputData: 'static,
+    OutputData: 'static,
+{
     /// The input to the work item.
-    pub input: Input,
+    pub input: WorkInput<InputData>,
 
     /// The one-shot channel on which to return the result.
-    pub tx: oneshot::Sender<Result<Output>>,
+    pub tx: oneshot::Sender<Result<WorkOutput<OutputData>>>,
 }
 
 /// API shared by workers.
@@ -195,8 +286,8 @@ pub struct WorkItem<Input, Output> {
 /// This is fairly bare bones; you'll probably want to use [`WorkQueue`] and
 /// [`WorkQueueHandle`] in normal usage.
 pub trait WorkItemProcessor {
-    type Input: WorkInput;
-    type Output: WorkOutput;
+    type InputData: 'static;
+    type OutputData: 'static;
 
     /// Process a work item. The result will be sent to `item.tx`.
     ///
@@ -204,7 +295,7 @@ pub trait WorkItemProcessor {
     /// maxed out.
     async fn submit_work_item(
         &self,
-        item: WorkItem<Self::Input, Self::Output>,
+        item: WorkItem<Self::InputData, Self::OutputData>,
     ) -> Result<()>;
 
     /// Process an input and return a channel that will receive the output.
@@ -213,8 +304,8 @@ pub trait WorkItemProcessor {
     /// maxed out.
     async fn submit_input(
         &self,
-        input: Self::Input,
-    ) -> Result<oneshot::Receiver<Result<Self::Output>>> {
+        input: WorkInput<Self::InputData>,
+    ) -> Result<oneshot::Receiver<Result<WorkOutput<Self::OutputData>>>> {
         let (tx, rx) = oneshot::channel();
         let item = WorkItem { input, tx };
         self.submit_work_item(item).await?;
@@ -222,7 +313,10 @@ pub trait WorkItemProcessor {
     }
 
     /// Process an input and wait for the output.
-    async fn process_blocking(&self, input: Self::Input) -> Result<Self::Output> {
+    async fn process_blocking(
+        &self,
+        input: WorkInput<Self::InputData>,
+    ) -> Result<WorkOutput<Self::OutputData>> {
         let rx = self.submit_input(input).await?;
         let result = rx.await.context("failed to receive work item result");
         match result {
@@ -234,22 +328,30 @@ pub trait WorkItemProcessor {
 }
 
 /// An async work function.
-type WorkFn<Input, Output> =
-    Arc<dyn Fn(Input) -> BoxedFuture<Result<Output>> + Send + Sync + 'static>;
+type WorkFn<InputData, OutputData> = Arc<
+    dyn Fn(WorkInput<InputData>) -> BoxedFuture<Result<WorkOutput<OutputData>>>
+        + Send
+        + Sync
+        + 'static,
+>;
 
 /// A handle to a [`WorkQueue`].
 ///
 /// This is basically just a wrapper around a [`mpsc::Sender`] that implements
 /// [`WorkItemProcessor`]. It can be cloned cheaply and passed around.
-pub struct WorkQueueHandle<Input, Output> {
+pub struct WorkQueueHandle<InputData, OutputData>
+where
+    InputData: 'static,
+    OutputData: 'static,
+{
     /// Our sender.
-    tx: mpsc::Sender<WorkItem<Input, Output>>,
+    tx: mpsc::Sender<WorkItem<InputData, OutputData>>,
 }
 
-impl<Input, Output> WorkQueueHandle<Input, Output>
+impl<InputData, OutputData> WorkQueueHandle<InputData, OutputData>
 where
-    Input: WorkInput,
-    Output: WorkOutput,
+    InputData: Send + 'static,
+    OutputData: Send + 'static,
 {
     /// Process a stream of inputs, returning a stream of futures that will
     /// yield outputs. Typically used with [`futures::StreamExt::buffered`] or
@@ -261,8 +363,8 @@ where
     /// limit on the [`WorkQueue`] will still be enforced normally.
     pub async fn process_stream(
         &self,
-        input: BoxedStream<Result<Input>>,
-    ) -> BoxedStream<BoxedFuture<Result<Output>>> {
+        input: BoxedStream<Result<WorkInput<InputData>>>,
+    ) -> BoxedStream<BoxedFuture<Result<WorkOutput<OutputData>>>> {
         let handle = self.clone();
         input
             .map(move |input| {
@@ -278,7 +380,7 @@ where
 }
 
 // Override `Clone` so that `Input` and `Output` are not required to be `Clone`.
-impl<Input, Output> Clone for WorkQueueHandle<Input, Output> {
+impl<InputData, OutputData> Clone for WorkQueueHandle<InputData, OutputData> {
     fn clone(&self) -> Self {
         Self {
             tx: self.tx.clone(),
@@ -286,17 +388,17 @@ impl<Input, Output> Clone for WorkQueueHandle<Input, Output> {
     }
 }
 
-impl<Input, Output> WorkItemProcessor for WorkQueueHandle<Input, Output>
+impl<InputData, OutputData> WorkItemProcessor for WorkQueueHandle<InputData, OutputData>
 where
-    Input: WorkInput,
-    Output: WorkOutput,
+    InputData: 'static,
+    OutputData: 'static,
 {
-    type Input = Input;
-    type Output = Output;
+    type InputData = InputData;
+    type OutputData = OutputData;
 
     async fn submit_work_item(
         &self,
-        item: WorkItem<Self::Input, Self::Output>,
+        item: WorkItem<Self::InputData, Self::OutputData>,
     ) -> Result<()> {
         // We need a mutable copy of `tx` to send the item, so we clone it here.
         let mut tx = self.tx.clone();
@@ -309,15 +411,19 @@ where
 ///
 /// We maintain backpressure by limiting the number of work items queued, and the number currently
 /// being processed.
-pub struct WorkQueue<Input, Output> {
+pub struct WorkQueue<InputData, OutputData>
+where
+    InputData: 'static,
+    OutputData: 'static,
+{
     /// Queue for submitting work items.
-    tx: mpsc::Sender<WorkItem<Input, Output>>,
+    tx: mpsc::Sender<WorkItem<InputData, OutputData>>,
 }
 
-impl<Input, Output> WorkQueue<Input, Output>
+impl<InputData, OutputData> WorkQueue<InputData, OutputData>
 where
-    Input: Send + 'static,
-    Output: Send + 'static,
+    InputData: Send + 'static,
+    OutputData: Send + 'static,
 {
     /// Create a new work queue with the given concurrency limit.
     ///
@@ -326,13 +432,13 @@ where
     /// of work items in the system at any time may be up to `2 * concurrency_limit`.
     pub fn new(
         concurrency_limit: usize,
-        work_fn: WorkFn<Input, Output>,
+        work_fn: WorkFn<InputData, OutputData>,
     ) -> Result<(Self, JoinWorker)> {
         let (tx, rx) = mpsc::channel(concurrency_limit);
         let worker = tokio::spawn(async move {
             rx.for_each_concurrent(
                 concurrency_limit,
-                |item: WorkItem<Input, Output>| async {
+                |item: WorkItem<InputData, OutputData>| async {
                     let result = work_fn(item.input).await;
                     if let Err(_sent_value) = item.tx.send(result) {
                         debug!(
@@ -348,7 +454,7 @@ where
     }
 
     /// Get a handle for submitting items to the work queue.
-    pub fn handle(&self) -> WorkQueueHandle<Input, Output> {
+    pub fn handle(&self) -> WorkQueueHandle<InputData, OutputData> {
         WorkQueueHandle {
             tx: self.tx.clone(),
         }

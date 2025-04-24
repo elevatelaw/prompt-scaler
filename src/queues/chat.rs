@@ -11,7 +11,7 @@ use futures::FutureExt as _;
 use keen_retry::{ExponentialJitter, ResolvedResult, RetryResult};
 use schemars::JsonSchema;
 
-use super::work::{WorkInput, WorkOutput, WorkQueue};
+use super::work::{WorkInput, WorkOutput, WorkQueue, WorkStatus};
 use crate::{
     async_utils::{BoxedFuture, BoxedStream, JoinWorker, io::JsonObject},
     llm_client::{LiteLlmModel, create_llm_client, litellm_model_info},
@@ -26,9 +26,6 @@ use crate::{
 /// An input record.
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct ChatInput {
-    /// The record's unique identifier.
-    pub id: Value,
-
     /// Other fields. We keep these "flattened" in the record because they're
     /// under the control of the caller, and because our input format may be a
     /// CSV file, which is inherently "flat".
@@ -36,33 +33,15 @@ pub struct ChatInput {
     pub template_bindings: JsonObject,
 }
 
-impl WorkInput for ChatInput {}
-
 /// An output record.
 #[derive(Clone, Debug, JsonSchema, Serialize)]
 pub struct ChatOutput {
-    /// The record's unique identifier.
-    pub id: Value,
-
     /// The response from the LLM. If this is present, the request succeeded.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response: Option<Value>,
-
-    /// Any errors that occurred. Some errors may be present, even on success,
-    /// if the LLM recovered from a transient error.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub errors: Vec<String>,
-
-    /// Estimated cost, if we have the data to compute it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub estimated_cost: Option<f64>,
-
-    /// The token usage for this request.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub token_usage: Option<TokenUsage>,
 }
 
-impl ChatOutput {
+impl WorkOutput<ChatOutput> {
     /// Create a new output record from a [`ResolvedResult`].
     fn from_resolved_result(
         id: Value,
@@ -75,30 +54,37 @@ impl ChatOutput {
             ResolvedResult::Ok {
                 output: (token_usage, response),
                 ..
-            } => ChatOutput {
+            } => WorkOutput {
                 id,
-                response: Some(response),
+                status: WorkStatus::Ok,
                 errors: vec![],
                 estimated_cost: estimate_cost(token_usage.as_ref()),
                 token_usage,
+                data: ChatOutput {
+                    response: Some(response),
+                },
             },
-            ResolvedResult::Fatal { error, .. } => ChatOutput {
+            ResolvedResult::Fatal { error, .. } => WorkOutput {
                 id,
-                response: None,
+                status: WorkStatus::Failed,
                 errors: vec![error.to_string()],
                 estimated_cost: None,
                 token_usage: None,
+                data: ChatOutput { response: None },
             },
             ResolvedResult::Recovered {
                 output: (token_usage, response),
                 retry_errors,
                 ..
-            } => ChatOutput {
+            } => WorkOutput {
                 id,
-                response: Some(response),
+                status: WorkStatus::Ok,
                 errors: retry_errors.into_iter().map(|e| e.to_string()).collect(),
                 estimated_cost: estimate_cost(token_usage.as_ref()),
                 token_usage,
+                data: ChatOutput {
+                    response: Some(response),
+                },
             },
             ResolvedResult::GivenUp {
                 retry_errors,
@@ -109,9 +95,9 @@ impl ChatOutput {
                 retry_errors,
                 fatal_error,
                 ..
-            } => ChatOutput {
+            } => WorkOutput {
                 id,
-                response: None,
+                status: WorkStatus::Failed,
                 errors: retry_errors
                     .into_iter()
                     .map(|e| e.to_string())
@@ -119,26 +105,9 @@ impl ChatOutput {
                     .collect(),
                 estimated_cost: None,
                 token_usage: None,
+                data: ChatOutput { response: None },
             },
         }
-    }
-}
-
-impl WorkOutput for ChatOutput {
-    fn is_failure(&self) -> bool {
-        self.response.is_none()
-    }
-
-    fn cost_estimate(&self) -> Option<f64> {
-        self.estimated_cost
-    }
-
-    fn token_usage(&self) -> Option<&TokenUsage> {
-        self.token_usage.as_ref()
-    }
-
-    fn errors(&self) -> &[String] {
-        &self.errors
     }
 }
 
@@ -181,7 +150,7 @@ impl AddAssign for TokenUsage {
 
 /// Return value of [`process_chat_stream`].
 pub struct ChatStreamInfo {
-    pub stream: BoxedStream<BoxedFuture<Result<ChatOutput>>>,
+    pub stream: BoxedStream<BoxedFuture<Result<WorkOutput<ChatOutput>>>>,
     pub worker: JoinWorker,
 }
 
@@ -193,7 +162,7 @@ pub struct ChatStreamInfo {
 #[instrument(level = "debug", skip(input, prompt))]
 pub async fn process_chat_stream(
     concurrency_limit: usize,
-    input: BoxedStream<Result<ChatInput>>,
+    input: BoxedStream<Result<WorkInput<ChatInput>>>,
     prompt: ChatPrompt,
     model: String,
 ) -> Result<ChatStreamInfo> {
@@ -276,18 +245,18 @@ struct ProcessorState {
 #[instrument(level = "debug", skip_all, fields(id = %input_record.id))]
 async fn process_record(
     state: Arc<ProcessorState>,
-    input_record: ChatInput,
-) -> Result<ChatOutput> {
+    input_record: WorkInput<ChatInput>,
+) -> Result<WorkOutput<ChatOutput>> {
     let id = input_record.id.clone();
 
     // Render our prompt.
     trace!(
-        template_bindings = ?input_record.template_bindings,
+        template_bindings = ?input_record.data.template_bindings,
         "Template bindings"
     );
     let prompt = state
         .prompt
-        .render_prompt(&input_record.template_bindings)
+        .render_prompt(&input_record.data.template_bindings)
         .context("Error rendering prompt")?;
     trace!(%prompt, "Prompt");
 
@@ -327,7 +296,7 @@ async fn process_record(
             )
         });
 
-    Ok(ChatOutput::from_resolved_result(
+    Ok(WorkOutput::<ChatOutput>::from_resolved_result(
         id,
         state.model_info,
         result,

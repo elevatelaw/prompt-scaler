@@ -8,8 +8,8 @@ use crate::{
     prelude::*,
     prompt::ChatPrompt,
     queues::{
-        chat::{ChatInput, ChatOutput, ChatStreamInfo, process_chat_stream},
-        work::{WorkInput as _, WorkOutput as _},
+        chat::{ChatInput, ChatStreamInfo, process_chat_stream},
+        work::{WorkInput, WorkOutput},
     },
     ui::{ProgressConfig, Ui},
 };
@@ -28,7 +28,7 @@ pub struct ChatOpts {
     #[clap(short = 'p', long = "prompt")]
     pub prompt_path: PathBuf,
 
-    /// Output location, in CSV or JSONL format. Defaults to standard output.
+    /// Output location, in JSONL format. Defaults to standard output.
     #[clap(short = 'o', long = "out")]
     pub output_path: Option<PathBuf>,
 
@@ -41,7 +41,9 @@ pub struct ChatOpts {
 #[instrument(level = "debug", skip_all)]
 pub async fn cmd_chat(ui: Ui, opts: &ChatOpts) -> Result<()> {
     // Open up our input stream and convert to records.
-    let input = ChatInput::read_stream(ui.clone(), opts.input_path.as_deref()).await?;
+    let input =
+        WorkInput::<ChatInput>::read_stream(ui.clone(), opts.input_path.as_deref())
+            .await?;
     let input = opts.stream_opts.apply_stream_input_opts(input);
 
     // Read our prompt.
@@ -75,13 +77,8 @@ pub async fn cmd_chat(ui: Ui, opts: &ChatOpts) -> Result<()> {
         .boxed();
 
     // Write out our output.
-    ChatOutput::write_stream(
-        &ui,
-        opts.output_path.as_deref(),
-        output,
-        opts.stream_opts.allowed_failure_rate,
-    )
-    .await?;
+    WorkOutput::write_stream(&ui, opts.output_path.as_deref(), output, &opts.stream_opts)
+        .await?;
 
     // Wait for our work queue's background task to exit.
     worker.join().await

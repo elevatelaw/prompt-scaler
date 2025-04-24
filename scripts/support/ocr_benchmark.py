@@ -132,7 +132,7 @@ class BenchmarkImage(BaseModel):
                 f"Model output ID {output.id} does not match image ID {self.id}"
             )
         self_tokens = DocTokens.from_text(self.true_markdown_output)
-        extracted_markdown = "\n\n".join(p for p in output.pages if p is not None)
+        extracted_markdown = output.text or ""
         model_tokens = DocTokens.from_text(extracted_markdown)
         similarity = self_tokens.jaqqard(model_tokens)
         token_diff = self_tokens.diff(model_tokens)

@@ -1,7 +1,10 @@
 //! The `schema` subcommand.
 
 use clap::{Args, ValueEnum};
-use schemars::schema_for;
+use schemars::{
+    schema::{Metadata, RootSchema},
+    schema_for,
+};
 use tokio::io::AsyncWriteExt as _;
 
 use crate::{
@@ -11,6 +14,7 @@ use crate::{
     queues::{
         chat::{ChatInput, ChatOutput},
         ocr::{OcrInput, OcrOutput},
+        work::{WorkInput, WorkOutput},
     },
 };
 
@@ -49,11 +53,17 @@ pub struct SchemaOpts {
 pub async fn cmd_schema(schema_opts: &SchemaOpts) -> Result<()> {
     // Get our schema.
     let schema = match schema_opts.schema_type {
-        SchemaType::ChatInput => schema_for!(ChatInput),
-        SchemaType::ChatOutput => schema_for!(ChatOutput),
+        SchemaType::ChatInput => {
+            schema_for!(WorkInput<ChatInput>).with_title("ChatInput")
+        }
+        SchemaType::ChatOutput => {
+            schema_for!(WorkOutput<ChatOutput>).with_title("ChatOutput")
+        }
         SchemaType::ChatPrompt => schema_for!(ChatPrompt),
-        SchemaType::OcrInput => schema_for!(OcrInput),
-        SchemaType::OcrOutput => schema_for!(OcrOutput),
+        SchemaType::OcrInput => schema_for!(WorkInput<OcrInput>).with_title("OcrInput"),
+        SchemaType::OcrOutput => {
+            schema_for!(WorkOutput<OcrOutput>).with_title("OcrOutput")
+        }
     };
 
     // Write out our schema.
@@ -65,4 +75,25 @@ pub async fn cmd_schema(schema_opts: &SchemaOpts) -> Result<()> {
         .context("failed to write schema")?;
     wtr.flush().await.context("failed to flush schema")?;
     Ok(())
+}
+
+/// Extensions for setting the title of a root schema.
+trait WithTitle {
+    /// Set the title of the schema.
+    fn with_title(self, title: &str) -> Self;
+}
+
+impl WithTitle for RootSchema {
+    fn with_title(mut self, title: &str) -> Self {
+        match &mut self.schema.metadata {
+            Some(metadata) => metadata.title = Some(title.to_string()),
+            None => {
+                self.schema.metadata = Some(Box::new(Metadata {
+                    title: Some(title.to_string()),
+                    ..Default::default()
+                }))
+            }
+        }
+        self
+    }
 }
