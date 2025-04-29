@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.1] - 2025-04-29
+
+### Added
+
+- We support `--offset` and `--limit` options for processing only part of the input.
+- `--take-next` is now an alias for a new `--limit` option.
+- We support `--allow-reordering` to permit out-of-order output, which should also keep throughput higher in some cases, especially where work item sizes vary greatly.
+
 ## [0.2.0] - 2025-04-24
 
 ### Added
