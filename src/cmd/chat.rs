@@ -73,7 +73,7 @@ pub async fn cmd_chat(ui: Ui, opts: &ChatOpts) -> Result<()> {
 
     // Resolve our individual LLM requests concurrently, and convert them back to JSON.
     let output = pb
-        .wrap_stream(futures.buffered(opts.stream_opts.job_count))
+        .wrap_stream(opts.stream_opts.apply_stream_buffering_opts(futures))
         .boxed();
 
     // Write out our output.

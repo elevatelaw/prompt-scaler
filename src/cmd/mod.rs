@@ -3,7 +3,10 @@
 use clap::Args;
 use futures::StreamExt as _;
 
-use crate::{async_utils::BoxedStream, prelude::*};
+use crate::{
+    async_utils::{BoxedFuture, BoxedStream},
+    prelude::*,
+};
 
 pub mod chat;
 pub mod ocr;
@@ -13,8 +16,16 @@ pub mod schema;
 #[derive(Debug, Clone, Args)]
 pub struct StreamOpts {
     /// Limit processing to the first N records.
+    #[clap(long, alias = "take-first")]
+    pub limit: Option<usize>,
+
+    /// Offset the start of processing by N records.
+    #[clap(long, default_value = "0")]
+    pub offset: usize,
+
+    /// Allow reordering of the output stream.
     #[clap(long)]
-    pub take_first: Option<usize>,
+    pub allow_reordering: bool,
 
     /// Max number of requests to process at a time.
     #[clap(short = 'j', long = "jobs", default_value = "8")]
@@ -35,10 +46,26 @@ impl StreamOpts {
     where
         T: 'static,
     {
-        if let Some(take_first) = self.take_first {
-            input.take(take_first).boxed()
+        let input = input.skip(self.offset);
+        if let Some(limit) = self.limit {
+            input.take(limit).boxed()
         } else {
-            input
+            input.boxed()
+        }
+    }
+
+    /// Apply our buffering options to a stream of futures.
+    pub fn apply_stream_buffering_opts<T>(
+        &self,
+        input: BoxedStream<BoxedFuture<Result<T>>>,
+    ) -> BoxedStream<Result<T>>
+    where
+        T: 'static + Send,
+    {
+        if self.allow_reordering {
+            input.buffer_unordered(self.job_count).boxed()
+        } else {
+            input.buffered(self.job_count).boxed()
         }
     }
 }
