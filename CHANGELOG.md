@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.3] - 2025-04-30
+
+### Fixed
+
+- Also retry request errors. These seem to mostly be transient errors caused by LiteLLM falling over under heavy load.
+
 ## [0.2.2] - 2025-04-30
 
 ### Added
