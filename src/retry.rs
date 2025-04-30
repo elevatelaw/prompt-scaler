@@ -1,5 +1,7 @@
 //! Support utilities for [`keen_retry`]'s retry API.
 
+use core::fmt;
+
 use async_openai::error::OpenAIError;
 use keen_retry::RetryResult;
 use reqwest::StatusCode;
@@ -59,14 +61,20 @@ pub(crate) trait IntoRetryResult<T, E> {
         F: FnOnce(&E) -> bool;
 }
 
-impl<T, E> IntoRetryResult<T, E> for Result<T, E> {
+impl<T, E> IntoRetryResult<T, E> for Result<T, E>
+where
+    E: fmt::Debug,
+{
     fn into_transient(self) -> RetryResult<(), (), T, E> {
         match self {
             Ok(value) => RetryResult::Ok {
                 reported_input: (),
                 output: value,
             },
-            Err(error) => RetryResult::Transient { input: (), error },
+            Err(error) => {
+                debug!("Potentially transient error: {:?}", error);
+                RetryResult::Transient { input: (), error }
+            }
         }
     }
 
@@ -90,6 +98,7 @@ impl<T, E> IntoRetryResult<T, E> for Result<T, E> {
                 output: value,
             },
             Err(error) if is_transient(&error) => {
+                debug!("Potentially transient error: {:?}", error);
                 RetryResult::Transient { input: (), error }
             }
             Err(error) => RetryResult::Fatal { input: (), error },
@@ -112,7 +121,13 @@ pub(crate) fn is_known_openai_transient(error: &OpenAIError) -> bool {
 
 /// Is this [`reqwest`] error likely to be transient?
 pub(crate) fn is_known_reqwest_transient(error: &reqwest::Error) -> bool {
-    if let Some(status) = error.status() {
+    // Several kinds of errors are often transient:
+    //
+    // - Connection errors may be connection resets under load.
+    // - Timeout errors may be due to an unresponsive server.
+    if error.is_connect() || error.is_timeout() {
+        true
+    } else if let Some(status) = error.status() {
         let transient_failures = [
             StatusCode::TOO_MANY_REQUESTS,
             StatusCode::BAD_GATEWAY,

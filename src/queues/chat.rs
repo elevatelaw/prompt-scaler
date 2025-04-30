@@ -50,6 +50,7 @@ impl WorkOutput<ChatOutput> {
     ) -> Self {
         let estimate_cost =
             |usage: Option<&TokenUsage>| usage.and_then(|u| u.estimate_cost(model));
+        let full_err = |err: anyhow::Error| format!("{:?}", err);
         match result {
             ResolvedResult::Ok {
                 output: (token_usage, response),
@@ -67,7 +68,7 @@ impl WorkOutput<ChatOutput> {
             ResolvedResult::Fatal { error, .. } => WorkOutput {
                 id,
                 status: WorkStatus::Failed,
-                errors: vec![error.to_string()],
+                errors: vec![full_err(error)],
                 estimated_cost: None,
                 token_usage: None,
                 data: ChatOutput { response: None },
@@ -79,7 +80,7 @@ impl WorkOutput<ChatOutput> {
             } => WorkOutput {
                 id,
                 status: WorkStatus::Ok,
-                errors: retry_errors.into_iter().map(|e| e.to_string()).collect(),
+                errors: retry_errors.into_iter().map(full_err).collect(),
                 estimated_cost: estimate_cost(token_usage.as_ref()),
                 token_usage,
                 data: ChatOutput {
@@ -100,8 +101,8 @@ impl WorkOutput<ChatOutput> {
                 status: WorkStatus::Failed,
                 errors: retry_errors
                     .into_iter()
-                    .map(|e| e.to_string())
-                    .chain(iter::once(fatal_error.to_string()))
+                    .map(full_err)
+                    .chain(iter::once(full_err(fatal_error)))
                     .collect(),
                 estimated_cost: None,
                 token_usage: None,
