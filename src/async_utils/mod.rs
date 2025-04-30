@@ -7,9 +7,11 @@
 //! Based on previous Rust experience, you should be able to leave this code
 //! unchanged for years.
 
-use std::pin::Pin;
+use std::{pin::Pin, sync::LazyLock};
 
+use anyhow::anyhow;
 use futures::Stream;
+use regex::Regex;
 use tokio::task::JoinHandle;
 
 use crate::prelude::*;
@@ -57,21 +59,56 @@ impl JoinWorker {
     }
 }
 
-/// Report any command failures.
+/// A default error regex for checking command output.
+pub static DEFAULT_ERROR_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)error").expect("failed to compile regex"));
+
+/// Report any command failures, and include any error output.
+///
+/// The output of standard error and standard output will be logged at
+/// appropriate levels. And standard error may be optionally checked against a
+/// regex to determine if the command failed.
 pub fn check_for_command_failure(
     command_name: &str,
-    status: std::process::ExitStatus,
+    output: &std::process::Output,
+    error_regex: Option<&Regex>,
 ) -> Result<()> {
-    if status.success() {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    debug!(
+        command_name = command_name,
+        output = %stdout,
+        "Standard output from command"
+    );
+    error!(
+        command_name = command_name,
+        output = %stderr,
+        "Standard error from command",
+    );
+
+    if output.status.success() {
+        if let Some(regex) = error_regex {
+            if regex.is_match(&stderr) {
+                return Err(anyhow!(
+                    "{} printed error output:\n{}",
+                    command_name,
+                    stderr,
+                ));
+            }
+        }
         Ok(())
-    } else if let Some(exit_code) = status.code() {
-        Err(anyhow::anyhow!(
-            "{} failed with exit code {}",
+    } else if let Some(exit_code) = output.status.code() {
+        Err(anyhow!(
+            "{} failed with exit code {} and error output:\n{}",
             command_name,
-            exit_code
+            exit_code,
+            stderr,
         ))
     } else {
-        // Not all platforms have exit codes.
-        Err(anyhow::anyhow!("{} failed", command_name))
+        Err(anyhow!(
+            "{} failed with error output:\n{}",
+            command_name,
+            stderr,
+        ))
     }
 }

@@ -66,14 +66,14 @@ impl OcrEngine for PdfToTextOcrEngine {
             .context("cannot flush pdftotext input file")?;
 
         // Run pdftotext on the input file.
-        let status = Command::new("pdftotext")
+        let output = Command::new("pdftotext")
             .arg("-layout")
             .arg(input_path)
             .arg(&output_path)
-            .status()
+            .output()
             .await
             .context("cannot run pdftotext")?;
-        check_for_command_failure("pdftotext", status)?;
+        check_for_command_failure("pdftotext", &output, None)?;
 
         // Read the output file.
         let text =

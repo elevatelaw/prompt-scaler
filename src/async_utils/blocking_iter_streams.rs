@@ -18,32 +18,35 @@ use crate::prelude::*;
 /// 1. Waiting on a future.
 /// 2. Holding the iterator.
 /// 3. Done iterating.
-enum BlockingIterStreamState<I, T>
+enum BlockingIterStreamState<I, T, E>
 where
-    I: Iterator<Item = Result<T>> + Send + Unpin + 'static,
+    I: Iterator<Item = Result<T, E>> + Send + Unpin + 'static,
     T: Send + 'static,
+    E: Send + 'static,
 {
     /// We have an iterator which we can ask for the next value.
     Iter(I),
 
     /// We are waiting on a future to complete.
-    Waiting(BoxedFuture<(Option<Result<T>>, I)>),
+    Waiting(BoxedFuture<(Option<Result<T, E>>, I)>),
 }
 
 /// A [`Stream`] wrapping a blocking iterator.
-pub struct BlockingIterStream<I, T>
+pub struct BlockingIterStream<I, T, E = anyhow::Error>
 where
-    I: Iterator<Item = Result<T>> + Send + Unpin + 'static,
+    I: Iterator<Item = Result<T, E>> + Send + Unpin + 'static,
     T: Send + 'static,
+    E: Send + 'static,
 {
     size_hint: (usize, Option<usize>),
-    state: Option<BlockingIterStreamState<I, T>>,
+    state: Option<BlockingIterStreamState<I, T, E>>,
 }
 
-impl<I, T> BlockingIterStream<I, T>
+impl<I, T, E> BlockingIterStream<I, T, E>
 where
-    I: Iterator<Item = Result<T>> + Send + Unpin + 'static,
+    I: Iterator<Item = Result<T, E>> + Send + Unpin + 'static,
     T: Send + 'static,
+    E: Send + 'static,
 {
     /// Create a new [`BlockingIterStream`] from an iterator.
     pub fn new(iter: I) -> Self {
@@ -54,10 +57,11 @@ where
     }
 }
 
-impl<I, T> Stream for BlockingIterStream<I, T>
+impl<I, T, E> Stream for BlockingIterStream<I, T, E>
 where
-    I: Iterator<Item = Result<T>> + Send + Unpin + 'static,
+    I: Iterator<Item = Result<T, E>> + Send + Unpin + 'static,
     T: Send + 'static,
+    E: Send + 'static,
 {
     type Item = I::Item;
 

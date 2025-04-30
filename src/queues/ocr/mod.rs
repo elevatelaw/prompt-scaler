@@ -257,20 +257,21 @@ async fn ocr_file(
 
     // Create a page stream, using BlockingIterStream to avoid blocking the
     // async executor with slow PDF processing.
-    let page_stream = BlockingIterStream::new(
-        PageIter::from_path(
-            &ocr_input.data.path,
-            page_iter_opts,
-            ocr_input.data.password.as_deref(),
+    let page_iter = PageIter::from_path(
+        &ocr_input.data.path,
+        page_iter_opts,
+        ocr_input.data.password.as_deref(),
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "failed to create page iterator for {:?}",
+            ocr_input.data.path
         )
-        .await
-        .with_context(|| {
-            format!(
-                "failed to create page iterator for {:?}",
-                ocr_input.data.path
-            )
-        })?,
-    );
+    })?;
+    let check_complete_result = page_iter.check_complete();
+    let warnings = page_iter.warnings().to_owned();
+    let page_stream = BlockingIterStream::new(page_iter);
 
     let page_outputs = page_stream
         .enumerate()
@@ -294,6 +295,7 @@ async fn ocr_file(
 
     // Turn our `ChatResponse`s into a `PdfOutput` record.
     let mut errors = vec![];
+    errors.extend(warnings);
     let mut pages = vec![];
     let mut analysis = OcrAnalysis::default();
     let mut analysis_present = false;
@@ -318,6 +320,10 @@ async fn ocr_file(
             pages.push(None);
         }
     }
+    if let Err(err) = &check_complete_result {
+        errors.push(err.to_string());
+    }
+
     let good_page_count = pages.iter().filter(|p| p.is_some()).count();
     let total_page_count = pages.len();
     let text = pages
@@ -327,7 +333,7 @@ async fn ocr_file(
         .join("\n\n");
     Ok(WorkOutput {
         id,
-        status: if good_page_count == total_page_count {
+        status: if check_complete_result.is_ok() && good_page_count == total_page_count {
             WorkStatus::Ok
         } else if good_page_count > 0 {
             WorkStatus::Incomplete

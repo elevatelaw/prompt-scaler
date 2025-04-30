@@ -2313,6 +2313,7 @@ dependencies = [
  "leaky-bucket",
  "mime_guess",
  "peekable",
+ "regex",
  "reqwest",
  "schemars",
  "serde",

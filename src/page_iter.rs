@@ -1,12 +1,16 @@
 //! Iterate over "pages" in an image.
 
-use std::vec;
+use std::{collections::BTreeMap, process::Output, vec};
 
 use anyhow::anyhow;
 use clap::Args;
 use tokio::process::Command;
 
-use crate::{async_utils::check_for_command_failure, data_url::data_url, prelude::*};
+use crate::{
+    async_utils::{DEFAULT_ERROR_REGEX, check_for_command_failure},
+    data_url::data_url,
+    prelude::*,
+};
 
 /// Image types supported as-is.
 const SUPPORTED_IMAGE_TYPES: &[&str] =
@@ -40,6 +44,11 @@ pub struct PageIterOptions {
     /// The DPI to use for rasterization.
     #[clap(long, default_value = "300")]
     pub rasterize_dpi: u32,
+
+    /// The maximum number of pages to process. If this is set, we will
+    /// stop processing after this many pages and record an error.
+    #[clap(long)]
+    pub max_pages: Option<usize>,
 }
 
 /// An stream over PDF pages as PNG images, using Poppler's `pdftocairo` CLI
@@ -54,6 +63,12 @@ pub struct PageIter {
     mime_type: String,
     /// Iterator over the page files in the temporary directory.
     dir_iter: vec::IntoIter<PathBuf>,
+    /// Expected number of pages in the document.
+    total_pages: usize,
+    /// The maximum number of pages we are allowed to process.
+    max_pages: Option<usize>,
+    /// Any warnings that occurred while processing the document.
+    warnings: Vec<String>,
 }
 
 impl PageIter {
@@ -81,13 +96,16 @@ impl PageIter {
                 tmpdir: None,
                 mime_type,
                 dir_iter: vec![path.to_owned()].into_iter(),
+                total_pages: 1,
+                max_pages: options.max_pages,
+                warnings: vec![],
             })
         } else if mime_type == "application/pdf" {
             // We have a PDF file. If we need to rasterize, do that.
             if options.rasterize {
-                Self::from_rasterized_pdf(path, options.rasterize_dpi, password).await
+                Self::from_rasterized_pdf(path, options, password).await
             } else {
-                Self::from_split_pdf(path, options.rasterize_dpi, password).await
+                Self::from_split_pdf(path, options, password).await
             }
         } else {
             Err(anyhow!(
@@ -103,7 +121,7 @@ impl PageIter {
     #[instrument(level = "debug", skip_all, fields(path = %path.display()))]
     async fn from_split_pdf(
         path: &Path,
-        fallback_rasterize_dpi: u32,
+        options: &PageIterOptions,
         password: Option<&str>,
     ) -> Result<Self> {
         // For now, if we have a password, we need to rasterize the PDF.
@@ -112,9 +130,11 @@ impl PageIter {
         //
         //     pdftops -upw <password> <file_name>.pdf <new_file_name>.pdf
         if password.is_some() {
-            return Self::from_rasterized_pdf(path, fallback_rasterize_dpi, password)
-                .await;
+            return Self::from_rasterized_pdf(path, options, password).await;
         }
+
+        // Count the number of pages in the PDF.
+        let total_pages = get_pdf_page_count(path).await?;
 
         // Construct an output filename. pdfseparate will add digits to
         // this if there is more than one page.
@@ -131,25 +151,36 @@ impl PageIter {
         // Run pdfseparate to split the PDF into separate files.
         let out_path = tmpdir_path.join(format!("{}-%d.pdf", filename.to_string_lossy()));
         let mut cmd = Command::new("pdfseparate");
-        let status = cmd
+        add_last_page_arg_if_needed(options, total_pages, &mut cmd)?;
+        let output = cmd
             .arg(path)
             .arg(out_path)
-            .status()
+            .output()
             .await
             .with_context(|| {
                 format!("failed to run pdfseparate on {:?}", path.display())
             })?;
-        check_for_command_failure("pdfseparate", status)?;
-        Self::from_tempdir(tmpdir, "application/pdf".to_string()).await
+        check_for_command_failure("pdfseparate", &output, Some(&*DEFAULT_ERROR_REGEX))?;
+        Self::from_tempdir(
+            options,
+            tmpdir,
+            "application/pdf".to_string(),
+            total_pages,
+            &output,
+        )
+        .await
     }
 
     /// Create a new [`PdfPageStream`] from a PDF file, rasterizing each page.
     #[instrument(level = "debug", skip_all, fields(path = %path.display(), dpi))]
     async fn from_rasterized_pdf(
         path: &Path,
-        rasterize_dpi: u32,
+        options: &PageIterOptions,
         password: Option<&str>,
     ) -> Result<Self> {
+        // Count the number of pages in the PDF.
+        let total_pages = get_pdf_page_count(path).await?;
+
         // Construct an output filename. pdftocairo will add digits to this if
         // there is more than one page.
         let filename = path
@@ -163,27 +194,40 @@ impl PageIter {
         // Run pdftocairo to convert the PDF to PNG files.
         let out_path = tmpdir_path.join(filename).with_extension("png");
         let mut cmd = Command::new("pdftocairo");
-        cmd.arg("-png").arg("-r").arg(rasterize_dpi.to_string());
+        cmd.arg("-png")
+            .arg("-r")
+            .arg(options.rasterize_dpi.to_string());
         if let Some(password) = password {
             cmd.arg("-opw").arg(password);
         }
-        let status = cmd
+        add_last_page_arg_if_needed(options, total_pages, &mut cmd)?;
+        let output = cmd
             .arg(path)
             .arg(out_path)
-            .status()
+            .output()
             .await
             .with_context(|| {
                 format!("failed to run pdftocairo on {:?}", path.display())
             })?;
-        check_for_command_failure("pdftocairo", status)?;
-        Self::from_tempdir(tmpdir, "image/png".to_string()).await
+        check_for_command_failure("pdftocairo", &output, Some(&*DEFAULT_ERROR_REGEX))?;
+        Self::from_tempdir(
+            options,
+            tmpdir,
+            "image/png".to_string(),
+            total_pages,
+            &output,
+        )
+        .await
     }
 
     /// Create a [`PageIter`] from a [`tempdir::TempDir`] full of files
     /// named in lexixal order, plus a MIME type.
-    pub async fn from_tempdir(
+    async fn from_tempdir(
+        options: &PageIterOptions,
         tmpdir: tempfile::TempDir,
         mime_type: String,
+        total_pages: usize,
+        output: &Output,
     ) -> Result<Self> {
         // Get the path to the temporary directory.
         let tmpdir_path = tmpdir.path();
@@ -211,12 +255,53 @@ impl PageIter {
         dir_paths.sort();
         let dir_iter = dir_paths.into_iter();
 
+        // Get the output of the command, and save as warnings.
+        let mut warnings = vec![];
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            warnings.push(line.trim().to_string());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        for line in stderr.lines() {
+            warnings.push(line.trim().to_string());
+        }
+
         // Return our iterator.
         Ok(Self {
             tmpdir: Some(tmpdir),
             mime_type,
             dir_iter,
+            total_pages,
+            max_pages: options.max_pages,
+            warnings,
         })
+    }
+
+    /// Get any warnings that occurred while processing the document.
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
+    }
+
+    /// Will this iterator return only an incomplete set of pages?
+    pub fn is_incomplete(&self) -> bool {
+        if let Some(max_pages) = self.max_pages {
+            self.total_pages > max_pages
+        } else {
+            false
+        }
+    }
+
+    /// If this iterator will return only an incomplete set of pages, return an
+    pub fn check_complete(&self) -> Result<()> {
+        if self.is_incomplete() {
+            Err(anyhow!(
+                "this iterator is partial: {} pages requested, but only {} pages available",
+                self.max_pages.expect("max_pages should be set"),
+                self.total_pages
+            ))
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -265,9 +350,109 @@ impl Iterator for PageIter {
                 data: bytes,
             }))
         } else {
-            // No more files. Our `Drop` implementation will delete the
-            // temporary directory.
             None
         }
+    }
+}
+
+/// Get the number of pages in a PDF file.
+#[instrument(level = "debug", skip_all, fields(path = %path.display()))]
+pub async fn get_pdf_page_count(path: &Path) -> Result<usize> {
+    // Run pdfinfo to get the number of pages.
+    let mut cmd = Command::new("pdfinfo");
+    let output = cmd
+        .arg(path)
+        .output()
+        .await
+        .with_context(|| format!("failed to run pdfinfo on {:?}", path.display()))?;
+    check_for_command_failure("pdfinfo", &output, None)?;
+
+    // Parse the output of pdfinfo into properties.
+    let output =
+        String::from_utf8(output.stdout).context("pdfinfo output was not valid UTF-8")?;
+    let mut properties = BTreeMap::new();
+    for line in output.lines() {
+        let mut parts = line.splitn(2, ':');
+        let key = parts.next().unwrap_or("").trim();
+        let value = parts.next().unwrap_or("").trim();
+        properties.insert(key.to_string(), value.to_string());
+    }
+
+    // Get the number of pages from the properties.
+    let page_count_str = properties
+        .get("Pages")
+        .ok_or_else(|| anyhow!("failed to find page count in pdfinfo output"))?;
+    page_count_str.parse::<usize>().with_context(|| {
+        format!(
+            "failed to parse page count for {:?} from pdfinfo output",
+            path.display()
+        )
+    })
+}
+
+/// Add a "last page" argument to a [`Command`].
+fn add_last_page_arg_if_needed(
+    options: &PageIterOptions,
+    total_pages: usize,
+    cmd: &mut Command,
+) -> Result<()> {
+    if let Some(max_pages) = options.max_pages {
+        if total_pages > max_pages {
+            // The command-line tools use 1-based page numbers, as far as I can
+            // tell. But they also use an inclusive range.
+            let last_page = max_pages;
+            cmd.arg("-l").arg(last_page.to_string());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    static TEST_PDF_PATH: &str = "tests/fixtures/ocr/two_pages.pdf";
+
+    #[tokio::test]
+    async fn page_count_returns_correct_number_of_pages() -> Result<()> {
+        let page_count = get_pdf_page_count(Path::new(TEST_PDF_PATH)).await?;
+        assert_eq!(page_count, 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn page_iter_returns_correct_number_of_pages() -> Result<()> {
+        let page_iter = PageIter::from_path(
+            Path::new(TEST_PDF_PATH),
+            &PageIterOptions {
+                rasterize: true,
+                rasterize_dpi: 300,
+                max_pages: None,
+            },
+            None,
+        )
+        .await?;
+        let pages = page_iter.collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(pages.len(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn page_iter_obeys_max_pages() -> Result<()> {
+        let page_iter = PageIter::from_path(
+            Path::new(TEST_PDF_PATH),
+            &PageIterOptions {
+                rasterize: false,
+                rasterize_dpi: 300,
+                max_pages: Some(1),
+            },
+            None,
+        )
+        .await?;
+        assert!(page_iter.is_incomplete());
+        assert!(page_iter.check_complete().is_err());
+        let pages = page_iter.collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(pages.len(), 1);
+        Ok(())
     }
 }

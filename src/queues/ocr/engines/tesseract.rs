@@ -60,13 +60,13 @@ impl OcrEngine for TesseractOcrEngine {
             .context("cannot flush tesseract input file")?;
 
         // Run tesseract on the input file.
-        let status = Command::new("tesseract")
+        let output = Command::new("tesseract")
             .arg(input_path)
             .arg(output_path.with_extension(""))
-            .status()
+            .output()
             .await
             .context("cannot run tesseract")?;
-        check_for_command_failure("tesseract", status)?;
+        check_for_command_failure("tesseract", &output, None)?;
 
         // Read the output file.
         let text =
