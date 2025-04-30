@@ -414,6 +414,7 @@ mod tests {
     static TEST_PDF_PATH: &str = "tests/fixtures/ocr/two_pages.pdf";
 
     #[tokio::test]
+    #[ignore = "Requires poppler-utils to be installed"]
     async fn page_count_returns_correct_number_of_pages() -> Result<()> {
         let page_count = get_pdf_page_count(Path::new(TEST_PDF_PATH)).await?;
         assert_eq!(page_count, 2);
@@ -421,6 +422,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires poppler-utils to be installed"]
     async fn page_iter_returns_correct_number_of_pages() -> Result<()> {
         let page_iter = PageIter::from_path(
             Path::new(TEST_PDF_PATH),
@@ -438,6 +440,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires poppler-utils to be installed"]
     async fn page_iter_obeys_max_pages() -> Result<()> {
         let page_iter = PageIter::from_path(
             Path::new(TEST_PDF_PATH),
