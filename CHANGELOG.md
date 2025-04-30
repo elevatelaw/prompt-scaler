@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.2] - 2025-04-30
+
+### Added
+
+- ocr: Capture warnings from PDF tools and include them in the output.
+- ocr: Add `--max-pages` option to limit the number of pages to process. Truncted documents will be marked as "partial" in the output.
+- chat & ocr: Add `--max-completion-tokens`, `--temperature`, `--top-p` and `--timeout` options. `--max-completion-tokens` and `--timeout` may be useful for runaway responses where you know the output should be short.
+- litellm: Added `restart` and RAM limit to example LiteLLM config, for production use.
+
+### Fixed
+
+- Return an error for PDFs where `pdfseparate` prints "PDF Error" on the output. These are often broken in a way that will cause page extraction to fail. Better to flag them as errors and let the user decide what to do with them.
+
 ## [0.2.1] - 2025-04-29
 
 ### Added
