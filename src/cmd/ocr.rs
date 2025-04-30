@@ -11,6 +11,7 @@ use crate::{
     prelude::*,
     prompt::ChatPrompt,
     queues::{
+        chat::LlmOpts,
         ocr::{
             OcrInput, OcrOutput, OcrStreamInfo, engines::llm::default_ocr_prompt,
             ocr_files,
@@ -25,10 +26,6 @@ use crate::{
 pub struct OcrOpts {
     /// Input data, in CSV or JSONL format. Defaults to standard input.
     pub input_path: Option<PathBuf>,
-
-    /// DPI to use for PDF files when converting to images.
-    #[clap(flatten)]
-    pub page_iter_opts: PageIterOptions,
 
     /// Model to use by default.
     #[clap(short = 'm', long, default_value = "gemini-2.0-flash")]
@@ -47,6 +44,14 @@ pub struct OcrOpts {
     /// Stream-related options.
     #[clap(flatten)]
     pub stream_opts: super::StreamOpts,
+
+    /// DPI to use for PDF files when converting to images.
+    #[clap(flatten)]
+    pub page_iter_opts: PageIterOptions,
+
+    /// Our LLM options.
+    #[clap(flatten)]
+    pub llm_opts: LlmOpts,
 }
 
 /// The `ocr` subcommand.
@@ -77,10 +82,11 @@ pub async fn cmd_ocr(ui: Ui, opts: &OcrOpts) -> Result<()> {
 
     let OcrStreamInfo { stream, worker } = ocr_files(
         input,
-        opts.page_iter_opts.to_owned(),
         opts.stream_opts.job_count,
         prompt,
         opts.model.to_owned(),
+        opts.page_iter_opts.to_owned(),
+        opts.llm_opts.to_owned(),
     )
     .await?;
     let output = pb

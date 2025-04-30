@@ -22,7 +22,7 @@ use crate::{
 };
 
 use super::{
-    chat::TokenUsage,
+    chat::{LlmOpts, TokenUsage},
     work::{
         WorkInput, WorkItemCounterExt as _, WorkOutput, WorkOutputCounters, WorkStatus,
     },
@@ -218,14 +218,15 @@ pub struct OcrStreamInfo {
 #[instrument(level = "debug", skip_all)]
 pub async fn ocr_files(
     input: BoxedStream<Result<WorkInput<OcrInput>>>,
-    page_iter_opts: PageIterOptions,
     job_count: usize,
     prompt: ChatPrompt,
     model: String,
+    page_iter_opts: PageIterOptions,
+    llm_opts: LlmOpts,
 ) -> Result<OcrStreamInfo> {
     // Create an OCR engine.
     let (engine, worker) =
-        ocr_engine_for_model(job_count, prompt, model, &page_iter_opts).await?;
+        ocr_engine_for_model(job_count, prompt, model, &page_iter_opts, llm_opts).await?;
 
     let output = input
         .map(move |pdf_input| {

@@ -12,7 +12,7 @@ use crate::{
     page_iter::{Page, PageIterOptions},
     prelude::*,
     prompt::ChatPrompt,
-    queues::chat::TokenUsage,
+    queues::chat::{LlmOpts, TokenUsage},
 };
 
 use super::OcrAnalysis;
@@ -62,13 +62,14 @@ pub async fn ocr_engine_for_model(
     prompt: ChatPrompt,
     model: String,
     page_iter_opts: &PageIterOptions,
+    llm_opts: LlmOpts,
 ) -> Result<(Arc<dyn OcrEngine>, JoinWorker)> {
     let (ocr_engine, worker) = match model.as_str() {
         "pdftotext" => pdftotext::PdfToTextOcrEngine::new(page_iter_opts)?,
         "tesseract" => tesseract::TesseractOcrEngine::new(page_iter_opts)?,
         "textract" => textract::TextractOcrEngine::new(concurrency_limit).await?,
         // Assume all other OCR models are LLMs.
-        _ => llm::LlmOcrEngine::new(concurrency_limit, prompt, model).await?,
+        _ => llm::LlmOcrEngine::new(concurrency_limit, prompt, model, llm_opts).await?,
     };
     Ok((ocr_engine, worker))
 }

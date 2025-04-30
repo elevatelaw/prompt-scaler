@@ -1,15 +1,20 @@
 //! Concurrent chat requests implemented as an async stream.
 
 use std::{
-    iter,
+    error, fmt, iter,
     ops::AddAssign,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
-use async_openai::{Client, config::OpenAIConfig, types::CreateChatCompletionResponse};
-use futures::FutureExt as _;
+use async_openai::{
+    Client, config::OpenAIConfig, error::OpenAIError, types::CreateChatCompletionResponse,
+};
+use clap::Args;
+use futures::{FutureExt as _, TryFutureExt};
 use keen_retry::{ExponentialJitter, ResolvedResult, RetryResult};
 use schemars::JsonSchema;
+use tokio::time;
 
 use super::work::{WorkInput, WorkOutput, WorkQueue, WorkStatus};
 use crate::{
@@ -22,6 +27,34 @@ use crate::{
         retry_result_ok, try_with_retry_result,
     },
 };
+
+/// Our chat-related options.
+#[derive(Args, Clone, Debug)]
+pub struct LlmOpts {
+    /// An upper limit on the number of completion tokens to generate. This may
+    /// help prevent runaway responses, but it may also cause incomplete
+    /// results. For English, many models have around 4 bytes per token.
+    #[clap(long)]
+    pub max_completion_tokens: Option<u64>,
+
+    /// The temperature to use for sampling, between 0.0 and 2.0. Higher values
+    /// may the output more random, while lower values may make it more
+    /// deterministic. Defaults to the model's default.
+    #[clap(long)]
+    pub temperature: Option<f32>,
+
+    /// The top-p sampling value to use, between 0.0 and 1.0. This is an
+    /// alternative to temperature sampling. See your model's API docs for an
+    /// explanation.
+    #[clap(long)]
+    pub top_p: Option<f32>,
+
+    /// A timeout, in seconds, for the LLM to return a complete response.
+    /// Note that even if a request times out, you'll probably still be charged.
+    /// Useful dealing with runaway responses and overloaded servers.
+    #[clap(long)]
+    pub timeout: Option<u64>,
+}
 
 /// An input record.
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -166,10 +199,11 @@ pub async fn process_chat_stream(
     input: BoxedStream<Result<WorkInput<ChatInput>>>,
     prompt: ChatPrompt,
     model: String,
+    llm_opts: LlmOpts,
 ) -> Result<ChatStreamInfo> {
     // Create our work queue.
     let (queue, worker) =
-        create_chat_work_queue(concurrency_limit, prompt, model).await?;
+        create_chat_work_queue(concurrency_limit, prompt, model, llm_opts).await?;
     let handle = queue.handle();
     Ok(ChatStreamInfo {
         stream: handle.process_stream(input).await,
@@ -182,6 +216,7 @@ pub async fn create_chat_work_queue(
     concurrency_limit: usize,
     prompt: ChatPrompt,
     model: String,
+    llm_opts: LlmOpts,
 ) -> Result<(WorkQueue<ChatInput, ChatOutput>, JoinWorker)> {
     // Create our OpenAI client.
     let client = create_llm_client()?;
@@ -207,6 +242,7 @@ pub async fn create_chat_work_queue(
         prompt,
         schema,
         validator,
+        llm_opts,
         model_info,
     });
 
@@ -238,8 +274,51 @@ struct ProcessorState {
     /// Our JSON Schema validator.
     validator: jsonschema::Validator,
 
+    /// The LLM options to use.
+    llm_opts: LlmOpts,
+
     /// Model information, if available.
     model_info: Option<&'static LiteLlmModel>,
+}
+
+/// An error which occurred while calling an LLM.
+#[derive(Debug)]
+enum LlmError {
+    /// An OpenAI error.
+    OpenAI(OpenAIError),
+
+    /// A timeout error.
+    Timeout,
+}
+
+impl LlmError {
+    /// Is this a known transient error?
+    fn is_known_transient(&self) -> bool {
+        match self {
+            LlmError::OpenAI(err) => is_known_openai_transient(err),
+            // Runaway LLM responses and some kinds of network timeouts can be retried
+            // with hope of a better result.
+            LlmError::Timeout => true,
+        }
+    }
+}
+
+impl fmt::Display for LlmError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LlmError::OpenAI(err) => write!(f, "OpenAI error: {}", err),
+            LlmError::Timeout => write!(f, "LLM request timed out"),
+        }
+    }
+}
+
+impl error::Error for LlmError {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        match self {
+            LlmError::OpenAI(err) => Some(err),
+            LlmError::Timeout => None,
+        }
+    }
 }
 
 /// Process a single JSON Object.
@@ -320,7 +399,7 @@ async fn process_data(
     };
 
     // Create our request.
-    let chat_request = json!({
+    let mut chat_request = json!({
         "model": &state.model,
         "store": false,
         "response_format": {
@@ -333,16 +412,37 @@ async fn process_data(
         },
         "messages": prompt,
     });
+    if let Some(max_completion_tokens) = state.llm_opts.max_completion_tokens {
+        chat_request["max_completion_tokens"] = Value::from(max_completion_tokens);
+    }
+    if let Some(temperature) = state.llm_opts.temperature {
+        chat_request["temperature"] = Value::from(temperature);
+    }
+    if let Some(top_p) = state.llm_opts.top_p {
+        chat_request["top_p"] = Value::from(top_p);
+    }
     trace!(%chat_request, "OpenAI request");
 
     // Call OpenAI.
+    let chat = state.client.chat();
+    let mut chat_future = chat
+        .create_byot(chat_request)
+        .map_err(LlmError::OpenAI)
+        .boxed();
+    if let Some(timeout) = state.llm_opts.timeout {
+        // If we have a timeout, wrap our future in a timeout, and merge the errors
+        // from the `Result<Result<_, LlmError>, Elapsed>` into a single level.
+        chat_future = time::timeout(Duration::from_secs(timeout), chat_future)
+            .map(|result| match result {
+                Ok(inner) => inner,
+                Err(_) => Err(LlmError::Timeout),
+            })
+            .boxed();
+    }
     let chat_result: Value = try_with_retry_result!(
-        state
-            .client
-            .chat()
-            .create_byot(chat_request)
+        chat_future
             .await
-            .into_retry_result(is_known_openai_transient)
+            .into_retry_result(LlmError::is_known_transient)
     );
     debug!(%chat_result, "OpenAI response");
     let response = try_with_retry_result!(

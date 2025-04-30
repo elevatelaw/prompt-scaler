@@ -8,7 +8,7 @@ use crate::{
     prelude::*,
     prompt::ChatPrompt,
     queues::{
-        chat::{ChatInput, ChatStreamInfo, process_chat_stream},
+        chat::{ChatInput, ChatStreamInfo, LlmOpts, process_chat_stream},
         work::{WorkInput, WorkOutput},
     },
     ui::{ProgressConfig, Ui},
@@ -35,6 +35,10 @@ pub struct ChatOpts {
     /// Stream-related options.
     #[clap(flatten)]
     pub stream_opts: super::StreamOpts,
+
+    /// Our LLM options.
+    #[clap(flatten)]
+    pub llm_opts: LlmOpts,
 }
 
 /// Run the `chat` subcommand.
@@ -68,6 +72,7 @@ pub async fn cmd_chat(ui: Ui, opts: &ChatOpts) -> Result<()> {
         input,
         prompt,
         opts.model.to_owned(),
+        opts.llm_opts.to_owned(),
     )
     .await?;
 

@@ -186,6 +186,30 @@ fn test_ocr_pdf() {
 
 #[test]
 #[ignore = "Needs LiteLLM running"]
+fn test_ocr_pdf_with_options() {
+    cmd()
+        .env("OPENAI_API_KEY", LITELLM_API_KEY)
+        .env("OPENAI_API_BASE", LITELLM_API_BASE)
+        .arg("ocr")
+        .arg("tests/fixtures/ocr/input.csv")
+        .arg("--jobs")
+        .arg("3")
+        .arg("--model")
+        .arg("gemini-2.0-flash")
+        .args(["--offset", "0"])
+        .args(["--limit", "1"])
+        .args(["--allow-reordering"])
+        .args(["--max-pages", "1"])
+        .args(["--max-completion-tokens", "1000"])
+        .args(["--temperature", "0.5"])
+        .args(["--top-p", "0.1"])
+        .args(["--timeout", "60"])
+        .assert()
+        .success();
+}
+
+#[test]
+#[ignore = "Needs LiteLLM running"]
 fn test_ocr_rasterized() {
     cmd()
         .env("OPENAI_API_KEY", LITELLM_API_KEY)

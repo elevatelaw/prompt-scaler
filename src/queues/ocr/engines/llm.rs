@@ -11,7 +11,7 @@ use crate::{
     prelude::*,
     prompt::ChatPrompt,
     queues::{
-        chat::{ChatInput, ChatOutput, create_chat_work_queue},
+        chat::{ChatInput, ChatOutput, LlmOpts, create_chat_work_queue},
         ocr::OcrAnalysis,
         work::{WorkInput, WorkItemProcessor as _, WorkQueue},
     },
@@ -59,13 +59,14 @@ impl LlmOcrEngine {
         concurrency_limit: usize,
         mut prompt: ChatPrompt,
         model: String,
+        llm_opts: LlmOpts,
     ) -> Result<(Arc<dyn OcrEngine>, JoinWorker)> {
         // Add our schema to our prompt.
         prompt.response_schema = Schema::from_type::<PageChatResponse>();
 
         // Create a new chat queue to handle all our LLM requests.
         let (chat_queue, worker) =
-            create_chat_work_queue(concurrency_limit, prompt, model).await?;
+            create_chat_work_queue(concurrency_limit, prompt, model, llm_opts).await?;
 
         Ok((Arc::new(Self { chat_queue }), worker))
     }
