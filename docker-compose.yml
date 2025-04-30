@@ -12,7 +12,9 @@ services:
       - --detailed_debug
     container_name: litellm
     ports:
-      - "4000:4000"
+      # Listen on localhost only. You may want to change this if you've set up
+      # authentication in production.
+      - "127.0.0.1:4000:4000"
     # This does fall over every once in a while, sometimes because of memory leaks
     # under heavy load?
     restart: on-failure
