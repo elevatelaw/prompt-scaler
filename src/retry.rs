@@ -123,9 +123,12 @@ pub(crate) fn is_known_openai_transient(error: &OpenAIError) -> bool {
 pub(crate) fn is_known_reqwest_transient(error: &reqwest::Error) -> bool {
     // Several kinds of errors are often transient:
     //
-    // - Connection errors may be connection resets under load.
+    // - I don't know whether connection errors are transient.
     // - Timeout errors may be due to an unresponsive server.
-    if error.is_connect() || error.is_timeout() {
+    // - Request errors may occur because of closed ports, etc.
+    if !error.is_status()
+        && (error.is_connect() || error.is_timeout() || error.is_request())
+    {
         true
     } else if let Some(status) = error.status() {
         let transient_failures = [
