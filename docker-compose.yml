@@ -13,6 +13,16 @@ services:
     container_name: litellm
     ports:
       - "4000:4000"
+    # This does fall over every once in a while, sometimes because of memory leaks
+    # under heavy load?
+    restart: on-failure
+    deploy:
+      resources:
+        limits:
+          # Set some kind of appropriate memory limit so that LiteLLM
+          # can't cause the host to OOM. You may want to adjust this
+          # for your server and your level of parallelism.
+          memory: 20G
     environment:
       # OpenAI
       - OPENAI_API_KEY=${OPENAI_API_KEY}
