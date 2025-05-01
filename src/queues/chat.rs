@@ -249,7 +249,7 @@ pub async fn create_chat_work_queue(
     // Define worker function.
     let work_fn = move |input| {
         let state = state.clone();
-        process_record(state, input).boxed()
+        run_chat(state, input).boxed()
     };
 
     // Create our work queue.
@@ -323,7 +323,7 @@ impl error::Error for LlmError {
 
 /// Process a single JSON Object.
 #[instrument(level = "debug", skip_all, fields(id = %input_record.id))]
-async fn process_record(
+async fn run_chat(
     state: Arc<ProcessorState>,
     input_record: WorkInput<ChatInput>,
 ) -> Result<WorkOutput<ChatOutput>> {
@@ -349,10 +349,10 @@ async fn process_record(
 
     // Do our real work, retrying as specified.
     let attempt_number = Mutex::new(0);
-    let result = process_data(&attempt_number, state.as_ref(), &prompt)
+    let result = run_chat_inner(&attempt_number, state.as_ref(), &prompt)
         .await
         .retry_with_async(|_| async {
-            process_data(&attempt_number, state.as_ref(), &prompt).await
+            run_chat_inner(&attempt_number, state.as_ref(), &prompt).await
         })
         .with_exponential_jitter(|| jitter)
         .await
@@ -385,7 +385,7 @@ async fn process_record(
 
 /// Process the data portion of a record.
 #[instrument(level = "debug", skip_all, fields(attempt_number = %*attempt_number.lock().expect("lock poisoned")))]
-async fn process_data(
+async fn run_chat_inner(
     attempt_number: &Mutex<u64>,
     state: &ProcessorState,
     prompt: &Value,

@@ -248,7 +248,45 @@ pub async fn ocr_files(
 
 /// Process a PDF file and extract text from it. The text is returned as an array of pages.
 #[instrument(level = "debug", skip_all, fields(id = %ocr_input.id))]
-async fn ocr_file(
+pub async fn ocr_file(
+    ocr_input: WorkInput<OcrInput>,
+    page_iter_opts: &PageIterOptions,
+    concurrency_limit: usize,
+    engine: Arc<dyn engines::OcrEngine>,
+) -> Result<WorkOutput<OcrOutput>> {
+    let id = ocr_input.id.clone();
+    let path = ocr_input.data.path.clone();
+
+    // Perform the actual work.
+    let result =
+        ocr_file_inner(ocr_input, page_iter_opts, concurrency_limit, engine).await;
+
+    // If we have an error, output an appropriate record and continue.
+    // This is necessary to avoid aborting an entire batch of work if one
+    // PDF file is corrupt.
+    match result {
+        Ok(output) => Ok(output),
+        Err(err) => {
+            let errors = vec![format!("{:?}", err)];
+            Ok(WorkOutput {
+                id,
+                status: WorkStatus::Failed,
+                errors,
+                estimated_cost: None,
+                token_usage: None,
+                data: OcrOutput {
+                    path,
+                    text: None,
+                    analysis: None,
+                },
+            })
+        }
+    }
+}
+
+/// Perform actual work for `ocr_file`.
+#[instrument(level = "debug", skip_all, fields(id = %ocr_input.id))]
+async fn ocr_file_inner(
     ocr_input: WorkInput<OcrInput>,
     page_iter_opts: &PageIterOptions,
     concurrency_limit: usize,
