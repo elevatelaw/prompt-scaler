@@ -14,6 +14,7 @@ use clap::Args;
 use futures::{FutureExt as _, TryFutureExt};
 use keen_retry::{ExponentialJitter, ResolvedResult, RetryResult};
 use schemars::JsonSchema;
+use serde_json::Map;
 use tokio::time;
 
 use super::work::{WorkInput, WorkOutput, WorkQueue, WorkStatus};
@@ -325,7 +326,7 @@ impl error::Error for LlmError {
 #[instrument(level = "debug", skip_all, fields(id = %input_record.id))]
 async fn run_chat(
     state: Arc<ProcessorState>,
-    input_record: WorkInput<ChatInput>,
+    mut input_record: WorkInput<ChatInput>,
 ) -> Result<WorkOutput<ChatOutput>> {
     let id = input_record.id.clone();
 
@@ -339,6 +340,9 @@ async fn run_chat(
         .render_prompt(&input_record.data.template_bindings)
         .context("Error rendering prompt")?;
     trace!(%prompt, "Prompt");
+
+    // Release the input data, because it adds up, especially for images.
+    input_record.data.template_bindings = Map::default();
 
     // If we have a transient failure, back off exponentially.
     let jitter = ExponentialJitter::FromBackoffRange {

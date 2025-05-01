@@ -75,7 +75,7 @@ impl LlmOcrEngine {
 #[async_trait]
 impl OcrEngine for LlmOcrEngine {
     #[instrument(level = "debug", skip_all, fields(id = %input.id, page = %input.page_idx))]
-    async fn ocr_page(&self, input: OcrPageInput) -> Result<OcrPageOutput> {
+    async fn ocr_page(&self, mut input: OcrPageInput) -> Result<OcrPageOutput> {
         // Get a chat handle.
         let chat_handle = self.chat_queue.handle();
 
@@ -84,6 +84,7 @@ impl OcrEngine for LlmOcrEngine {
             "page_data_url".to_string(),
             Value::String(input.page.to_data_url()),
         );
+        input.page.data = vec![]; // Release memory, because it adds up.
         template_bindings.insert(
             "example_input_data_url".to_string(),
             Value::String(data_url("image/png", EXAMPLE_INPUT)),
