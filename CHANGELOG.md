@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+
+## [0.2.4] - 2025-05-01
+
+### Fixed
+
+- ocr: Don't abort processing early if a document fails during initial preparation. Instead, just mark that document as failed and continue.
+- Retry all HTTP errors that do not return an HTTP status code. There are simply too many things that can go wrong, and `reqwest` doesn't provide enough details to be precise. This means the `prompt-scaler` will probably hang nearly forever if you try to connect to a non-existant server, but it should be much more robust on big runs.
+
 ## [0.2.3] - 2025-04-30
 
 ### Fixed
