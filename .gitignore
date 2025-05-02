@@ -3,9 +3,11 @@
 /.env
 /.env.*
 /node_modules
+# Templates showing how to specify your own credentials.
+!/.env.template
+!/.env.litellm-proxy.template
 # These contain fake credentials only.
 !/.env.litellm
 !/.env.ollama
-!/.env.litellm-proxy.template
 .DS_Store
 __pycache__

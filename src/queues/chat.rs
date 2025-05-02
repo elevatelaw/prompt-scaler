@@ -17,7 +17,7 @@ use crate::{
     litellm::{LiteLlmModel, litellm_model_info},
     prelude::*,
     prompt::{ChatPrompt, Rendered},
-    retry::{IntoRetryResult as _, retry_result_ok, try_with_retry_result},
+    retry::{retry_result_ok, try_retry_result, try_transient},
 };
 
 /// An input record.
@@ -293,7 +293,7 @@ async fn run_chat_inner(
     };
 
     // Call OpenAI.
-    let completion_response = try_with_retry_result!(
+    let completion_response = try_retry_result!(
         state
             .driver
             .chat_completion(
@@ -309,7 +309,9 @@ async fn run_chat_inner(
     // Validate the result using JSON Schema. Schema validation failure is
     // treated as a transient retry failure, because it may be caused by a dodgy
     // implementation of `response_format` by a specific LLM endpoint.
-    try_with_retry_result!(
+    try_transient!(
+        // Invalid JSON means the model didn't follow the schema. Let it try
+        // again using `try_transient!`.
         state
             .validator
             .validate(&completion_response.response)
@@ -318,9 +320,6 @@ async fn run_chat_inner(
                 "Failed to validate {}:",
                 completion_response.response
             ))
-            // Invalid JSON means the model didn't follow the schema. Let it try
-            // again.
-            .into_transient()
     );
 
     retry_result_ok(completion_response)

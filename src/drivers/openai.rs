@@ -1,8 +1,6 @@
 //! Our OpenAI driver, which we also use for LiteLLM, Ollama and other
 //! compatible gateways.
 
-use std::time::Duration;
-
 use async_openai::{
     Client,
     config::OpenAIConfig,
@@ -19,18 +17,17 @@ use async_openai::{
         CreateChatCompletionResponse, ResponseFormat, ResponseFormatJsonSchema,
     },
 };
-use futures::{FutureExt as _, TryFutureExt as _};
-use tokio::time;
 
 use crate::{
-    drivers::{LlmError, TokenUsage},
+    drivers::TokenUsage,
     litellm::LiteLlmModel,
     prelude::*,
     prompt::{ChatPrompt, Message, Rendered},
     retry::{
-        IntoRetryResult as _, IsKnownTransient, retry_result_fatal, retry_result_ok,
-        try_with_retry_result,
+        IsKnownTransient, retry_result_fatal, retry_result_ok, try_fatal,
+        try_potentially_transient, try_transient,
     },
+    schema::get_schema_title,
 };
 
 use super::{ChatCompletionResponse, Driver, LlmOpts, LlmRetryResult};
@@ -72,6 +69,7 @@ impl OpenAiDriver {
 
 #[async_trait]
 impl Driver for OpenAiDriver {
+    #[instrument(level = "debug", skip_all)]
     async fn chat_completion(
         &self,
         model: &str,
@@ -80,15 +78,11 @@ impl Driver for OpenAiDriver {
         schema: Value,
         llm_opts: &LlmOpts,
     ) -> LlmRetryResult<ChatCompletionResponse> {
-        let messages = try_with_retry_result!(prompt.to_openai_prompt().into_fatal());
+        let messages = try_fatal!(prompt.to_openai_prompt());
 
         // Build our JSON Schema options.
         let json_schema = ResponseFormatJsonSchema {
-            name: schema
-                .get("title")
-                .and_then(|v| v.as_str())
-                .unwrap_or("ResponseFormat")
-                .to_owned(),
+            name: get_schema_title(&schema),
             schema: Some(schema),
             strict: Some(true),
             description: None,
@@ -123,34 +117,17 @@ impl Driver for OpenAiDriver {
         if let Some(top_p) = llm_opts.top_p {
             req.top_p(top_p);
         }
-        let req = try_with_retry_result!(
-            req.build().context("Error building request").into_fatal()
-        );
+        let req = try_fatal!(req.build().context("Error building request"));
         trace!(?req, "Request");
 
         // Call OpenAI.
         let chat = self.client.chat();
-        let mut chat_future = chat.create_byot(req).map_err(LlmError::Native).boxed();
-        if let Some(timeout) = llm_opts.timeout {
-            // If we have a timeout, wrap our future in a timeout, and merge the errors
-            // from the `Result<Result<_, LlmError>, Elapsed>` into a single level.
-            chat_future = time::timeout(Duration::from_secs(timeout), chat_future)
-                .map(|result| match result {
-                    Ok(inner) => inner,
-                    Err(_) => Err(LlmError::Timeout),
-                })
-                .boxed();
-        }
-        let chat_result: Value = try_with_retry_result!(
-            chat_future
-                .await
-                .into_retry_result(LlmError::is_known_transient)
-        );
+        let chat_future = llm_opts.apply_timeout(chat.create_byot(req));
+        let chat_result: Value = try_potentially_transient!(chat_future.await);
         debug!(%chat_result, "OpenAI response");
-        let response = try_with_retry_result!(
+        let response = try_fatal!(
             serde_json::from_value::<CreateChatCompletionResponse>(chat_result)
                 .context("Error parsing OpenAI response")
-                .into_fatal()
         );
 
         // How many tokens did we use?
@@ -173,17 +150,15 @@ impl Driver for OpenAiDriver {
             ));
         }
         let content = choice.message.content.as_deref().unwrap_or_default();
-        let response = try_with_retry_result!(
-            serde_json::from_str::<Value>(content)
-                .with_context(|| format!(
-                    "Error parsing OpenAI response content: {:?}",
-                    content
-                ))
-                // If we didn't get JSON here, it's because the model didn't
-                // generate JSON. So give it another chance.
-                .into_transient()
+        let response = try_transient!(
+            // If we didn't get JSON here, it's because the model didn't
+            // generate JSON. So give it another chance with `try_transient!`.
+            serde_json::from_str::<Value>(content).with_context(|| format!(
+                "Error parsing OpenAI response content: {:?}",
+                content
+            ))
         );
-        debug!(%content, "Response");
+        debug!(%response, "Response");
         retry_result_ok(ChatCompletionResponse {
             response,
             token_usage,

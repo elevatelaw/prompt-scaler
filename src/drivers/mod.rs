@@ -4,13 +4,15 @@
 //! gateways, but when we're aiming for extremely high throughput,
 //! sometimes it's better to keep everything in native Rust.
 
-use std::{error, fmt, ops::AddAssign};
+use std::{error, fmt, ops::AddAssign, pin::Pin, time::Duration};
 
 use async_trait::async_trait;
 use clap::{Args, ValueEnum};
+use futures::{FutureExt as _, TryFutureExt as _};
 use keen_retry::RetryResult;
 use schemars::JsonSchema;
 use serde::Serialize;
+use tokio::time;
 
 use crate::{
     litellm::LiteLlmModel,
@@ -19,6 +21,7 @@ use crate::{
     retry::IsKnownTransient,
 };
 
+pub mod native;
 pub mod openai;
 
 /// Our different driver types.
@@ -30,8 +33,8 @@ pub enum DriverType {
     #[clap(name = "openai")]
     OpenAI,
 
-    /// Native Gemini driver.
-    Gemini,
+    /// Attempt to use a native driver for each specific AI.
+    Native,
 }
 
 impl DriverType {
@@ -39,7 +42,7 @@ impl DriverType {
     pub async fn create_driver(&self) -> Result<Box<dyn Driver>> {
         match self {
             DriverType::OpenAI => Ok(Box::new(openai::OpenAiDriver::new().await?)),
-            DriverType::Gemini => Err(anyhow!("Gemini driver not implemented yet")),
+            DriverType::Native => Ok(Box::new(native::NativeDriver::new().await?)),
         }
     }
 }
@@ -47,8 +50,8 @@ impl DriverType {
 /// Our chat-related options.
 #[derive(Args, Clone, Debug)]
 pub struct LlmOpts {
-    /// The LLM driver to use. This defaults to `openai`, which works with
-    /// OpenAI, LiteLLM and Ollama-based models.
+    /// EXPERIMENTAL: The LLM driver to use. This defaults to `openai`, which
+    /// works with OpenAI, LiteLLM and Ollama-based models.
     #[clap(long, value_enum, default_value_t = DriverType::default())]
     pub driver: DriverType,
 
@@ -75,6 +78,48 @@ pub struct LlmOpts {
     /// Useful dealing with runaway responses and overloaded servers.
     #[clap(long)]
     pub timeout: Option<u64>,
+}
+
+impl LlmOpts {
+    /// Apply a timeout to a future.
+    ///
+    /// Yes, this type signature is a bit complicated. It's possible that
+    /// `future` holds references to data that it doesn't own. So we declare
+    /// `'fut` to represent the lifetime of any data held by `future`, and
+    /// carefully preserve it.
+    ///
+    /// The `Pin<Box<dyn Future<...>>>` is just our friend [`BoxedFuture`],
+    /// written out the long way so we can include `'fut`. We're making a pretty
+    /// elaborate promise to the Rust compiler here about data ownership and
+    /// lifetimes.
+    ///
+    /// We box our output future because it may have different implementations,
+    /// depending on which branch we took, and so Rust needs to allocate the future
+    /// on the heap and only provide an abstract [`Future`] interface.
+    ///
+    /// Honestly we try to minimize this stuff, but timeouts are _hard_.
+    pub fn apply_timeout<'fut, T, E>(
+        &self,
+        future: impl Future<Output = Result<T, E>> + Send + 'fut,
+    ) -> Pin<Box<dyn Future<Output = Result<T, LlmError<E>>> + Send + 'fut>>
+    where
+        T: Send + 'static,
+        E: Send + 'static,
+    {
+        let future = future.map_err(LlmError::Native);
+        if let Some(timeout) = self.timeout {
+            time::timeout(Duration::from_secs(timeout), future)
+                // We have a `Result<Result<T, LlmError<E>>, Elapsed>` here, and
+                // we want to convert it to a `Result<T, LlmError<E>>`.
+                .map(|result| match result {
+                    Ok(inner) => inner,
+                    Err(_) => Err(LlmError::Timeout),
+                })
+                .boxed()
+        } else {
+            future.boxed()
+        }
+    }
 }
 
 /// A [`RetryResult`] for LLM requests. This allows [`Driver`] instances to
@@ -181,7 +226,7 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            LlmError::Native(err) => write!(f, "OpenAI error: {}", err),
+            LlmError::Native(err) => write!(f, "LLM error: {}", err),
             LlmError::Timeout => write!(f, "LLM request timed out"),
         }
     }

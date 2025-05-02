@@ -60,6 +60,9 @@ impl ChatPrompt<Template> {
         let mut expect_user_message = true;
         for message in &self.messages {
             let ok = match message {
+                Message::User { text: None, images } if images.is_empty() => {
+                    return Err(anyhow!("User message must have either text or images"));
+                }
                 Message::User { .. } if expect_user_message => true,
                 Message::Assistant { .. } if !expect_user_message => true,
                 _ => false,

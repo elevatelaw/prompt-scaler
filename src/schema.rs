@@ -7,6 +7,15 @@ use serde_json::Map;
 
 use crate::{async_utils::io::read_json_or_toml, prelude::*};
 
+/// Get the title of a JSON Schema part, or `"ResponseFormat"` if not present.
+pub fn get_schema_title(schema: &Value) -> String {
+    schema
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("ResponseFormat")
+        .to_owned()
+}
+
 /// Either an external or an internal schema.
 #[derive(Debug, Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(untagged, deny_unknown_fields, rename_all = "snake_case")]

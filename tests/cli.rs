@@ -26,6 +26,19 @@ static LITELLM_CHEAP_MODELS: &[&str] = &[
     "gemini-2.0-flash",
 ];
 
+/// Some cheap models for use with `--driver=native`.
+static NATIVE_CHEAP_MODELS: &[&str] = &[
+    // This should work, but we probably want to overhaul how we handle
+    // API keys for to distinguish between LiteLLM and
+    //"gpt-4o-mini",
+
+    // Does not return JSON.
+    //"claude-3-5-haiku-20241022",
+
+    // Works fine in native mode!
+    "gemini-2.0-flash",
+];
+
 /// Fake API key for local Ollama instance.
 static OLLAMA_API_KEY: &str = "sk-1234";
 /// API base URL for local Ollama instance.
@@ -138,6 +151,24 @@ fn test_chat_image_csv_input_litellm() {
             .env("OPENAI_API_BASE", LITELLM_API_BASE)
             .arg("chat")
             .arg("tests/fixtures/images/input.csv")
+            .arg("--model")
+            .arg(model)
+            .arg("--prompt")
+            .arg("tests/fixtures/images/prompt.toml")
+            .assert()
+            .success();
+    }
+}
+
+#[test]
+#[ignore = "Slightly expensive & needs various API keys in .env"]
+fn test_chat_image_csv_input_native() {
+    for &model in NATIVE_CHEAP_MODELS {
+        println!("Testing model: {}", model);
+        cmd()
+            .arg("chat")
+            .arg("tests/fixtures/images/input.csv")
+            .args(["--driver", "native"])
             .arg("--model")
             .arg(model)
             .arg("--prompt")

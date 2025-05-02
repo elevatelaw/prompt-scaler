@@ -59,3 +59,4 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 handlebars-concat = "0.3.0"
 regex = "1.11.1"
+genai = "0.2.3"
