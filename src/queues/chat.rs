@@ -8,7 +8,13 @@ use std::{
 };
 
 use async_openai::{
-    Client, config::OpenAIConfig, error::OpenAIError, types::CreateChatCompletionResponse,
+    Client,
+    config::OpenAIConfig,
+    error::OpenAIError,
+    types::{
+        CreateChatCompletionRequest, CreateChatCompletionRequestArgs,
+        CreateChatCompletionResponse, ResponseFormat, ResponseFormatJsonSchema,
+    },
 };
 use clap::Args;
 use futures::{FutureExt as _, TryFutureExt};
@@ -36,7 +42,7 @@ pub struct LlmOpts {
     /// help prevent runaway responses, but it may also cause incomplete
     /// results. For English, many models have around 4 bytes per token.
     #[clap(long)]
-    pub max_completion_tokens: Option<u64>,
+    pub max_completion_tokens: Option<u32>,
 
     /// The temperature to use for sampling, between 0.0 and 2.0. Higher values
     /// may the output more random, while lower values may make it more
@@ -339,7 +345,51 @@ async fn run_chat(
         .prompt
         .render_prompt(&input_record.data.template_bindings)
         .context("Error rendering prompt")?;
-    trace!(%prompt, "Prompt");
+
+    // Build our JSON Schema options.
+    let json_schema = ResponseFormatJsonSchema {
+        name: state
+            .schema
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("ResponseFormat")
+            .to_owned(),
+        schema: Some(state.schema.clone()),
+        strict: Some(true),
+        description: None,
+    };
+
+    // Turn our prompt into a chat request.
+    let mut req = CreateChatCompletionRequestArgs::default();
+    req.model(state.model.clone())
+        .messages(prompt)
+        .response_format(ResponseFormat::JsonSchema { json_schema });
+    let mut need_to_disable_store = true;
+    if let Some(model_info) = state.model_info {
+        eprintln!("Provider: {}", model_info.model_info.litellm_provider);
+        if model_info.model_info.litellm_provider == "anthropic" {
+            // For OpenAI (and possibly other providers with the same API), we
+            // need to set `store` to false to prevent the API from storing
+            // responses for later REST calls. But LiteLLM doesn't know about
+            // this parameter, and doesn't remove it when calling Anthropic
+            // models.
+            need_to_disable_store = false;
+        }
+    }
+    if need_to_disable_store {
+        req.store(false);
+    }
+    if let Some(max_completion_tokens) = state.llm_opts.max_completion_tokens {
+        req.max_completion_tokens(max_completion_tokens);
+    }
+    if let Some(temperature) = state.llm_opts.temperature {
+        req.temperature(temperature);
+    }
+    if let Some(top_p) = state.llm_opts.top_p {
+        req.top_p(top_p);
+    }
+    let req = req.build().context("Error building request")?;
+    trace!(?req, "Request");
 
     // Release the input data, because it adds up, especially for images.
     input_record.data.template_bindings = Map::default();
@@ -353,10 +403,10 @@ async fn run_chat(
 
     // Do our real work, retrying as specified.
     let attempt_number = Mutex::new(0);
-    let result = run_chat_inner(&attempt_number, state.as_ref(), &prompt)
+    let result = run_chat_inner(&attempt_number, state.as_ref(), &req)
         .await
         .retry_with_async(|_| async {
-            run_chat_inner(&attempt_number, state.as_ref(), &prompt).await
+            run_chat_inner(&attempt_number, state.as_ref(), &req).await
         })
         .with_exponential_jitter(|| jitter)
         .await
@@ -392,7 +442,7 @@ async fn run_chat(
 async fn run_chat_inner(
     attempt_number: &Mutex<u64>,
     state: &ProcessorState,
-    prompt: &Value,
+    req: &CreateChatCompletionRequest,
 ) -> RetryResult<(), (), (Option<TokenUsage>, Value), anyhow::Error> {
     // Increment our attempt number.
     let _current_attempt = {
@@ -402,37 +452,9 @@ async fn run_chat_inner(
         current_attempt
     };
 
-    // Create our request.
-    let mut chat_request = json!({
-        "model": &state.model,
-        "store": false,
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {
-                "name": &state.schema.get("title").cloned().unwrap_or_else(|| json!("ResponseFormat")),
-                "schema": &state.schema,
-                "strict": true,
-            },
-        },
-        "messages": prompt,
-    });
-    if let Some(max_completion_tokens) = state.llm_opts.max_completion_tokens {
-        chat_request["max_completion_tokens"] = Value::from(max_completion_tokens);
-    }
-    if let Some(temperature) = state.llm_opts.temperature {
-        chat_request["temperature"] = Value::from(temperature);
-    }
-    if let Some(top_p) = state.llm_opts.top_p {
-        chat_request["top_p"] = Value::from(top_p);
-    }
-    trace!(%chat_request, "OpenAI request");
-
     // Call OpenAI.
     let chat = state.client.chat();
-    let mut chat_future = chat
-        .create_byot(chat_request)
-        .map_err(LlmError::OpenAI)
-        .boxed();
+    let mut chat_future = chat.create_byot(req).map_err(LlmError::OpenAI).boxed();
     if let Some(timeout) = state.llm_opts.timeout {
         // If we have a timeout, wrap our future in a timeout, and merge the errors
         // from the `Result<Result<_, LlmError>, Elapsed>` into a single level.

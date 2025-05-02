@@ -2,6 +2,15 @@
 
 use std::fs;
 
+use async_openai::types::{
+    ChatCompletionRequestAssistantMessageArgs,
+    ChatCompletionRequestAssistantMessageContent, ChatCompletionRequestMessage,
+    ChatCompletionRequestMessageContentPartImageArgs,
+    ChatCompletionRequestMessageContentPartTextArgs,
+    ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestSystemMessageContent,
+    ChatCompletionRequestUserMessageArgs, ChatCompletionRequestUserMessageContent,
+    ChatCompletionRequestUserMessageContentPart,
+};
 use handlebars::{
     Context, Handlebars, Helper, HelperResult, Output, RenderContext, RenderErrorReason,
 };
@@ -29,7 +38,10 @@ pub struct ChatPrompt {
 
 impl ChatPrompt {
     /// Render the prompt as a JSON object.
-    pub fn render_prompt(&self, bindings: &JsonObject) -> Result<Value> {
+    pub fn render_prompt(
+        &self,
+        bindings: &JsonObject,
+    ) -> Result<Vec<ChatCompletionRequestMessage>> {
         let mut handlebars = Handlebars::new();
         handlebars.register_escape_fn(|s| s.to_owned());
         handlebars.register_helper("image-data-url", Box::new(image_data_url_helper));
@@ -111,7 +123,7 @@ pub trait RenderTemplate {
 }
 
 impl RenderTemplate for ChatPrompt {
-    type Output = Value;
+    type Output = Vec<ChatCompletionRequestMessage>;
 
     fn render_template(
         &self,
@@ -144,20 +156,19 @@ impl RenderTemplate for ChatPrompt {
         // Render our prompt.
         let mut messages = Vec::new();
         if let Some(developer) = &self.developer {
-            messages.push(json!({
-                "role": "system",
-                "content": handlebars.render_template(developer, bindings)?,
-            }));
+            messages.push(system_message(
+                handlebars.render_template(developer, bindings)?,
+            )?);
         }
         for message in &self.messages {
             messages.push(message.render_template(handlebars, bindings)?);
         }
-        Ok(Value::Array(messages))
+        Ok(messages)
     }
 }
 
 impl RenderTemplate for Message {
-    type Output = Value;
+    type Output = ChatCompletionRequestMessage;
 
     fn render_template(
         &self,
@@ -173,33 +184,27 @@ impl RenderTemplate for Message {
             Message::User {
                 text: Some(text),
                 images,
-            } if images.is_empty() => Ok(json!({
-                "role": "user",
-                "content": text
-            })),
+            } if images.is_empty() => {
+                user_message(handlebars.render_template(text, bindings)?)
+            }
             // We have images, and maybe text, so use the multi-part format.
             Message::User { text, images } => {
                 let mut parts = Vec::with_capacity(1 + images.len());
                 if let Some(text) = text {
-                    parts.push(json!({ "type": "text", "text": text }));
+                    parts.push(user_message_text_part(
+                        handlebars.render_template(text, bindings)?,
+                    )?);
                 }
                 for image in images {
-                    parts.push(json!({
-                        "type": "image_url",
-                        "image_url": { "url": handlebars.render_template(image, bindings)? }
-                    }));
+                    parts.push(user_message_image_part(
+                        handlebars.render_template(image, bindings)?,
+                    )?);
                 }
-                Ok(json!({
-                    "role": "user",
-                    "content": parts
-                }))
+                user_message_multi_part(parts)
             }
             Message::Assistant { json } => {
                 let json = json.render_template(handlebars, bindings)?;
-                Ok(json!({
-                    "role": "assistant",
-                    "content": json.to_string()
-                }))
+                assistant_message(json.to_string())
             }
         }
     }
@@ -248,4 +253,64 @@ impl RenderTemplate for JsonObject {
         }
         Ok(Value::Object(output))
     }
+}
+
+/// Build a system message.
+fn system_message(content: String) -> Result<ChatCompletionRequestMessage> {
+    Ok(ChatCompletionRequestMessage::System(
+        ChatCompletionRequestSystemMessageArgs::default()
+            .content(ChatCompletionRequestSystemMessageContent::Text(content))
+            .build()?,
+    ))
+}
+
+/// Build a simple user message.
+fn user_message(content: String) -> Result<ChatCompletionRequestMessage> {
+    Ok(ChatCompletionRequestMessage::User(
+        ChatCompletionRequestUserMessageArgs::default()
+            .content(ChatCompletionRequestUserMessageContent::Text(content))
+            .build()?,
+    ))
+}
+
+/// Build a multi-part user message.
+fn user_message_multi_part(
+    content: Vec<ChatCompletionRequestUserMessageContentPart>,
+) -> Result<ChatCompletionRequestMessage> {
+    Ok(ChatCompletionRequestMessage::User(
+        ChatCompletionRequestUserMessageArgs::default()
+            .content(ChatCompletionRequestUserMessageContent::Array(content))
+            .build()?,
+    ))
+}
+
+// Build a user message text part.
+fn user_message_text_part(
+    text: String,
+) -> Result<ChatCompletionRequestUserMessageContentPart> {
+    Ok(ChatCompletionRequestUserMessageContentPart::Text(
+        ChatCompletionRequestMessageContentPartTextArgs::default()
+            .text(text)
+            .build()?,
+    ))
+}
+
+// Build a user message image part.
+fn user_message_image_part(
+    url: String,
+) -> Result<ChatCompletionRequestUserMessageContentPart> {
+    Ok(ChatCompletionRequestUserMessageContentPart::ImageUrl(
+        ChatCompletionRequestMessageContentPartImageArgs::default()
+            .image_url(url)
+            .build()?,
+    ))
+}
+
+/// Build an assistant message.
+fn assistant_message(content: String) -> Result<ChatCompletionRequestMessage> {
+    Ok(ChatCompletionRequestMessage::Assistant(
+        ChatCompletionRequestAssistantMessageArgs::default()
+            .content(ChatCompletionRequestAssistantMessageContent::Text(content))
+            .build()?,
+    ))
 }

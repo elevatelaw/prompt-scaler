@@ -22,8 +22,7 @@ static LITELLM_API_BASE: &str = "http://localhost:4000/v1";
 /// our `litellm_config.yml` setup.
 static LITELLM_CHEAP_MODELS: &[&str] = &[
     "gpt-4o-mini",
-    // Disabled because LiteLLM does not drop `store` parameter.
-    //"claude-3-5-haiku-20241022",
+    "claude-3-5-haiku-20241022",
     "gemini-2.0-flash",
 ];
 
