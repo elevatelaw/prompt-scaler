@@ -106,34 +106,42 @@ where
     }
 }
 
-/// Is this OpenAI error likely to be transient?
+/// Is this error a known transient error?
 ///
 /// By default, we assume errors are not transient, until they're been observed
 /// in the wild, investigated and determined to be transient. The prevents us
 /// from doing large numbers of retries with exponential backoff on errors that
 /// will never resolve.
-pub(crate) fn is_known_openai_transient(error: &OpenAIError) -> bool {
-    match error {
-        OpenAIError::Reqwest(error) => is_known_reqwest_transient(error),
-        _ => false,
+pub trait IsKnownTransient {
+    /// Is this error likely to be transient?
+    fn is_known_transient(&self) -> bool;
+}
+
+impl IsKnownTransient for OpenAIError {
+    fn is_known_transient(&self) -> bool {
+        match self {
+            OpenAIError::Reqwest(error) => error.is_known_transient(),
+            _ => false,
+        }
     }
 }
 
-/// Is this [`reqwest`] error likely to be transient?
-pub(crate) fn is_known_reqwest_transient(error: &reqwest::Error) -> bool {
-    if let Some(status) = error.status() {
-        let transient_failures = [
-            StatusCode::TOO_MANY_REQUESTS,
-            StatusCode::BAD_GATEWAY,
-            StatusCode::SERVICE_UNAVAILABLE,
-            StatusCode::GATEWAY_TIMEOUT,
-        ];
-        transient_failures.contains(&status)
-    } else {
-        // Assume all other kinds of HTTP errors are transient. Unfortunately,
-        // there are a lot of things that can go wrong, and `reqwest` doesn't
-        // expose most of them in sufficient detail to be certain which are
-        // transient.
-        true
+impl IsKnownTransient for reqwest::Error {
+    fn is_known_transient(&self) -> bool {
+        if let Some(status) = self.status() {
+            let transient_failures = [
+                StatusCode::TOO_MANY_REQUESTS,
+                StatusCode::BAD_GATEWAY,
+                StatusCode::SERVICE_UNAVAILABLE,
+                StatusCode::GATEWAY_TIMEOUT,
+            ];
+            transient_failures.contains(&status)
+        } else {
+            // Assume all other kinds of HTTP errors are transient. Unfortunately,
+            // there are a lot of things that can go wrong, and `reqwest` doesn't
+            // expose most of them in sufficient detail to be certain which are
+            // transient.
+            true
+        }
     }
 }

@@ -34,11 +34,10 @@ use crate::{
         io::{read_jsonl_or_csv, write_output},
     },
     cmd::StreamOpts,
+    drivers::TokenUsage,
     prelude::*,
     ui::Ui,
 };
-
-use super::chat::TokenUsage;
 
 /// Input record for a [`WorkItemProcessor`].
 #[derive(Debug, Deserialize, JsonSchema)]

@@ -7,11 +7,11 @@ use futures::StreamExt;
 
 use crate::{
     async_utils::io::read_json_or_toml,
+    drivers::LlmOpts,
     page_iter::PageIterOptions,
     prelude::*,
     prompt::ChatPrompt,
     queues::{
-        chat::LlmOpts,
         ocr::{
             OcrInput, OcrOutput, OcrStreamInfo, engines::llm::default_ocr_prompt,
             ocr_files,

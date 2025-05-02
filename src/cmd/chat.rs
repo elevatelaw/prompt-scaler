@@ -5,10 +5,11 @@ use futures::StreamExt;
 
 use crate::{
     async_utils::io::read_json_or_toml,
+    drivers::LlmOpts,
     prelude::*,
     prompt::ChatPrompt,
     queues::{
-        chat::{ChatInput, ChatStreamInfo, LlmOpts, process_chat_stream},
+        chat::{ChatInput, ChatStreamInfo, process_chat_stream},
         work::{WorkInput, WorkOutput},
     },
     ui::{ProgressConfig, Ui},

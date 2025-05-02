@@ -15,17 +15,15 @@ use crate::{
         io::write_output_csv,
     },
     cmd::StreamOpts,
+    drivers::{LlmOpts, TokenUsage},
     page_iter::{PageIter, PageIterOptions},
     prelude::*,
     prompt::ChatPrompt,
     ui::Ui,
 };
 
-use super::{
-    chat::{LlmOpts, TokenUsage},
-    work::{
-        WorkInput, WorkItemCounterExt as _, WorkOutput, WorkOutputCounters, WorkStatus,
-    },
+use super::work::{
+    WorkInput, WorkItemCounterExt as _, WorkOutput, WorkOutputCounters, WorkStatus,
 };
 
 /// A input record describing a file to OCR.

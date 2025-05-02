@@ -11,6 +11,7 @@ use self::{prelude::*, ui::Ui};
 mod async_utils;
 mod cmd;
 mod data_url;
+mod drivers;
 mod llm_client;
 mod page_iter;
 mod prelude;

@@ -8,10 +8,11 @@ use serde_json::Map;
 use crate::{
     async_utils::JoinWorker,
     data_url::data_url,
+    drivers::LlmOpts,
     prelude::*,
     prompt::ChatPrompt,
     queues::{
-        chat::{ChatInput, ChatOutput, LlmOpts, create_chat_work_queue},
+        chat::{ChatInput, ChatOutput, create_chat_work_queue},
         ocr::OcrAnalysis,
         work::{WorkInput, WorkItemProcessor as _, WorkQueue},
     },

@@ -9,10 +9,10 @@ use std::sync::Arc;
 
 use crate::{
     async_utils::JoinWorker,
+    drivers::{LlmOpts, TokenUsage},
     page_iter::{Page, PageIterOptions},
     prelude::*,
     prompt::ChatPrompt,
-    queues::chat::{LlmOpts, TokenUsage},
 };
 
 use super::OcrAnalysis;
