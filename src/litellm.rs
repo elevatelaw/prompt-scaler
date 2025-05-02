@@ -6,33 +6,11 @@ use std::{
 };
 
 use anyhow::anyhow;
-use async_openai::{
-    Client,
-    config::{Config as _, OpenAIConfig},
-};
+use async_openai::config::Config as _;
 use serde_json::Map;
 use tokio::sync::OnceCell;
 
-use crate::prelude::*;
-
-/// Get OpenAI-compatible client configuration.
-fn get_openai_client_config() -> OpenAIConfig {
-    let mut client_config = OpenAIConfig::new();
-    if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
-        client_config = client_config.with_api_key(api_key);
-    }
-    if let Ok(api_base) = std::env::var("OPENAI_API_BASE") {
-        client_config = client_config.with_api_base(api_base);
-    }
-    client_config
-}
-
-/// Create an OpenAI-compatible client using the default configuration.
-pub fn create_llm_client() -> Result<Client<OpenAIConfig>> {
-    let client_config = get_openai_client_config();
-    let client = Client::with_config(client_config);
-    Ok(client)
-}
+use crate::{drivers::openai::get_openai_client_config, prelude::*};
 
 /// Information about a LiteLLM model.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -160,6 +138,7 @@ pub struct LiteLlmResponse<T> {
 /// we fill the cache with an empty map.
 #[instrument(level = "debug", skip_all)]
 async fn build_model_cache() -> Result<BTreeMap<String, LiteLlmModel>> {
+    // TODO: Consider preferring `LITELLM_*` versions of the creds.
     let client_config = get_openai_client_config();
     let client = reqwest::Client::new();
 

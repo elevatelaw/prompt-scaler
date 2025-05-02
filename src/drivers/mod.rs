@@ -13,7 +13,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::{
-    llm_client::LiteLlmModel,
+    litellm::LiteLlmModel,
     prelude::*,
     prompt::{ChatPrompt, Rendered},
     retry::IsKnownTransient,
@@ -82,10 +82,14 @@ pub struct LlmOpts {
 /// definitely fatal.
 pub type LlmRetryResult<T> = RetryResult<(), (), T, anyhow::Error>;
 
-/// The driver trait.
+/// Interface trait for LLM drivers.
 #[async_trait]
 pub trait Driver: fmt::Debug + Send + Sync + 'static {
     /// Run a "chat completion" request.
+    ///
+    /// This takes a [`LiteLlmModel`] even for non-OpenAI drivers, because it's
+    /// potentially useful to use LiteLLM for model billing info while talking
+    /// directly to the model itself.
     async fn chat_completion(
         &self,
         model: &str,

@@ -12,7 +12,7 @@ mod async_utils;
 mod cmd;
 mod data_url;
 mod drivers;
-mod llm_client;
+mod litellm;
 mod page_iter;
 mod prelude;
 mod prompt;

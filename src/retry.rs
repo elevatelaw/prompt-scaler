@@ -2,7 +2,6 @@
 
 use core::fmt;
 
-use async_openai::error::OpenAIError;
 use keen_retry::RetryResult;
 use reqwest::StatusCode;
 
@@ -115,15 +114,6 @@ where
 pub trait IsKnownTransient {
     /// Is this error likely to be transient?
     fn is_known_transient(&self) -> bool;
-}
-
-impl IsKnownTransient for OpenAIError {
-    fn is_known_transient(&self) -> bool {
-        match self {
-            OpenAIError::Reqwest(error) => error.is_known_transient(),
-            _ => false,
-        }
-    }
 }
 
 impl IsKnownTransient for reqwest::Error {

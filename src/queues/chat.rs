@@ -14,7 +14,7 @@ use super::work::{WorkInput, WorkOutput, WorkQueue, WorkStatus};
 use crate::{
     async_utils::{BoxedFuture, BoxedStream, JoinWorker, io::JsonObject},
     drivers::{ChatCompletionResponse, Driver, LlmOpts, LlmRetryResult, TokenUsage},
-    llm_client::{LiteLlmModel, litellm_model_info},
+    litellm::{LiteLlmModel, litellm_model_info},
     prelude::*,
     prompt::{ChatPrompt, Rendered},
     retry::{IntoRetryResult as _, retry_result_ok, try_with_retry_result},
