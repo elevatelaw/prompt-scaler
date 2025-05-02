@@ -28,7 +28,7 @@ use crate::{
     async_utils::{BoxedFuture, BoxedStream, JoinWorker, io::JsonObject},
     llm_client::{LiteLlmModel, create_llm_client, litellm_model_info},
     prelude::*,
-    prompt::ChatPrompt,
+    prompt::{ChatPrompt, ToOpenAiPrompt as _},
     retry::{
         IntoRetryResult as _, is_known_openai_transient, retry_result_fatal,
         retry_result_ok, try_with_retry_result,
@@ -343,8 +343,9 @@ async fn run_chat(
     );
     let prompt = state
         .prompt
-        .render_prompt(&input_record.data.template_bindings)
-        .context("Error rendering prompt")?;
+        .render(&input_record.data.template_bindings)
+        .context("Error rendering prompt")?
+        .to_openai_prompt()?;
 
     // Build our JSON Schema options.
     let json_schema = ResponseFormatJsonSchema {

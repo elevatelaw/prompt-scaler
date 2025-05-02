@@ -1,6 +1,6 @@
 //! Our prompt data type.
 
-use std::fs;
+use std::{fmt, fs, marker::PhantomData};
 
 use async_openai::types::{
     ChatCompletionRequestAssistantMessageArgs,
@@ -16,16 +16,35 @@ use handlebars::{
 };
 use handlebars_concat::HandlebarsConcat;
 use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
 use serde_json::Map;
 
 use crate::{
     async_utils::io::JsonObject, data_url::data_url, prelude::*, schema::Schema,
 };
 
+/// Super-type of allowable prompt states. This is using the popular "type
+/// state" pattern, where we use Rust types to represent allowable states and
+/// transitions for a type. This all happens at compile time, in the type
+/// system, and doesn't actually generate any code.
+pub trait PromptState: fmt::Debug + DeserializeOwned + JsonSchema + 'static {}
+
+/// The state for a prompt that is still a template, which needs to be rendered.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct Template;
+
+impl PromptState for Template {}
+
+/// The state for a prompt that has been rendered.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct Rendered;
+
+impl PromptState for Rendered {}
+
 /// A chat completion prompt.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub struct ChatPrompt {
+pub struct ChatPrompt<State: PromptState = Template> {
     /// The developer (aka "system") message, if any.
     pub developer: Option<String>,
 
@@ -34,23 +53,58 @@ pub struct ChatPrompt {
 
     /// Messages.
     pub messages: Vec<Message>,
+
+    /// Zero-size placeholder to keep Rust happy by using [`State`] _somewhere_
+    /// in this type.
+    #[serde(default, skip)]
+    _phantom: PhantomData<State>,
 }
 
-impl ChatPrompt {
-    /// Render the prompt as a JSON object.
-    pub fn render_prompt(
-        &self,
-        bindings: &JsonObject,
-    ) -> Result<Vec<ChatCompletionRequestMessage>> {
+impl ChatPrompt<Template> {
+    /// Make sure our messages appear in the order ((user, assistant)*, user).
+    fn validate(&self) -> Result<()> {
+        if self.messages.is_empty() {
+            return Err(anyhow!("No messages in prompt"));
+        }
+        let mut expect_user_message = true;
+        for message in &self.messages {
+            let ok = match message {
+                Message::User { .. } if expect_user_message => true,
+                Message::Assistant { .. } if !expect_user_message => true,
+                _ => false,
+            };
+            if !ok {
+                return Err(anyhow!(
+                    "Expected alternating user and assistant messages in prompt, found {:?}",
+                    message
+                ));
+            }
+            expect_user_message = !expect_user_message;
+        }
+        if self.messages.len() % 2 == 0 {
+            return Err(anyhow!("Prompt must end with a user message"));
+        }
+        Ok(())
+    }
+
+    /// Render the prompt as a JSON object. This causes a state transition from
+    /// [`Template`] to [`Rendered`].
+    pub fn render(&self, bindings: &JsonObject) -> Result<ChatPrompt<Rendered>> {
+        self.validate()?;
         let mut handlebars = Handlebars::new();
         handlebars.register_escape_fn(|s| s.to_owned());
         handlebars.register_helper("image-data-url", Box::new(image_data_url_helper));
         handlebars.register_helper("concat", Box::new(HandlebarsConcat));
         self.render_template(&handlebars, bindings)
+            .context("Could not render prompt")
     }
 }
 
 /// A message, and optionally a response (represented as a JSON object).
+///
+/// We would also have a `State: PromptState` field here, but that interacts badly
+/// with the [`Deserialize`] trait from [`serde`]. So just pretend that this
+/// type exists in two versions: one [`Template`] and one [`Rendered`].
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Message {
@@ -109,9 +163,8 @@ fn image_data_url_helper(
     Ok(())
 }
 
-/// Render a prompt as a JSON object, filling in template values for any string
-/// fields.
-pub trait RenderTemplate {
+/// Render a [`Template`] version of a type, and return the [`Rendered`] version
+trait RenderTemplate {
     type Output;
 
     /// Render the template.
@@ -122,53 +175,33 @@ pub trait RenderTemplate {
     ) -> Result<Self::Output>;
 }
 
-impl RenderTemplate for ChatPrompt {
-    type Output = Vec<ChatCompletionRequestMessage>;
+impl RenderTemplate for ChatPrompt<Template> {
+    type Output = ChatPrompt<Rendered>;
 
     fn render_template(
         &self,
         handlebars: &Handlebars,
         bindings: &JsonObject,
     ) -> Result<Self::Output> {
-        // Make sure our messages appear in the order ((user, assistant)*, user).
-        if self.messages.is_empty() {
-            return Err(anyhow!("No messages in prompt"));
-        }
-        let mut expect_user_message = true;
-        for message in &self.messages {
-            let ok = match message {
-                Message::User { .. } if expect_user_message => true,
-                Message::Assistant { .. } if !expect_user_message => true,
-                _ => false,
-            };
-            if !ok {
-                return Err(anyhow!(
-                    "Expected alternating user and assistant messages in prompt, found {:?}",
-                    message
-                ));
-            }
-            expect_user_message = !expect_user_message;
-        }
-        if self.messages.len() % 2 == 0 {
-            return Err(anyhow!("Prompt must end with a user message"));
-        }
-
-        // Render our prompt.
-        let mut messages = Vec::new();
-        if let Some(developer) = &self.developer {
-            messages.push(system_message(
-                handlebars.render_template(developer, bindings)?,
-            )?);
-        }
-        for message in &self.messages {
-            messages.push(message.render_template(handlebars, bindings)?);
-        }
-        Ok(messages)
+        Ok(ChatPrompt {
+            developer: self
+                .developer
+                .as_deref()
+                .map(|developer| render_template(handlebars, developer, bindings))
+                .transpose()?,
+            response_schema: self.response_schema.clone(),
+            messages: self
+                .messages
+                .iter()
+                .map(|message| message.render_template(handlebars, bindings))
+                .collect::<Result<Vec<_>>>()?,
+            _phantom: PhantomData,
+        })
     }
 }
 
 impl RenderTemplate for Message {
-    type Output = ChatCompletionRequestMessage;
+    type Output = Message;
 
     fn render_template(
         &self,
@@ -176,35 +209,19 @@ impl RenderTemplate for Message {
         bindings: &JsonObject,
     ) -> Result<Self::Output> {
         match self {
-            // No user content, so we bail.
-            Message::User { text: None, images } if images.is_empty() => {
-                Err(anyhow!("user message must have either text or images"))
-            }
-            // Just text, so use the simple format.
-            Message::User {
-                text: Some(text),
-                images,
-            } if images.is_empty() => {
-                user_message(handlebars.render_template(text, bindings)?)
-            }
-            // We have images, and maybe text, so use the multi-part format.
-            Message::User { text, images } => {
-                let mut parts = Vec::with_capacity(1 + images.len());
-                if let Some(text) = text {
-                    parts.push(user_message_text_part(
-                        handlebars.render_template(text, bindings)?,
-                    )?);
-                }
-                for image in images {
-                    parts.push(user_message_image_part(
-                        handlebars.render_template(image, bindings)?,
-                    )?);
-                }
-                user_message_multi_part(parts)
-            }
+            Message::User { text, images } => Ok(Message::User {
+                text: text
+                    .as_ref()
+                    .map(|text| render_template(handlebars, text, bindings))
+                    .transpose()?,
+                images: images
+                    .iter()
+                    .map(|image| render_template(handlebars, image, bindings))
+                    .collect::<Result<Vec<_>, _>>()?,
+            }),
             Message::Assistant { json } => {
                 let json = json.render_template(handlebars, bindings)?;
-                assistant_message(json.to_string())
+                Ok(Message::Assistant { json })
             }
         }
     }
@@ -220,7 +237,7 @@ impl RenderTemplate for Value {
     ) -> Result<Self::Output> {
         match self {
             Value::String(s) => {
-                let rendered = handlebars.render_template(s, bindings)?;
+                let rendered = render_template(handlebars, s, bindings)?;
                 Ok(Value::String(rendered))
             }
             Value::Object(obj) => obj.render_template(handlebars, bindings),
@@ -252,6 +269,104 @@ impl RenderTemplate for JsonObject {
             output.insert(rendered_key, rendered_value);
         }
         Ok(Value::Object(output))
+    }
+}
+
+/// Render a template, returning a helpful error message if it fails.
+fn render_template(
+    handlebars: &Handlebars,
+    template: &str,
+    bindings: &JsonObject,
+) -> Result<String> {
+    handlebars
+        .render_template(template, bindings)
+        .with_context(|| {
+            let binding_keys = bindings
+                .keys()
+                .map(|k| &k[..])
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "Error rendering template {:?} with bindings: [{}]",
+                template, binding_keys,
+            )
+        })
+}
+
+/// Convert a [`Rendered`] version of a type to an OpenAI prompt.
+pub trait ToOpenAiPrompt {
+    type Output;
+
+    /// Render the template.
+    fn to_openai_prompt(&self) -> Result<Self::Output>;
+}
+
+impl ToOpenAiPrompt for ChatPrompt<Rendered> {
+    type Output = Vec<ChatCompletionRequestMessage>;
+
+    fn to_openai_prompt(&self) -> Result<Self::Output> {
+        // Make sure our messages appear in the order ((user, assistant)*, user).
+        if self.messages.is_empty() {
+            return Err(anyhow!("No messages in prompt"));
+        }
+        let mut expect_user_message = true;
+        for message in &self.messages {
+            let ok = match message {
+                Message::User { .. } if expect_user_message => true,
+                Message::Assistant { .. } if !expect_user_message => true,
+                _ => false,
+            };
+            if !ok {
+                return Err(anyhow!(
+                    "Expected alternating user and assistant messages in prompt, found {:?}",
+                    message
+                ));
+            }
+            expect_user_message = !expect_user_message;
+        }
+        if self.messages.len() % 2 == 0 {
+            return Err(anyhow!("Prompt must end with a user message"));
+        }
+
+        // Render our prompt.
+        let mut messages = Vec::new();
+        if let Some(developer) = &self.developer {
+            messages.push(system_message(developer.to_owned())?);
+        }
+        for message in &self.messages {
+            messages.push(message.to_openai_prompt()?);
+        }
+        Ok(messages)
+    }
+}
+
+impl ToOpenAiPrompt for Message {
+    type Output = ChatCompletionRequestMessage;
+
+    fn to_openai_prompt(&self) -> Result<Self::Output> {
+        match self {
+            // No user content, so we bail.
+            Message::User { text: None, images } if images.is_empty() => {
+                Err(anyhow!("user message must have either text or images"))
+            }
+            // Just text, so use the simple format.
+            Message::User {
+                text: Some(text),
+                images,
+            } if images.is_empty() => user_message(text.to_owned()),
+            // We have images, and maybe text, so use the multi-part format.
+            Message::User { text, images } => {
+                let mut parts = Vec::with_capacity(1 + images.len());
+                if let Some(text) = text {
+                    parts.push(user_message_text_part(text.to_owned())?);
+                }
+                for image in images {
+                    parts.push(user_message_image_part(image.to_owned())?);
+                }
+                user_message_multi_part(parts)
+            }
+            Message::Assistant { json } => assistant_message(json.to_string()),
+        }
     }
 }
 
