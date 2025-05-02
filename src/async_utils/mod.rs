@@ -75,16 +75,20 @@ pub fn check_for_command_failure(
 ) -> Result<()> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    debug!(
-        command_name = command_name,
-        output = %stdout,
-        "Standard output from command"
-    );
-    error!(
-        command_name = command_name,
-        output = %stderr,
-        "Standard error from command",
-    );
+    if !stdout.is_empty() {
+        debug!(
+            command_name = command_name,
+            output = %stdout,
+            "Standard output from command"
+        );
+    }
+    if !stderr.is_empty() {
+        error!(
+            command_name = command_name,
+            output = %stderr,
+            "Standard error from command",
+        );
+    }
 
     if output.status.success() {
         if let Some(regex) = error_regex {
