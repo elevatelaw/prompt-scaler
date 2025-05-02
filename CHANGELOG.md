@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 
+
+## [0.2.4] - 2025-05-02
+
+### Added
+
+- It is now possible to pass `--driver=native` to bypass LiteLLM and talk to some LLMs natively. This is handy for large OCR jobs that LiteLLM can't handle without running a LiteLLM cluster. WARNING: The details of this command-line flag will likely change in 0.3.0 soon.
+
 ## [0.2.4] - 2025-05-01
 
 ### Fixed
