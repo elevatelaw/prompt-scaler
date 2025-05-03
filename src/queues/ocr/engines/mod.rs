@@ -67,7 +67,9 @@ pub async fn ocr_engine_for_model(
     let (ocr_engine, worker) = match model.as_str() {
         "pdftotext" => pdftotext::PdfToTextOcrEngine::new(page_iter_opts)?,
         "tesseract" => tesseract::TesseractOcrEngine::new(page_iter_opts)?,
-        "textract" => textract::TextractOcrEngine::new(concurrency_limit).await?,
+        "textract" => {
+            textract::TextractOcrEngine::new(concurrency_limit, &llm_opts).await?
+        }
         // Assume all other OCR models are LLMs.
         _ => llm::LlmOcrEngine::new(concurrency_limit, prompt, model, llm_opts).await?,
     };

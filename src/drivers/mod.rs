@@ -18,6 +18,7 @@ use crate::{
     litellm::LiteLlmModel,
     prelude::*,
     prompt::{ChatPrompt, Rendered},
+    rate_limit::RateLimit,
     retry::IsKnownTransient,
 };
 
@@ -69,7 +70,7 @@ pub struct LlmOpts {
 
     /// The top-p sampling value to use, between 0.0 and 1.0. This is an
     /// alternative to temperature sampling. See your model's API docs for an
-    /// explanation.
+    /// explanation. Defaults to the model's default.
     #[clap(long)]
     pub top_p: Option<f32>,
 
@@ -78,6 +79,11 @@ pub struct LlmOpts {
     /// Useful dealing with runaway responses and overloaded servers.
     #[clap(long)]
     pub timeout: Option<u64>,
+
+    /// A rate limit for LLM API requests, of the form "10/s" or "2000/m". This is
+    /// applied separately from `--jobs`.
+    #[clap(long)]
+    pub rate_limit: Option<RateLimit>,
 }
 
 impl LlmOpts {

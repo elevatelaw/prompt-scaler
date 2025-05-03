@@ -7,6 +7,7 @@ use std::{
 
 use futures::FutureExt as _;
 use keen_retry::{ExponentialJitter, ResolvedResult};
+use leaky_bucket::RateLimiter;
 use schemars::JsonSchema;
 use serde_json::Map;
 
@@ -171,8 +172,13 @@ pub async fn create_chat_work_queue(
     debug!(%schema, "Schema");
     let validator = jsonschema::validator_for(&schema)?;
 
+    // Construct a rate limiter to control the rate of API requests.
+    let rate_limiter = llm_opts.rate_limit.as_ref().map(|rl| rl.to_rate_limiter());
+
+    // Build our shared state.
     let state = Arc::new(ProcessorState {
         driver,
+        rate_limiter,
         model,
         prompt,
         schema,
@@ -196,6 +202,9 @@ pub async fn create_chat_work_queue(
 struct ProcessorState {
     /// Our LLM client.
     driver: Box<dyn Driver>,
+
+    /// A rate limiter to control API request rate.
+    rate_limiter: Option<RateLimiter>,
 
     /// The model to use.
     model: String,
@@ -284,6 +293,11 @@ async fn run_chat_inner(
     state: &ProcessorState,
     prompt: &ChatPrompt<Rendered>,
 ) -> LlmRetryResult<ChatCompletionResponse> {
+    // If we have a rate limiter, acquire a permit for one request.
+    if let Some(rate_limiter) = state.rate_limiter.as_ref() {
+        rate_limiter.acquire(1).await;
+    }
+
     // Increment our attempt number.
     let _current_attempt = {
         let mut attempt_number = attempt_number.lock().expect("lock poisoned");

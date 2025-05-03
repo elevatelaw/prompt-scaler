@@ -3,16 +3,17 @@
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::Arc;
-use std::time::Duration;
 
 use aws_config::BehaviorVersion;
 use aws_sdk_textract::types::{Block, FeatureType, RelationshipType};
 use aws_sdk_textract::{primitives::Blob, types::BlockType};
 use leaky_bucket::RateLimiter;
 
+use crate::drivers::LlmOpts;
 use crate::prelude::*;
 
 use crate::async_utils::JoinWorker;
+use crate::rate_limit::{RateLimit, RateLimitPeriod};
 
 use super::{OcrEngine, OcrPageInput, OcrPageOutput};
 
@@ -36,15 +37,21 @@ impl TextractOcrEngine {
     #[allow(clippy::new_ret_no_self)]
     pub async fn new(
         concurrency_limit: usize,
+        llm_opts: &LlmOpts,
     ) -> Result<(Arc<dyn OcrEngine>, JoinWorker)> {
         let config = aws_config::load_defaults(BehaviorVersion::v2025_01_17()).await;
         let client = aws_sdk_textract::Client::new(&config);
-        let rate_limiter = RateLimiter::builder()
-            .initial(concurrency_limit)
-            .refill(concurrency_limit)
-            .max(concurrency_limit)
-            .interval(Duration::from_secs(1))
-            .build();
+
+        // If we don't have a rate limit, set one based on the concurrency
+        // limit.
+        //
+        // TODO: We may want to remove the default rate limit, but that would be
+        // a breaking change.
+        let rate_limit = llm_opts.rate_limit.clone().unwrap_or_else(|| {
+            RateLimit::new(concurrency_limit, RateLimitPeriod::Second)
+        });
+        let rate_limiter = rate_limit.to_rate_limiter();
+
         let debug = env::var("TEXTRACT_DEBUG").is_ok();
         Ok((
             Arc::new(Self {

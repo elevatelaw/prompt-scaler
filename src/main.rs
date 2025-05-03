@@ -17,6 +17,7 @@ mod page_iter;
 mod prelude;
 mod prompt;
 mod queues;
+mod rate_limit;
 mod retry;
 mod schema;
 mod ui;
