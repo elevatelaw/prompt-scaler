@@ -6,9 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.6] - 2025-05-03
 
+### Fixed
 
-## [0.2.4] - 2025-05-02
+- Improve error messages for page iteration code.
+- ocr: Correctly honor `--allow-reordering`.
+- Don't log output of CLI commands if there isn't any.
+
+## [0.2.5] - 2025-05-02
 
 ### Added
 
