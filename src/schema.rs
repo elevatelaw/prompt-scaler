@@ -20,7 +20,7 @@ pub fn get_schema_title(schema: &Value) -> String {
 #[derive(Debug, Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(untagged, deny_unknown_fields, rename_all = "snake_case")]
 pub enum Schema {
-    /// An external schema, provided as a URL.
+    /// An external schema, provided as a file path.
     External {
         /// The path to the schema.
         path: PathBuf,

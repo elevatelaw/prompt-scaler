@@ -59,7 +59,7 @@ pub async fn cmd_schema(schema_opts: &SchemaOpts) -> Result<()> {
         SchemaType::ChatOutput => {
             schema_for!(WorkOutput<ChatOutput>).with_title("ChatOutput")
         }
-        SchemaType::ChatPrompt => schema_for!(ChatPrompt),
+        SchemaType::ChatPrompt => schema_for!(ChatPrompt).with_title("ChatPrompt"),
         SchemaType::OcrInput => schema_for!(WorkInput<OcrInput>).with_title("OcrInput"),
         SchemaType::OcrOutput => {
             schema_for!(WorkOutput<OcrOutput>).with_title("OcrOutput")
