@@ -301,10 +301,7 @@ async fn ocr_file_inner(
     )
     .await
     .with_context(|| {
-        format!(
-            "failed to create page iterator for {:?}",
-            ocr_input.data.path
-        )
+        format!("Failed to separate {:?} into pages", ocr_input.data.path)
     })?;
     let check_complete_result = page_iter.check_complete();
     let warnings = page_iter.warnings().to_owned();

@@ -295,7 +295,7 @@ impl PageIter {
     pub fn check_complete(&self) -> Result<()> {
         if self.is_incomplete() {
             Err(anyhow!(
-                "this iterator is partial: {} pages requested, but only {} pages available",
+                "Only {}/{} pages processed (because of --max-pages)",
                 self.max_pages.expect("max_pages should be set"),
                 self.total_pages
             ))
