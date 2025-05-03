@@ -90,7 +90,7 @@ pub async fn cmd_ocr(ui: Ui, opts: &OcrOpts) -> Result<()> {
     )
     .await?;
     let output = pb
-        .wrap_stream(stream.buffered(opts.stream_opts.job_count))
+        .wrap_stream(opts.stream_opts.apply_stream_buffering_opts(stream))
         .boxed();
 
     match opts.output_path.as_deref() {
