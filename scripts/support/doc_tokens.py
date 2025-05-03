@@ -51,7 +51,8 @@ class DocTokens:
             intersection += min(count1, count2)
             union += max(count1, count2)
         if union == 0:
-            return 0.0
+            # Treat two empty documents as identical.
+            return 1.0
         return 1.0 * intersection / union
     
     def diff(self, other: DocTokens) -> TokenDiff:
