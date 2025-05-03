@@ -66,8 +66,12 @@ impl RateLimit {
 
     /// Create a [`RateLimiter`] for this rate limit.
     pub fn to_rate_limiter(&self) -> RateLimiter {
+        // We only refill once every `interval` seconds, so for
+        // `RateLimitPeriod::Minute`, we may want to do some math to calculate
+        // per-second limits instead. For now, just start with a full bucket and
+        // hope the user doesn't call `prompt-scaler` twice in rapid succession.
         RateLimiter::builder()
-            .initial(0)
+            .initial(self.max_requests)
             .refill(self.max_requests)
             .max(self.max_requests)
             .interval(self.per_period.to_duration())
