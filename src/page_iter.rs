@@ -8,6 +8,7 @@ use tokio::process::Command;
 
 use crate::{
     async_utils::{DEFAULT_ERROR_REGEX, check_for_command_failure},
+    cpu_limit::with_cpu_semaphore,
     data_url::data_url,
     prelude::*,
 };
@@ -149,18 +150,20 @@ impl PageIter {
         let tmpdir_path = tmpdir.path().to_owned();
 
         // Run pdfseparate to split the PDF into separate files.
+        //
+        // We use `with_cpu_semaphore` because `pdfseparate` will use 100% of a
+        // CPU, and we don't want to run 200 copies of it at once by mistake.
         let out_path = tmpdir_path.join(format!("{}-%d.pdf", filename.to_string_lossy()));
         let mut cmd = Command::new("pdfseparate");
         add_last_page_arg_if_needed(options, total_pages, &mut cmd)?;
-        let output = cmd
-            .arg(path)
-            .arg(out_path)
-            .output()
-            .await
-            .with_context(|| {
+        let output = with_cpu_semaphore(|| async {
+            cmd.arg(path).arg(out_path).output().await.with_context(|| {
                 format!("failed to run pdfseparate on {:?}", path.display())
-            })?;
+            })
+        })
+        .await?;
         check_for_command_failure("pdfseparate", &output, Some(&*DEFAULT_ERROR_REGEX))?;
+
         Self::from_tempdir(
             options,
             tmpdir,
@@ -192,6 +195,10 @@ impl PageIter {
         let tmpdir_path = tmpdir.path().to_owned();
 
         // Run pdftocairo to convert the PDF to PNG files.
+        //
+        // We use `with_cpu_semaphore` because `pdftocairo` will use _at least_
+        // 100% of a CPU, and we don't want to run 200 copies of it at once by
+        // mistake.
         let out_path = tmpdir_path.join(filename).with_extension("png");
         let mut cmd = Command::new("pdftocairo");
         cmd.arg("-png")
@@ -201,14 +208,12 @@ impl PageIter {
             cmd.arg("-opw").arg(password);
         }
         add_last_page_arg_if_needed(options, total_pages, &mut cmd)?;
-        let output = cmd
-            .arg(path)
-            .arg(out_path)
-            .output()
-            .await
-            .with_context(|| {
+        let output = with_cpu_semaphore(|| async {
+            cmd.arg(path).arg(out_path).output().await.with_context(|| {
                 format!("failed to run pdftocairo on {:?}", path.display())
-            })?;
+            })
+        })
+        .await?;
         check_for_command_failure("pdftocairo", &output, Some(&*DEFAULT_ERROR_REGEX))?;
         Self::from_tempdir(
             options,
