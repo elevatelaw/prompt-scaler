@@ -87,12 +87,12 @@ async fn main() -> Result<()> {
     tracing_subscriber::registry().with(subscriber).init();
 
     // Call our real `main` function now that logging is set up.
-    real_main(ui).await
+    real_main(&ui).await
 }
 
 /// Our real entry point.
 #[instrument(level = "debug", name = "main", skip_all)]
-async fn real_main(ui: Ui) -> Result<()> {
+async fn real_main(ui: &Ui) -> Result<()> {
     // Load environment variables from a `.env` file, if it exists.
     dotenvy::dotenv().ok();
 

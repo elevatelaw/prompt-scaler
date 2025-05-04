@@ -44,7 +44,7 @@ pub struct ChatOpts {
 
 /// Run the `chat` subcommand.
 #[instrument(level = "debug", skip_all)]
-pub async fn cmd_chat(ui: Ui, opts: &ChatOpts) -> Result<()> {
+pub async fn cmd_chat(ui: &Ui, opts: &ChatOpts) -> Result<()> {
     // Open up our input stream and convert to records.
     let input =
         WorkInput::<ChatInput>::read_stream(ui.clone(), opts.input_path.as_deref())
@@ -83,7 +83,7 @@ pub async fn cmd_chat(ui: Ui, opts: &ChatOpts) -> Result<()> {
         .boxed();
 
     // Write out our output.
-    WorkOutput::write_stream(&ui, opts.output_path.as_deref(), output, &opts.stream_opts)
+    WorkOutput::write_stream(ui, opts.output_path.as_deref(), output, &opts.stream_opts)
         .await?;
 
     // Wait for our work queue's background task to exit.

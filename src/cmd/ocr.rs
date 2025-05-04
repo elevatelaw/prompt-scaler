@@ -57,7 +57,7 @@ pub struct OcrOpts {
 /// The `ocr` subcommand.
 #[instrument(level = "debug", skip_all)]
 #[allow(clippy::too_many_arguments)]
-pub async fn cmd_ocr(ui: Ui, opts: &OcrOpts) -> Result<()> {
+pub async fn cmd_ocr(ui: &Ui, opts: &OcrOpts) -> Result<()> {
     // Get our OCR prompt.
     let prompt = match opts.prompt_path.as_deref() {
         Some(path) => read_json_or_toml::<ChatPrompt>(path).await?,
@@ -96,7 +96,7 @@ pub async fn cmd_ocr(ui: Ui, opts: &OcrOpts) -> Result<()> {
     match opts.output_path.as_deref() {
         Some(path) if path.extension() == Some(OsStr::new("csv")) => {
             WorkOutput::<OcrOutput>::write_stream_to_csv(
-                &ui,
+                ui,
                 opts.output_path.as_deref(),
                 output,
                 &opts.stream_opts,
@@ -105,7 +105,7 @@ pub async fn cmd_ocr(ui: Ui, opts: &OcrOpts) -> Result<()> {
         }
         _ => {
             WorkOutput::write_stream(
-                &ui,
+                ui,
                 opts.output_path.as_deref(),
                 output,
                 &opts.stream_opts,
