@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.8] - 2025-05-04
+
+### Added
+
+- Added some new example scripts for exporting OCR `text` output to standalone files, and for comparing two different sets of text extractions. As always, these scripts are subject to come and go.
+
+### Fixed
+
+- Fixed `schema ChatPrompt` regression so it actually generates a type named `ChatPrompt` again.
+- Fixed `--rate-limit` to always start with full token buckets.
+
 ## [0.2.7] - 2025-05-03
 
 ### Added
