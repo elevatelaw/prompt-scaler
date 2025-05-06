@@ -87,8 +87,10 @@ impl ChatPrompt<Template> {
         self.validate()?;
         let mut handlebars = Handlebars::new();
         handlebars.register_escape_fn(|s| s.to_owned());
-        handlebars.register_helper("image-data-url", Box::new(image_data_url_helper));
         handlebars.register_helper("concat", Box::new(HandlebarsConcat));
+        handlebars.register_helper("image-data-url", Box::new(image_data_url_helper));
+        handlebars
+            .register_helper("text-file-contents", Box::new(text_file_contents_helper));
         self.render_template(&handlebars, bindings)
             .context("Could not render prompt")
     }
@@ -154,6 +156,31 @@ fn image_data_url_helper(
     })?;
     let data_url = data_url(mime.mime_type(), &bytes);
     out.write(&data_url)?;
+    Ok(())
+}
+
+/// Handlebars helper for reading the contents of a text file and returning it
+/// as a string.
+fn text_file_contents_helper(
+    h: &Helper,
+    _: &Handlebars,
+    _: &Context,
+    _: &mut RenderContext,
+    out: &mut dyn Output,
+) -> HelperResult {
+    // Get our path parameter.
+    let path = h
+        .param(0)
+        .ok_or_else(|| RenderErrorReason::ParamNotFoundForIndex("text-file-contents", 0))?
+        .value()
+        .as_str()
+        .ok_or_else(|| RenderErrorReason::InvalidParamType("string"))?;
+
+    // Read the file.
+    let contents = fs::read_to_string(path).map_err(|err| {
+        RenderErrorReason::Other(format!("error reading {}: {}", path, err))
+    })?;
+    out.write(&contents)?;
     Ok(())
 }
 
