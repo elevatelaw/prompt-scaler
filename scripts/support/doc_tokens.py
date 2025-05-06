@@ -1,5 +1,5 @@
 """
-Compare two documents using Jaqqard similarity.
+Compare two documents using Jaccard similarity.
 
 This is set up in a way that makes sense for OCR use cases, where
 we are interested in how closely the text tokens in two documents
@@ -40,8 +40,8 @@ class DocTokens:
         """Create a DocTokens object from text."""
         return DocTokens(text_to_token_counts(text))
 
-    def jaqqard(self, other: DocTokens) -> float:
-        """Compute the Jaqqard similarity between two token counts."""
+    def jaccard(self, other: DocTokens) -> float:
+        """Compute the Jaccard similarity between two token counts."""
         intersection = 0
         union = 0
         all_tokens = set(self.token_counts.keys()).union(other.token_counts.keys())

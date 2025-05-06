@@ -81,57 +81,57 @@
         }
 
         td.flagged {
-            border: 2px solid red;
+            border: 2px solid blue;
         }
 
-        .ground-truth-issues .jaqqard {
+        .ground-truth-issues .jaccard {
             opacity: 0.4;
             text-decoration: line-through;
         }
 
-        .jaqqard-100 {
+        .jaccard-100 {
             background-color: #8f8;
         }
 
-        .jaqqard-95 {
+        .jaccard-95 {
             background-color: #bf8;
         }
 
-        .jaqqard-90 {
+        .jaccard-90 {
             background-color: #ff8;
         }
 
-        .jaqqard-80 {
+        .jaccard-80 {
             background-color: #fb8;
         }
 
-        .jaqqard-00 {
+        .jaccard-00 {
             background-color: #f88;
         }
     </style>
 
     <script>
-        /** Assign a jaqqard-xx class to elem based on its value. */
-        function assignJaqqardClass(elem) {
-            const jaqqard_value = parseFloat(elem.innerText);
-            if (jaqqard_value >= 0.999) {
-                elem.classList.add("jaqqard-100");
-            } else if (jaqqard_value >= 0.95) {
-                elem.classList.add("jaqqard-95");
-            } else if (jaqqard_value >= 0.9) {
-                elem.classList.add("jaqqard-90");
-            } else if (jaqqard_value >= 0.8) {
-                elem.classList.add("jaqqard-80");
+        /** Assign a jaccard-xx class to elem based on its value. */
+        function assignjaccardClass(elem) {
+            const jaccard_value = parseFloat(elem.innerText);
+            if (jaccard_value >= 0.999) {
+                elem.classList.add("jaccard-100");
+            } else if (jaccard_value >= 0.95) {
+                elem.classList.add("jaccard-95");
+            } else if (jaccard_value >= 0.9) {
+                elem.classList.add("jaccard-90");
+            } else if (jaccard_value >= 0.8) {
+                elem.classList.add("jaccard-80");
             } else {
-                elem.classList.add("jaqqard-00");
+                elem.classList.add("jaccard-00");
             }
         }
 
-        /** Assign jaqqard-xx classes to all .jaqqard elements. */
-        function assignJaqqardClasses() {
-            const jaqqard_elements = document.querySelectorAll(".jaqqard");
-            for (const elem of jaqqard_elements) {
-                assignJaqqardClass(elem);
+        /** Assign jaccard-xx classes to all .jaccard elements. */
+        function assignjaccardClasses() {
+            const jaccard_elements = document.querySelectorAll(".jaccard");
+            for (const elem of jaccard_elements) {
+                assignjaccardClass(elem);
             }
         }
 
@@ -167,9 +167,9 @@
             });
         }
 
-        /* Assign jaqqard classes when the page loads. */
+        /* Assign jaccard classes when the page loads. */
         window.addEventListener("load", function () {
-            assignJaqqardClasses();
+            assignjaccardClasses();
             initializeTabs();
         });
     </script>
@@ -205,8 +205,8 @@
                 <td class="text">{{ image.metadata.format }}</td>
                 <td class="text">{{ image.metadata.document_quality.value }}</td>
                 {% for model in models %}
-                <td class="numeric jaqqard {% if image.model_results[model].result_is_flagged() %}flagged{% endif %}">
-                    {{ image.model_results[model].jaqqard_similarity | round(2) }}
+                <td class="numeric jaccard {% if image.model_results[model].result_is_flagged() %}flagged{% endif %}">
+                    {{ image.model_results[model].jaccard_similarity | round(2) }}
                 </td>
                 {% endfor %}
                 <td class="text">{{ image.ground_truth_issue or "" }}</td>
@@ -216,7 +216,7 @@
             <tr>
                 <th class="numeric" colspan=3><strong>Average</strong></th>
                 {% for model in models %}
-                <td class="numeric jaqqard">{{ avg_jaqqard_scores[model] | round(2) }}</td>
+                <td class="numeric jaccard">{{ avg_jaccard_scores[model] | round(2) }}</td>
                 {% endfor %}
                 <td class="text"></td>
             </tr>
@@ -256,7 +256,7 @@
             {% set model_result = image.model_results[model] %}
             <button class="tablink" role="tab" aria-controls="{{ image.id }}-{{ model }}"
                 aria-selected="{{ loop.first | string | lower }}">
-                {{ model }} ({{ model_result.jaqqard_similarity | round(2) }})
+                {{ model }} ({{ model_result.jaccard_similarity | round(2) }})
             </button>
             {% endfor %}
             <button class="tablink" role="tab" aria-controls="{{ image.id }}-expected" aria-selected="false">

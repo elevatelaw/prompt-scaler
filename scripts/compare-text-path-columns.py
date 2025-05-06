@@ -72,7 +72,7 @@ def main():
             text1 = None
             tokens2 = DocTokens.from_text(text2)
             text2 = None
-            row["jaccard_similarity"] = tokens1.jaqqard(tokens2)
+            row["jaccard_similarity"] = tokens1.jaccard(tokens2)
         else:
             # If the columns are not present, set the similarity to None
             row["jaccard_similarity"] = None

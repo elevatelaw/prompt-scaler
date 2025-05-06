@@ -116,27 +116,27 @@ def main():
                 continue
             images[image_id].ground_truth_issue = ground_truth_issue
 
-    # Collect Jaqqard scores for each model.
-    jaqqard_scores = {}
+    # Collect Jaccard scores for each model.
+    jaccard_scores = {}
     for model_name in model_names:
-        jaqqard_scores[model_name] = []
+        jaccard_scores[model_name] = []
         for image in images:
             if model_name in image.model_results:
                 model_result = image.model_results[model_name]
                 if image.ground_truth_issue is not None:
                     continue
-                jaqqard_scores[model_name].append(model_result.jaqqard_similarity)
-    avg_jaqqard_scores = {}
+                jaccard_scores[model_name].append(model_result.jaccard_similarity)
+    avg_jaccard_scores = {}
     for model_name in model_names:
-        avg_jaqqard_scores[model_name] = sum(jaqqard_scores[model_name]) / len(
-            jaqqard_scores[model_name]
+        avg_jaccard_scores[model_name] = sum(jaccard_scores[model_name]) / len(
+            jaccard_scores[model_name]
         )
-        print(f"Average Jaqqard score for {model_name}: {avg_jaqqard_scores[model_name]}")
+        print(f"Average Jaccard score for {model_name}: {avg_jaccard_scores[model_name]}")
 
-    # Sort model names by average Jaqqard score, descending.
+    # Sort model names by average jaccard score, descending.
     model_names = sorted(
         model_names,
-        key=lambda x: avg_jaqqard_scores[x],
+        key=lambda x: avg_jaccard_scores[x],
         reverse=True,
     )
 
@@ -162,7 +162,7 @@ def main():
         f.write(template.render(
             images=images[:args.images],
             models=model_names,
-            avg_jaqqard_scores=avg_jaqqard_scores,
+            avg_jaccard_scores=avg_jaccard_scores,
         ))
 
 if __name__ == "__main__":

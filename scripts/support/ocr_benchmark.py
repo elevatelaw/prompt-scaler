@@ -134,12 +134,12 @@ class BenchmarkImage(BaseModel):
         self_tokens = DocTokens.from_text(self.true_markdown_output)
         extracted_markdown = output.text or ""
         model_tokens = DocTokens.from_text(extracted_markdown)
-        similarity = self_tokens.jaqqard(model_tokens)
+        similarity = self_tokens.jaccard(model_tokens)
         token_diff = self_tokens.diff(model_tokens)
         highlighted_markdown = token_diff.highlight_markdown(extracted_markdown)
         self.model_results[model_name] = ModelResults(
             output=output,
-            jaqqard_similarity=similarity,
+            jaccard_similarity=similarity,
             extracted_markdown=highlighted_markdown,
             missing_tokens=token_diff.removed,
         )
@@ -150,8 +150,8 @@ class ModelResults(BaseModel):
     output: OcrOutput
     """OCR output for the image."""
 
-    jaqqard_similarity: float
-    """Jaqqard similarity score for the extracted text."""
+    jaccard_similarity: float
+    """Jaccard similarity score for the extracted text."""
 
     extracted_markdown: str
     """Extracted Markdown text from the image."""
