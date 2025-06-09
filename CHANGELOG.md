@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.9] - 2025-06-09
+
+### Added
+
+- `schema`: Allow passing `--inline-subschemas` for cases where we don't want `$ref`. This is necessary, for example, when talking to many LLMs.
+- `ocr`: Allow passing `--include-page-breaks`, which will insert Control-L (Form Feed) characters between pages in the output text. This is useful for scripts that want to keep track of individual pages without doing extra post-processing. 
+- Allow using `{{text-file-contents path}}` in prompts to look up the content of external text files, which is common with "loadfile" formats.
+
+
+### Fixed
+
+- Never send `store: false` to any model named `claude-`, because doing so breaks LiteLLM.
+- Fix spelling of "Jaccard" in OCR benchmark code.
+- Limit external processes to roughly the number of available CPU cores.
+- Try to keep our progress "UI" alive until the very end of the program.
+
 ## [0.2.8] - 2025-05-04
 
 ### Added
