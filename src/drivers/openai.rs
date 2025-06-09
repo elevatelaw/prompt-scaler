@@ -95,7 +95,7 @@ impl Driver for OpenAiDriver {
             .response_format(ResponseFormat::JsonSchema { json_schema });
         let mut need_to_disable_store = true;
         if let Some(model_info) = model_info {
-            eprintln!("Provider: {}", model_info.model_info.litellm_provider);
+            debug!("Provider: {}", model_info.model_info.litellm_provider);
             if model_info.model_info.litellm_provider == "anthropic" {
                 // For OpenAI (and possibly other providers with the same API), we
                 // need to set `store` to false to prevent the API from storing
@@ -104,6 +104,10 @@ impl Driver for OpenAiDriver {
                 // models.
                 need_to_disable_store = false;
             }
+        } else if model.starts_with("claude-") {
+            // We have no model metadata from LiteLLM. But we know Claude models
+            // don't support `store`, so we shouldn't try to disable it.
+            need_to_disable_store = false;
         }
         if need_to_disable_store {
             req.store(false);
