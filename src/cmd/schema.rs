@@ -2,8 +2,9 @@
 
 use clap::{Args, ValueEnum};
 use schemars::{
+    SchemaGenerator,
+    r#gen::SchemaSettings,
     schema::{Metadata, RootSchema},
-    schema_for,
 };
 use tokio::io::AsyncWriteExt as _;
 
@@ -43,6 +44,10 @@ pub struct SchemaOpts {
     #[clap(value_enum, value_name = "TYPE")]
     pub schema_type: SchemaType,
 
+    /// Should we inline all the subschemas?
+    #[clap(long = "inline")]
+    pub inline: bool,
+
     /// The output path to write the schema to.
     #[clap(short = 'o', long = "out")]
     pub output_path: Option<PathBuf>,
@@ -51,19 +56,29 @@ pub struct SchemaOpts {
 /// The `schema` subcommand.
 #[instrument(level = "debug", skip_all)]
 pub async fn cmd_schema(schema_opts: &SchemaOpts) -> Result<()> {
+    let mut settings = SchemaSettings::draft07();
+    if schema_opts.inline {
+        settings.inline_subschemas = true;
+    }
+    let generator = SchemaGenerator::new(settings);
+
     // Get our schema.
     let schema = match schema_opts.schema_type {
-        SchemaType::ChatInput => {
-            schema_for!(WorkInput<ChatInput>).with_title("ChatInput")
-        }
-        SchemaType::ChatOutput => {
-            schema_for!(WorkOutput<ChatOutput>).with_title("ChatOutput")
-        }
-        SchemaType::ChatPrompt => schema_for!(ChatPrompt).with_title("ChatPrompt"),
-        SchemaType::OcrInput => schema_for!(WorkInput<OcrInput>).with_title("OcrInput"),
-        SchemaType::OcrOutput => {
-            schema_for!(WorkOutput<OcrOutput>).with_title("OcrOutput")
-        }
+        SchemaType::ChatInput => generator
+            .into_root_schema_for::<WorkInput<ChatInput>>()
+            .with_title("ChatInput"),
+        SchemaType::ChatOutput => generator
+            .into_root_schema_for::<WorkOutput<ChatOutput>>()
+            .with_title("ChatOutput"),
+        SchemaType::ChatPrompt => generator
+            .into_root_schema_for::<ChatPrompt>()
+            .with_title("ChatPrompt"),
+        SchemaType::OcrInput => generator
+            .into_root_schema_for::<WorkInput<OcrInput>>()
+            .with_title("OcrInput"),
+        SchemaType::OcrOutput => generator
+            .into_root_schema_for::<WorkOutput<OcrOutput>>()
+            .with_title("OcrOutput"),
     };
 
     // Write out our schema.
