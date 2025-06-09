@@ -41,6 +41,10 @@ pub struct OcrOpts {
     #[clap(short = 'o', long = "out")]
     pub output_path: Option<PathBuf>,
 
+    /// Should we include page breaks (^L) in the output text?
+    #[clap(long)]
+    pub include_page_breaks: bool,
+
     /// Stream-related options.
     #[clap(flatten)]
     pub stream_opts: super::StreamOpts,
@@ -85,6 +89,7 @@ pub async fn cmd_ocr(ui: &Ui, opts: &OcrOpts) -> Result<()> {
         opts.stream_opts.job_count,
         prompt,
         opts.model.to_owned(),
+        opts.include_page_breaks,
         opts.page_iter_opts.to_owned(),
         opts.llm_opts.to_owned(),
     )

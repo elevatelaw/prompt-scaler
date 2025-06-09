@@ -219,6 +219,7 @@ pub async fn ocr_files(
     job_count: usize,
     prompt: ChatPrompt,
     model: String,
+    include_page_breaks: bool,
     page_iter_opts: PageIterOptions,
     llm_opts: LlmOpts,
 ) -> Result<OcrStreamInfo> {
@@ -232,7 +233,14 @@ pub async fn ocr_files(
             let engine = engine.clone();
             async move {
                 let pdf_input = pdf_input?;
-                ocr_file(pdf_input, &page_iter_opts, job_count, engine).await
+                ocr_file(
+                    pdf_input,
+                    &page_iter_opts,
+                    job_count,
+                    include_page_breaks,
+                    engine,
+                )
+                .await
             }
             .boxed()
         })
@@ -250,14 +258,21 @@ pub async fn ocr_file(
     ocr_input: WorkInput<OcrInput>,
     page_iter_opts: &PageIterOptions,
     concurrency_limit: usize,
+    include_page_breaks: bool,
     engine: Arc<dyn engines::OcrEngine>,
 ) -> Result<WorkOutput<OcrOutput>> {
     let id = ocr_input.id.clone();
     let path = ocr_input.data.path.clone();
 
     // Perform the actual work.
-    let result =
-        ocr_file_inner(ocr_input, page_iter_opts, concurrency_limit, engine).await;
+    let result = ocr_file_inner(
+        ocr_input,
+        page_iter_opts,
+        concurrency_limit,
+        include_page_breaks,
+        engine,
+    )
+    .await;
 
     // If we have an error, output an appropriate record and continue.
     // This is necessary to avoid aborting an entire batch of work if one
@@ -288,6 +303,7 @@ async fn ocr_file_inner(
     ocr_input: WorkInput<OcrInput>,
     page_iter_opts: &PageIterOptions,
     concurrency_limit: usize,
+    include_page_breaks: bool,
     engine: Arc<dyn engines::OcrEngine>,
 ) -> Result<WorkOutput<OcrOutput>> {
     let id = ocr_input.id.clone();
@@ -358,13 +374,20 @@ async fn ocr_file_inner(
         errors.push(err.to_string());
     }
 
+    // Decide how to represent page breaks.
+    let page_break = if include_page_breaks {
+        "\n\x0C\n"
+    } else {
+        "\n\n"
+    };
+
     let good_page_count = pages.iter().filter(|p| p.is_some()).count();
     let total_page_count = pages.len();
     let text = pages
         .into_iter()
         .map(|p| p.unwrap_or_else(|| "**COULD_NOT_OCR_PAGE**".to_owned()))
         .collect::<Vec<String>>()
-        .join("\n\n");
+        .join(page_break);
     Ok(WorkOutput {
         id,
         status: if check_complete_result.is_ok() && good_page_count == total_page_count {
