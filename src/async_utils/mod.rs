@@ -7,11 +7,10 @@
 //! Based on previous Rust experience, you should be able to leave this code
 //! unchanged for years.
 
-use std::{pin::Pin, sync::LazyLock};
+use std::pin::Pin;
 
 use anyhow::anyhow;
 use futures::Stream;
-use regex::Regex;
 use tokio::task::JoinHandle;
 
 use crate::prelude::*;
@@ -59,10 +58,6 @@ impl JoinWorker {
     }
 }
 
-/// A default error regex for checking command output.
-pub static DEFAULT_ERROR_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)error").expect("failed to compile regex"));
-
 /// Report any command failures, and include any error output.
 ///
 /// The output of standard error and standard output will be logged at
@@ -71,7 +66,7 @@ pub static DEFAULT_ERROR_REGEX: LazyLock<Regex> =
 pub fn check_for_command_failure(
     command_name: &str,
     output: &std::process::Output,
-    error_regex: Option<&Regex>,
+    is_error_line: Option<&dyn Fn(&str) -> bool>,
 ) -> Result<()> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -91,13 +86,15 @@ pub fn check_for_command_failure(
     }
 
     if output.status.success() {
-        if let Some(regex) = error_regex {
-            if regex.is_match(&stderr) {
-                return Err(anyhow!(
-                    "{} printed error output:\n{}",
-                    command_name,
-                    stderr,
-                ));
+        if let Some(is_error_line) = is_error_line {
+            for line in stderr.lines() {
+                if is_error_line(line) {
+                    return Err(anyhow!(
+                        "{} printed error output:\n{}",
+                        command_name,
+                        stderr,
+                    ));
+                }
             }
         }
         Ok(())

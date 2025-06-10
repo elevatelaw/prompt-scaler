@@ -1,21 +1,33 @@
 //! Iterate over "pages" in an image.
 
-use std::{collections::BTreeMap, process::Output, vec};
+use std::{collections::BTreeMap, process::Output, sync::LazyLock, vec};
 
 use anyhow::anyhow;
 use clap::Args;
+use regex::Regex;
 use tokio::process::Command;
 
 use crate::{
-    async_utils::{DEFAULT_ERROR_REGEX, check_for_command_failure},
-    cpu_limit::with_cpu_semaphore,
-    data_url::data_url,
-    prelude::*,
+    async_utils::check_for_command_failure, cpu_limit::with_cpu_semaphore,
+    data_url::data_url, prelude::*,
 };
 
 /// Image types supported as-is.
 const SUPPORTED_IMAGE_TYPES: &[&str] =
     &["image/png", "image/jpeg", "image/webp", "image/gif"];
+
+/// A default error regex for checking command output.
+static ERROR_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)error").expect("failed to compile regex"));
+
+static DOWNGRADE_TO_WARNING_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)error: xref num").expect("failed to compile regex")
+});
+
+/// Does this line contain an error?
+fn is_error_line(line: &str) -> bool {
+    ERROR_REGEX.is_match(line) || !DOWNGRADE_TO_WARNING_REGEX.is_match(line)
+}
 
 /// Information about a page of a file to process.
 #[derive(Debug)]
@@ -162,7 +174,7 @@ impl PageIter {
             })
         })
         .await?;
-        check_for_command_failure("pdfseparate", &output, Some(&*DEFAULT_ERROR_REGEX))?;
+        check_for_command_failure("pdfseparate", &output, Some(&is_error_line))?;
 
         Self::from_tempdir(
             options,
@@ -214,7 +226,7 @@ impl PageIter {
             })
         })
         .await?;
-        check_for_command_failure("pdftocairo", &output, Some(&*DEFAULT_ERROR_REGEX))?;
+        check_for_command_failure("pdftocairo", &output, Some(&is_error_line))?;
         Self::from_tempdir(
             options,
             tmpdir,
