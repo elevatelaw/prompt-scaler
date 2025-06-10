@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.10] - 2025-06-10
+
+### Fixed
+
+- PDF: Treat "xref num \d+ not found" as a warning, not an error. This is super common in PDFs, and it shouldn't affect their visual appearance or text extraction, which is what we care about. We do, however, still log this.
+
 ## [0.2.9] - 2025-06-09
 
 ### Added
