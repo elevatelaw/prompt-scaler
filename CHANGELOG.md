@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.11] - 2025-06-10
+
+### Fixed
+
+- Fix: Fix "xref num \d+ not found" test so that we actually treat it as a warning, not an error.
+
 ## [0.2.10] - 2025-06-10
 
 ### Fixed
