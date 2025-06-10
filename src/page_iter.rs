@@ -26,7 +26,7 @@ static DOWNGRADE_TO_WARNING_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Does this line contain an error?
 fn is_error_line(line: &str) -> bool {
-    ERROR_REGEX.is_match(line) || !DOWNGRADE_TO_WARNING_REGEX.is_match(line)
+    ERROR_REGEX.is_match(line) && !DOWNGRADE_TO_WARNING_REGEX.is_match(line)
 }
 
 /// Information about a page of a file to process.
@@ -429,6 +429,16 @@ mod tests {
     use super::*;
 
     static TEST_PDF_PATH: &str = "tests/fixtures/ocr/two_pages.pdf";
+
+    #[test]
+    fn is_error_line_works() {
+        assert!(is_error_line("error: something went wrong"));
+        assert!(is_error_line("ERROR: something went wrong"));
+        assert!(!is_error_line("Warning: something is odd"));
+        assert!(!is_error_line(
+            "Internal Error: xref num 1234 not found but needed, document has changes, reconstruct aborted"
+        ));
+    }
 
     #[tokio::test]
     #[ignore = "Requires poppler-utils to be installed"]
