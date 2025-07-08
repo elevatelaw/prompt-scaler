@@ -49,6 +49,9 @@ pub struct OcrOutput {
     /// those pages will be replaced with `**COULD_NOT_OCR_PAGE**`.
     pub text: Option<String>,
 
+    /// The number of pages in the PDF, if known.
+    pub page_count: Option<usize>,
+
     /// Any defects in the page that make it difficult to OCR.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub analysis: Option<OcrAnalysis>,
@@ -289,6 +292,7 @@ pub async fn ocr_file(
                 data: OcrOutput {
                     path,
                     text: None,
+                    page_count: None,
                     analysis: None,
                 },
             })
@@ -414,6 +418,7 @@ async fn ocr_file_inner(
             } else {
                 None
             },
+            page_count: Some(total_page_count),
             analysis: if analysis_present && env::var("EXPERIMENTAL_OCR_ANALYSIS").is_ok()
             {
                 Some(analysis)
