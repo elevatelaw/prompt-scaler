@@ -11,8 +11,11 @@
 //! In general, Tokio and async Rust involve some occasional magic. We try to
 //! keep all of it in this file.
 
-use std::{pin::Pin, sync::Arc, task::Context, vec};
+use std::{error, fmt, pin::Pin, sync::Arc, task::Context, vec};
 
+use codespan_reporting::{
+    diagnostic::Diagnostic, files::SimpleFile, term::termcolor::WriteColor,
+};
 use futures::{TryStreamExt, pin_mut, stream::StreamExt as _};
 use peekable::tokio::AsyncPeekable;
 use serde_json::Map;
@@ -27,6 +30,7 @@ use tokio_stream::wrappers::LinesStream;
 
 use crate::{
     prelude::*,
+    toml_utils::{JsonValue, from_toml_str},
     ui::{ProgressConfig, Ui},
 };
 
@@ -123,10 +127,32 @@ impl AsyncBufRead for SmartReader {
     }
 }
 
+/// Read JSON or TOML file as a [`Value`].
+pub async fn read_json_or_toml_as_json_value(path: &Path) -> Result<Value> {
+    let mut reader = SmartReader::new_from_path(path).await?;
+    let mut data = String::new();
+    // Read all at once because our parsing libraries don't do async I/O.
+    reader
+        .read_to_string(&mut data)
+        .await
+        .with_context(|| format!("Failed to read file at path: {:?}", path))?;
+    if reader.is_json_like() {
+        serde_json::from_str(&data).with_context(|| {
+            format!("Failed to parse JSON from file at path: {:?}", path)
+        })
+    } else {
+        Ok(from_toml_str::<JsonValue>(&data)
+            .with_context(|| {
+                format!("Failed to parse TOML from file at path: {:?}", path)
+            })?
+            .into_json())
+    }
+}
+
 /// Read TOML or JSON from a file.
 pub async fn read_json_or_toml<T>(path: &Path) -> Result<T>
 where
-    T: serde::de::DeserializeOwned,
+    T: serde::de::DeserializeOwned + toml_span::Deserialize<'static>,
 {
     let mut reader = SmartReader::new_from_path(path).await?;
     let mut data = String::new();
@@ -140,11 +166,59 @@ where
             format!("Failed to parse JSON from file at path: {:?}", path)
         })
     } else {
-        toml::from_str(&data).with_context(|| {
-            format!("Failed to parse TOML from file at path: {:?}", path)
-        })
+        match from_toml_str(&data) {
+            Ok(value) => Ok(value),
+            Err(err) => {
+                let file = SimpleFile::new(path.display().to_string(), data);
+                let diagnostics = err
+                    .errors
+                    .into_iter()
+                    .map(|e| e.to_diagnostic(()))
+                    .collect::<Vec<_>>();
+                Err(DiagnosticsError { file, diagnostics }.into())
+            }
+        }
     }
 }
+
+/// An error containing multiple [`Diagnostic`]s. Handled specially at the top level so we get pretty syntax errors.
+#[derive(Debug)]
+pub struct DiagnosticsError {
+    /// Our file information.
+    file: SimpleFile<String, String>,
+    /// Our diagnostic messages.
+    diagnostics: Vec<Diagnostic<()>>,
+}
+
+impl DiagnosticsError {
+    /// Print the diagnostics to the specified writer.
+    pub fn emit(&self, writer: &mut dyn WriteColor) {
+        let config = codespan_reporting::term::Config::default();
+        for d in &self.diagnostics {
+            codespan_reporting::term::emit(&mut *writer, &config, &self.file, d)
+                .expect("Failed to emit diagnostic");
+        }
+    }
+
+    /// Print the diagnostics to standard error.
+    pub fn emit_to_stderr(&self) {
+        let mut stderr = codespan_reporting::term::termcolor::StandardStream::stderr(
+            codespan_reporting::term::termcolor::ColorChoice::Auto,
+        );
+        self.emit(&mut stderr);
+    }
+}
+
+impl fmt::Display for DiagnosticsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut out = codespan_reporting::term::termcolor::NoColor::new(vec![]);
+        self.emit(&mut out);
+        let output = out.into_inner();
+        write!(f, "{}", String::from_utf8_lossy(&output))
+    }
+}
+
+impl error::Error for DiagnosticsError {}
 
 /// Count JSONL or CSV records in a file.
 #[instrument(level = "debug", skip_all, fields(path = %path.display()))]

@@ -17,6 +17,7 @@ use crate::{
         work::{WorkInput, WorkItemProcessor as _, WorkQueue},
     },
     schema::Schema,
+    toml_utils::from_toml_str,
 };
 
 use super::{OcrEngine, OcrPageInput, OcrPageOutput};
@@ -32,7 +33,7 @@ const EXAMPLE_OUTPUT: &str = include_str!("llm/example_output.md");
 
 /// Get our default OCR prompt.
 pub fn default_ocr_prompt() -> ChatPrompt {
-    toml::from_str::<ChatPrompt>(DEFAULT_OCR_PROMPT)
+    from_toml_str::<ChatPrompt>(DEFAULT_OCR_PROMPT)
         .expect("failed to parse built-in OCR prompt")
 }
 

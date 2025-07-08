@@ -1,10 +1,12 @@
-use std::str::FromStr;
+use std::{process::exit, str::FromStr};
 
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{
     EnvFilter, Layer as _, filter::Directive, fmt::format::FmtSpan, layer::SubscriberExt,
     util::SubscriberInitExt as _,
 };
+
+use crate::async_utils::io::DiagnosticsError;
 
 use self::{prelude::*, ui::Ui};
 
@@ -21,6 +23,7 @@ mod queues;
 mod rate_limit;
 mod retry;
 mod schema;
+mod toml_utils;
 mod ui;
 
 /// Run LLM prompts at scale.
@@ -88,7 +91,15 @@ async fn main() -> Result<()> {
     tracing_subscriber::registry().with(subscriber).init();
 
     // Call our real `main` function now that logging is set up.
-    real_main(&ui).await
+    let result = real_main(&ui).await;
+    if let Err(e) = &result {
+        if let Some(diagnostics) = e.downcast_ref::<DiagnosticsError>() {
+            // Do pretty color formatting for diagnostics.
+            diagnostics.emit_to_stderr();
+            exit(1);
+        }
+    }
+    result
 }
 
 /// Our real entry point.

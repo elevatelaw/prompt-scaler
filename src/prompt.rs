@@ -9,9 +9,15 @@ use handlebars_concat::HandlebarsConcat;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde_json::Map;
+use toml_span::{
+    DeserError,
+    de_helpers::{TableHelper, expected},
+    value::ValueInner,
+};
 
 use crate::{
     async_utils::io::JsonObject, data_url::data_url, prelude::*, schema::Schema,
+    toml_utils::JsonValue,
 };
 
 /// Super-type of allowable prompt states. This is using the popular "type
@@ -96,6 +102,22 @@ impl ChatPrompt<Template> {
     }
 }
 
+impl<'de> toml_span::Deserialize<'de> for ChatPrompt<Template> {
+    fn deserialize(value: &mut toml_span::Value<'de>) -> Result<Self, DeserError> {
+        let mut th = TableHelper::new(value)?;
+        let developer = th.optional("developer");
+        let response_schema = th.required("response_schema")?;
+        let messages = th.required("messages")?;
+        th.finalize(None)?;
+        Ok(ChatPrompt {
+            developer,
+            response_schema,
+            messages,
+            _phantom: PhantomData,
+        })
+    }
+}
+
 /// A message, and optionally a response (represented as a JSON object).
 ///
 /// We would also have a `State: PromptState` field here, but that interacts badly
@@ -120,6 +142,55 @@ pub enum Message {
         /// The assistant response. This is always a JSON [`Value`].
         json: Value,
     },
+}
+
+impl<'de> toml_span::Deserialize<'de> for Message {
+    fn deserialize(value: &mut toml_span::Value<'de>) -> Result<Self, DeserError> {
+        let value_inner = value.take();
+        let ValueInner::Table(mut table) = value_inner else {
+            return Err(expected("a table", value_inner, value.span).into());
+        };
+        if table.len() != 1 {
+            return Err(expected(
+                "a table with exactly one key ('user' or 'assistant')",
+                ValueInner::Table(table),
+                value.span,
+            )
+            .into());
+        }
+
+        if table.contains_key("user") {
+            let user = table.get_mut("user").expect("no user key");
+
+            let mut th = TableHelper::new(user)?;
+            let text = th.optional("text");
+            let images = th.optional::<Vec<_>>("images").unwrap_or_default();
+            th.finalize(None)?;
+            if images.is_empty() && text.is_none() {
+                return Err(expected(
+                    "a user message with either 'text' or 'images'",
+                    ValueInner::Table(table),
+                    value.span,
+                )
+                .into());
+            }
+            Ok(Message::User { text, images })
+        } else if table.contains_key("assistant") {
+            let assistant = table.get_mut("assistant").expect("no assistant key");
+
+            let mut th = TableHelper::new(assistant)?;
+            let json = th.required::<JsonValue>("json")?.into_json();
+            th.finalize(None)?;
+            Ok(Message::Assistant { json })
+        } else {
+            Err(expected(
+                "a table with either a 'user' or an 'assistant' key",
+                ValueInner::Table(table),
+                value.span,
+            )
+            .into())
+        }
+    }
 }
 
 /// Handlebars helper for converting a path to an image data URL.
