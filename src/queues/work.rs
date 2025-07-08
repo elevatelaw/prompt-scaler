@@ -109,7 +109,6 @@ where
     pub token_usage: Option<TokenUsage>,
 
     /// Any errors that occurred during processing.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<String>,
 
     /// The output data for the work item.

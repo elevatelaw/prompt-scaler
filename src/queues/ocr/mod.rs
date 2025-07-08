@@ -47,7 +47,6 @@ pub struct OcrOutput {
 
     /// The text extracted from the PDF. If errors occur on specific pages,
     /// those pages will be replaced with `**COULD_NOT_OCR_PAGE**`.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
 
     /// Any defects in the page that make it difficult to OCR.
