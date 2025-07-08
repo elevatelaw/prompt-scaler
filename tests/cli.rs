@@ -45,7 +45,7 @@ static OLLAMA_API_KEY: &str = "sk-1234";
 static OLLAMA_API_BASE: &str = "http://localhost:11434/v1";
 
 /// Fast Ollama models to test against.
-static OLLAMA_FAST_MODELS: &[&str] = &["gemma3:4b"];
+static OLLAMA_FAST_MODELS: &[&str] = &["gemma3:4b-it-qat"];
 
 /// Create a new `Command` with our binary.
 fn cmd() -> Command {
