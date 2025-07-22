@@ -6,6 +6,12 @@
 #
 # Run `just --list` to see all the tasks in this file.
 
+check:
+    cargo fmt -- --check
+    cargo deny check
+    cargo clippy -- -D warnings
+    cargo test --all
+
 # Export our test JSON Schemas from Python and TypeScript to JSON.
 update-test-schemas:
     uv run tests/fixtures/external_schemas/schema.py
