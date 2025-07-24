@@ -158,8 +158,7 @@ impl Driver for OpenAiDriver {
             // If we didn't get JSON here, it's because the model didn't
             // generate JSON. So give it another chance with `try_transient!`.
             serde_json::from_str::<Value>(content).with_context(|| format!(
-                "Error parsing OpenAI response content: {:?}",
-                content
+                "Error parsing OpenAI response content: {content:?}"
             ))
         );
         debug!(%response, "Response");

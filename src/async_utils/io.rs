@@ -75,7 +75,7 @@ impl SmartReader {
         let is_json_like = ext == "json" || ext == "jsonl";
         let file = File::open(path)
             .await
-            .with_context(|| format!("Failed to open file at path: {:?}", path))?;
+            .with_context(|| format!("Failed to open file at path: {path:?}"))?;
         Ok(Self {
             is_json_like,
             description: path.to_string_lossy().into_owned(),
@@ -135,16 +135,13 @@ pub async fn read_json_or_toml_as_json_value(path: &Path) -> Result<Value> {
     reader
         .read_to_string(&mut data)
         .await
-        .with_context(|| format!("Failed to read file at path: {:?}", path))?;
+        .with_context(|| format!("Failed to read file at path: {path:?}"))?;
     if reader.is_json_like() {
-        serde_json::from_str(&data).with_context(|| {
-            format!("Failed to parse JSON from file at path: {:?}", path)
-        })
+        serde_json::from_str(&data)
+            .with_context(|| format!("Failed to parse JSON from file at path: {path:?}"))
     } else {
         Ok(from_toml_str::<JsonValue>(&data)
-            .with_context(|| {
-                format!("Failed to parse TOML from file at path: {:?}", path)
-            })?
+            .with_context(|| format!("Failed to parse TOML from file at path: {path:?}"))?
             .into_json())
     }
 }
@@ -160,11 +157,10 @@ where
     reader
         .read_to_string(&mut data)
         .await
-        .with_context(|| format!("Failed to read file at path: {:?}", path))?;
+        .with_context(|| format!("Failed to read file at path: {path:?}"))?;
     if reader.is_json_like() {
-        serde_json::from_str(&data).with_context(|| {
-            format!("Failed to parse JSON from file at path: {:?}", path)
-        })
+        serde_json::from_str(&data)
+            .with_context(|| format!("Failed to parse JSON from file at path: {path:?}"))
     } else {
         match from_toml_str(&data) {
             Ok(value) => Ok(value),
@@ -280,12 +276,12 @@ pub async fn read_jsonl_or_csv(ui: Ui, path: Option<&Path>) -> Result<JsonStream
             let description = description.clone();
             async move {
                 let line = line?;
-                let map: Value = serde_json::from_str(&line).with_context(|| {
-                    format!(
-                        "Failed to parse JSON from line in {:?}: {:?}",
-                        description, line
-                    )
-                })?;
+                let map: Value =
+                    serde_json::from_str(&line).with_context(|| {
+                        format!(
+                            "Failed to parse JSON from line in {description:?}: {line:?}",
+                        )
+                    })?;
                 Ok(map)
             }
         })))
@@ -296,7 +292,7 @@ pub async fn read_jsonl_or_csv(ui: Ui, path: Option<&Path>) -> Result<JsonStream
                 .headers()
                 .await
                 .with_context(|| {
-                    format!("Failed to read CSV headers from {:?}", description)
+                    format!("Failed to read CSV headers from {description:?}")
                 })?
                 .to_owned(),
         );
@@ -309,7 +305,7 @@ pub async fn read_jsonl_or_csv(ui: Ui, path: Option<&Path>) -> Result<JsonStream
                     let headers = headers.clone();
                     async move {
                         let record = record.with_context(|| {
-                            format!("Failed to read CSV record from {:?}", description)
+                            format!("Failed to read CSV record from {description:?}")
                         })?;
                         let map: Map<String, Value> = headers
                             .iter()
@@ -333,7 +329,7 @@ pub async fn create_writer(
         Some(path) => {
             let file = File::create(path)
                 .await
-                .with_context(|| format!("Failed to create file at path: {:?}", path))?;
+                .with_context(|| format!("Failed to create file at path: {path:?}"))?;
             Ok(Box::new(file))
         }
         None => Ok(Box::new(tokio::io::stdout())),
@@ -347,7 +343,7 @@ pub async fn write_output(path: Option<&Path>, stream: JsonStream) -> Result<()>
     while let Some(map) = stream.next().await {
         let map = map?;
         let json = serde_json::to_string(&map)
-            .with_context(|| format!("Failed to serialize JSON from map: {:?}", map))?;
+            .with_context(|| format!("Failed to serialize JSON from map: {map:?}"))?;
         writer
             .write_all(json.as_bytes())
             .await

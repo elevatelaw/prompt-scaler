@@ -48,7 +48,7 @@ impl WorkOutput<ChatOutput> {
     ) -> Self {
         let estimate_cost =
             |usage: Option<&TokenUsage>| usage.and_then(|u| u.estimate_cost(model));
-        let full_err = |err: anyhow::Error| format!("{:?}", err);
+        let full_err = |err: anyhow::Error| format!("{err:?}");
         match result {
             ResolvedResult::Ok {
                 output:

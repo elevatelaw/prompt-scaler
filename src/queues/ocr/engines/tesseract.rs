@@ -48,7 +48,7 @@ impl OcrEngine for TesseractOcrEngine {
 
         // Write our input to a temporary file.
         let tmpdir = tempfile::TempDir::with_prefix("tesseract")?;
-        let input_path = tmpdir.path().join(format!("input.{}", extension));
+        let input_path = tmpdir.path().join(format!("input.{extension}"));
         let output_path = tmpdir.path().join("output.txt");
         let mut input_file =
             File::create(&input_path).context("cannot create tesseract input file")?;

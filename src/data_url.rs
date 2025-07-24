@@ -11,7 +11,7 @@ pub fn data_url(mime_type: &str, data: &[u8]) -> String {
     //
     // let percent_encoded =
     //     percent_encoding::utf8_percent_encode(&base64_data, percent_encoding::NON_ALPHANUMERIC);
-    format!("data:{};base64,{}", mime_type, base64_data)
+    format!("data:{mime_type};base64,{base64_data}")
 }
 
 /// Regex for parsing a `data:` URL.

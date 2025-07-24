@@ -83,7 +83,7 @@ fn test_chat_text_jsonl_input_litellm() {
 #[ignore = "Needs LiteLLM running"]
 fn test_chat_text_csv_input_litellm() {
     for &model in LITELLM_CHEAP_MODELS {
-        println!("Testing model: {}", model);
+        println!("Testing model: {model}");
         cmd()
             .env("OPENAI_API_KEY", LITELLM_API_KEY)
             .env("OPENAI_API_BASE", LITELLM_API_BASE)
@@ -103,7 +103,7 @@ fn test_chat_text_csv_input_litellm() {
 #[ignore = "Needs Ollama running"]
 fn test_chat_text_csv_input_ollama() {
     for &model in OLLAMA_FAST_MODELS {
-        println!("Testing model: {}", model);
+        println!("Testing model: {model}");
         cmd()
             .env("OPENAI_API_KEY", OLLAMA_API_KEY)
             .env("OPENAI_API_BASE", OLLAMA_API_BASE)
@@ -126,7 +126,7 @@ fn test_chat_external_schema_csv_input_litellm() {
     // `Justfile` for how the schemas referred to by these files are generated.
     let prompts = ["prompt_py.toml", "prompt_ts.toml"];
     for prompt in prompts {
-        println!("Testing schema prompt: {}", prompt);
+        println!("Testing schema prompt: {prompt}");
         cmd()
             .env("OPENAI_API_KEY", LITELLM_API_KEY)
             .env("OPENAI_API_BASE", LITELLM_API_BASE)
@@ -145,7 +145,7 @@ fn test_chat_external_schema_csv_input_litellm() {
 #[ignore = "Slightly expensive & needs LiteLLM running"]
 fn test_chat_image_csv_input_litellm() {
     for &model in LITELLM_CHEAP_MODELS {
-        println!("Testing model: {}", model);
+        println!("Testing model: {model}");
         cmd()
             .env("OPENAI_API_KEY", LITELLM_API_KEY)
             .env("OPENAI_API_BASE", LITELLM_API_BASE)
@@ -164,7 +164,7 @@ fn test_chat_image_csv_input_litellm() {
 #[ignore = "Slightly expensive & needs various API keys in .env"]
 fn test_chat_image_csv_input_native() {
     for &model in NATIVE_CHEAP_MODELS {
-        println!("Testing model: {}", model);
+        println!("Testing model: {model}");
         cmd()
             .arg("chat")
             .arg("tests/fixtures/images/input.csv")
@@ -182,7 +182,7 @@ fn test_chat_image_csv_input_native() {
 #[ignore = "Slow & needs Ollama running"]
 fn test_chat_image_csv_input_ollama() {
     for &model in OLLAMA_FAST_MODELS {
-        println!("Testing model: {}", model);
+        println!("Testing model: {model}");
         cmd()
             .env("OPENAI_API_KEY", OLLAMA_API_KEY)
             .env("OPENAI_API_BASE", OLLAMA_API_BASE)

@@ -104,7 +104,7 @@ impl FromStr for RateLimit {
                 per_period,
             })
         };
-        parse(s).with_context(|| format!("Failed to parse rate limit: {:?}", s))
+        parse(s).with_context(|| format!("Failed to parse rate limit: {s:?}"))
     }
 }
 

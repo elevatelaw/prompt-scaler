@@ -258,7 +258,7 @@ impl<'de> toml_span::Deserialize<'de> for ScalarType {
             "boolean" => Ok(ScalarType::Boolean),
             _ => Err(custom_deser_error(
                 value.span,
-                format!("Unsupported JSON Schema scalar type: {}", r#type),
+                format!("Unsupported JSON Schema scalar type: {type}"),
             )),
         }
     }
@@ -398,12 +398,11 @@ description = "Information to extract from each image."
 # No description.
 "#;
         let result = from_toml_str::<InternalSchema>(schema_toml);
-        assert!(result.is_err(), "Expected error, got: {:?}", result);
+        assert!(result.is_err(), "Expected error, got: {result:?}");
         let msg = result.unwrap_err().to_string();
         assert!(
             msg.contains("description"),
-            "Unexpected error message: {}",
-            msg
+            "Unexpected error message: {msg}"
         );
     }
 }

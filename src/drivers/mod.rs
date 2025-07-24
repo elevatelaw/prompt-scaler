@@ -232,7 +232,7 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            LlmError::Native(err) => write!(f, "LLM error: {}", err),
+            LlmError::Native(err) => write!(f, "LLM error: {err}"),
             LlmError::Timeout => write!(f, "LLM request timed out"),
         }
     }

@@ -213,17 +213,16 @@ fn image_data_url_helper(
     let mime = infer::get_from_path(path)
         .map_err(|err| {
             RenderErrorReason::Other(format!(
-                "error inferring MIME type for {}: {}",
-                path, err
+                "error inferring MIME type for {path}: {err}"
             ))
         })?
         .ok_or_else(|| {
-            RenderErrorReason::Other(format!("unknown MIME type for {}", path))
+            RenderErrorReason::Other(format!("unknown MIME type for {path}"))
         })?;
 
     // Base64 encode the file.
     let bytes = fs::read(path).map_err(|err| {
-        RenderErrorReason::Other(format!("error reading {}: {}", path, err))
+        RenderErrorReason::Other(format!("error reading {path}: {err}"))
     })?;
     let data_url = data_url(mime.mime_type(), &bytes);
     out.write(&data_url)?;
@@ -249,7 +248,7 @@ fn text_file_contents_helper(
 
     // Read the file.
     let contents = fs::read_to_string(path).map_err(|err| {
-        RenderErrorReason::Other(format!("error reading {}: {}", path, err))
+        RenderErrorReason::Other(format!("error reading {path}: {err}"))
     })?;
     out.write(&contents)?;
     Ok(())
@@ -379,8 +378,7 @@ fn render_template(
                 .collect::<Vec<_>>()
                 .join(", ");
             format!(
-                "Error rendering template {:?} with bindings: [{}]",
-                template, binding_keys,
+                "Error rendering template {template:?} with bindings: [{binding_keys}]",
             )
         })
 }

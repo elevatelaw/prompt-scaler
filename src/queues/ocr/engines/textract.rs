@@ -94,7 +94,7 @@ impl OcrEngine for TextractOcrEngine {
             .await;
         match response {
             Err(e) => {
-                let err = format!("AWS Textract error: {:?}", e);
+                let err = format!("AWS Textract error: {e:?}");
                 error!("{err}");
                 errors.push(err);
                 return Ok(OcrPageOutput {
