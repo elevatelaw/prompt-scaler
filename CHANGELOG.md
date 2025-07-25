@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.12] - 2025-07-25
+
+### Added
+
+- ocr: Output `page_count`.
+
+### Fixed
+
+- Vastly improved error messages!
+- Always output `text` and `error` fields with `null` values, instead of omitting them. This may be technically breaking for certain users, but I don't think any exist.
+
 ## [0.2.11] - 2025-06-10
 
 ### Fixed
