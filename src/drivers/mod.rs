@@ -22,6 +22,7 @@ use crate::{
     retry::IsKnownTransient,
 };
 
+pub mod bedrock;
 pub mod native;
 pub mod openai;
 
@@ -34,6 +35,9 @@ pub enum DriverType {
     #[clap(name = "openai")]
     OpenAI,
 
+    /// AWS Bedrock driver.
+    Bedrock,
+
     /// Attempt to use a native driver for each specific AI.
     Native,
 }
@@ -43,6 +47,7 @@ impl DriverType {
     pub async fn create_driver(&self) -> Result<Box<dyn Driver>> {
         match self {
             DriverType::OpenAI => Ok(Box::new(openai::OpenAiDriver::new().await?)),
+            DriverType::Bedrock => Ok(Box::new(bedrock::BedrockDriver::new().await?)),
             DriverType::Native => Ok(Box::new(native::NativeDriver::new().await?)),
         }
     }

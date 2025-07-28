@@ -4,11 +4,11 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::Arc;
 
-use aws_config::BehaviorVersion;
 use aws_sdk_textract::types::{Block, FeatureType, RelationshipType};
 use aws_sdk_textract::{primitives::Blob, types::BlockType};
 use leaky_bucket::RateLimiter;
 
+use crate::aws::load_aws_config;
 use crate::drivers::LlmOpts;
 use crate::prelude::*;
 
@@ -39,7 +39,7 @@ impl TextractOcrEngine {
         concurrency_limit: usize,
         llm_opts: &LlmOpts,
     ) -> Result<(Arc<dyn OcrEngine>, JoinWorker)> {
-        let config = aws_config::load_defaults(BehaviorVersion::v2025_01_17()).await;
+        let config = load_aws_config().await?;
         let client = aws_sdk_textract::Client::new(&config);
 
         // If we don't have a rate limit, set one based on the concurrency

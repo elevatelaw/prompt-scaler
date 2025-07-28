@@ -11,6 +11,7 @@ use crate::async_utils::io::DiagnosticsError;
 use self::{prelude::*, ui::Ui};
 
 mod async_utils;
+mod aws;
 mod cmd;
 mod cpu_limit;
 mod data_url;

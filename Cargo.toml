@@ -21,7 +21,9 @@ async-openai = { version = "0.28.1", default-features = false, features = [
 ] }
 async-trait = "0.1.88"
 aws-config = "1.6.1"
+aws-sdk-bedrockruntime = "1.99.0"
 aws-sdk-textract = "1.64.0"
+aws-smithy-runtime-api = "1.8.5"
 base64 = "0.22.1"
 clap = { version = "4.5.28", features = ["derive", "wrap_help"] }
 codespan-reporting = "0.12.0"

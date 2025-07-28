@@ -95,6 +95,11 @@ pub(crate) fn retry_result_fatal<T, E>(error: E) -> RetryResult<(), (), T, E> {
     RetryResult::Fatal { input: (), error }
 }
 
+/// Build an [`RetryResult::Transient`] value.
+pub(crate) fn retry_result_transient<T, E>(error: E) -> RetryResult<(), (), T, E> {
+    RetryResult::Transient { input: (), error }
+}
+
 /// Is this error a known transient error?
 ///
 /// By default, we assume errors are not transient, until they're been observed

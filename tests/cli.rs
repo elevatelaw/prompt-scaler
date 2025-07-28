@@ -47,6 +47,15 @@ static OLLAMA_API_BASE: &str = "http://localhost:11434/v1";
 /// Fast Ollama models to test against.
 static OLLAMA_FAST_MODELS: &[&str] = &["gemma3:4b-it-qat"];
 
+/// AWS Bedrock models that are likely to work.
+///
+/// See the chart at https://aws.amazon.com/en/blogs/machine-learning/structured-data-response-with-amazon-bedrock-prompt-engineering-and-tool-use/.
+///
+/// For now, since we use a manual JSON schema passed in the system prompt, and not
+/// tool calling, we need to avoid Haiku 3.0. Haiku 3.5 works about 98% of the time,
+/// so it might be reasonable for production use with appropriate retries.
+static BEDROCK_MODELS: &[&str] = &["us.anthropic.claude-sonnet-4-20250514-v1:0"];
+
 /// Create a new `Command` with our binary.
 fn cmd() -> Command {
     let mut cmd = Command::cargo_bin("prompt-scaler").unwrap();
@@ -173,6 +182,27 @@ fn test_chat_image_csv_input_native() {
             .arg(model)
             .arg("--prompt")
             .arg("tests/fixtures/images/prompt.toml")
+            .assert()
+            .success();
+    }
+}
+
+#[test]
+#[ignore = "Needs Ollama running"]
+fn test_chat_text_csv_input_bedrock() {
+    for &model in BEDROCK_MODELS {
+        println!("Testing model: {model}");
+        cmd()
+            .env("OPENAI_API_KEY", OLLAMA_API_KEY)
+            .env("OPENAI_API_BASE", OLLAMA_API_BASE)
+            .arg("chat")
+            .arg("tests/fixtures/texts/input.csv")
+            .args(["--driver", "bedrock"])
+            .args(["--jobs", "1", "--limit", "1"])
+            .arg("--model")
+            .arg(model)
+            .arg("--prompt")
+            .arg("tests/fixtures/texts/prompt.toml")
             .assert()
             .success();
     }
