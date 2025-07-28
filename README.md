@@ -11,8 +11,11 @@
 
 The following variables can be specified in the environment, or using a `.env` file:
 
-- `OPENAI_API_KEY`: API key for OpenAI
+- `OPENAI_API_KEY`: API key for OpenAI (or a compatible gateway, like LiteLLM or Ollama).
 - `OPENAI_API_BASE` (optional): Base URL for an alternate implementation of the OpenAI API, for use with tools like LiteLLM or Ollama.
+- `GEMINI_API_KEY`: API key for direct access to the Gemini API, when using `--driver=native`. Using `GEMINI_API_KEY` and `--driver=native` is strongly recommended for large-scale image tasks.
+    - **WARNING:** Gemini offers both **Free** API keys and **Tier 1-3** paid API keys. **If you use a Free API key, Google may retain your data and use it for training.** For paid API keys, see [Google's cloud compliance resource center](https://cloud.google.com/compliance), which explains how to set up appropriate paperwork for sensitive and regulated data, in jurisdictions around the world. 
+    - When using `GEMINI_API_KEY`, you will probably also want to pass something like `--rate-limit=1800/m` to stay mostly below the Tier 1 rate limit of 2000 requests per minute. Rate limit enforcement on Google's does not appear to be 100% predictable, so this may require experimentation.
 - `RUST_LOG` (optional): Set to `prompt_scaler=debug,warn` or `prompt_scaler=trace,warn` to produce detailed logs. This uses the [`env-logger` syntax](https://docs.rs/env_logger/latest/env_logger/).
 
 ## Tested models
@@ -27,6 +30,17 @@ We have automated regression tests showing that we can talk to the following mod
 | Google (open) | gemma3:4b | Ollama | ✅ | ✅ | ✅ |
 
 We recommend the use [LiteLLM](https://www.litellm.ai/) to talk any API besides OpenAI and Ollama. LiteLLM currently appears to have poor Ollama support, but Ollama's native server endpoint works fine on its own.
+
+## Documentation
+
+You can run any of the following commands to see documentation for `prompt-scaler`'s command-line interface:
+
+```sh
+prompt-scaler --help
+prompt-scaler chat --help
+prompt-scaler ocr --help
+prompt-scaler schema --help
+```
 
 ## Example usage
 
@@ -129,6 +143,10 @@ description = "A one-word description of the entity holding the sign."
 # We provide an example of what we want, using the turtle image.
 #
 # Including 1-3 examples will often produce much better output.
+#
+# Note that with Gemini, providing sample images tends to trigger
+# a much higher rate of RECITATION errors. So you will probably
+# want to leave them out.
 [[messages]]
 user.images = ["{{image-data-url 'tests/fixtures/images/turtle.jpg'}}"]
 
