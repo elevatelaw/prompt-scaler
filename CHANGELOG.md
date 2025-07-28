@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.13] - 2025-07-28
+
+### Added
+
+- bedrock: Add experimental support for AWS Bedrock. Tested with Claude, but only in a very simple case.
+
 ## [0.2.12] - 2025-07-25
 
 ### Added
