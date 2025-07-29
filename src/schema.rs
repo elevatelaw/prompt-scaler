@@ -13,7 +13,7 @@ use toml_span::{
 use crate::{
     async_utils::io::read_json_or_toml_as_json_value,
     prelude::*,
-    toml_utils::{JsonValue, custom_deser_error},
+    toml_utils::{JsonValue, custom_deser_error, unwrap_json_values},
 };
 
 /// Get the title of a JSON Schema part, or `"ResponseFormat"` if not present.
@@ -131,7 +131,6 @@ impl<'de> toml_span::Deserialize<'de> for ExternalSchema {
 pub struct InternalSchema {
     /// A description of this value.
     pub description: String,
-
     /// The details of this schema.
     #[serde(flatten)]
     pub details: InternalSchemaDetails,
@@ -192,8 +191,7 @@ impl<'de> toml_span::Deserialize<'de> for InternalSchema {
                 description,
                 details: InternalSchemaDetails::Scalar {
                     r#type: r#type.unwrap_or_default(),
-                    r#enum: r#enum
-                        .map(|v| v.into_iter().map(|v| v.into_json()).collect()),
+                    r#enum: r#enum.map(unwrap_json_values),
                 },
             })
         }
@@ -272,15 +270,12 @@ pub trait ToJsonSchema {
 
 impl ToJsonSchema for InternalSchema {
     fn to_json_schema(&self) -> Result<Value> {
-        let description = Value::String(self.description.clone());
-        match &self.details {
+        let mut schema = match &self.details {
             InternalSchemaDetails::Array { items } => {
-                let mut schema = json!({
+                json!({
                     "type": "array",
                     "items": items.to_json_schema()?,
-                });
-                schema["description"] = description;
-                Ok(schema)
+                })
             }
             InternalSchemaDetails::Object { title, properties } => {
                 let mut schema = json!({
@@ -294,8 +289,7 @@ impl ToJsonSchema for InternalSchema {
                 if let Some(title) = title {
                     schema["title"] = Value::String(title.clone());
                 }
-                schema["description"] = description;
-                Ok(schema)
+                schema
             }
             InternalSchemaDetails::Scalar { r#type, r#enum } => {
                 let mut schema = json!({
@@ -304,10 +298,11 @@ impl ToJsonSchema for InternalSchema {
                 if let Some(enum_values) = r#enum {
                     schema["enum"] = Value::Array(enum_values.clone());
                 }
-                schema["description"] = description;
-                Ok(schema)
+                schema
             }
-        }
+        };
+        schema["description"] = Value::String(self.description.clone());
+        Ok(schema)
     }
 }
 

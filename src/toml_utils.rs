@@ -92,6 +92,13 @@ impl JsonValue {
     }
 }
 
+/// Unwrap a [`Vec<JsonValue>`] into a [`Vec<Value>`].
+pub fn unwrap_json_values(
+    json_values: impl IntoIterator<Item = JsonValue>,
+) -> Vec<Value> {
+    json_values.into_iter().map(JsonValue::into_json).collect()
+}
+
 impl<'de> toml_span::Deserialize<'de> for JsonValue {
     fn deserialize(value: &mut toml_span::Value<'de>) -> Result<Self, DeserError> {
         let inner = value.take();
