@@ -1,18 +1,23 @@
 //! AWS Bedrock driver.
 
+use std::collections::HashMap;
+
 use aws_sdk_bedrockruntime::{
     Client,
     error::SdkError,
     operation::converse::ConverseError,
     primitives::Blob,
     types::{
-        ContentBlock, ConversationRole, ImageBlock, ImageFormat, ImageSource,
-        InferenceConfiguration, Message as BedrockMessage, StopReason,
-        SystemContentBlock,
+        AnyToolChoice, ContentBlock, ConversationRole, ImageBlock, ImageFormat,
+        ImageSource, InferenceConfiguration, Message as BedrockMessage, StopReason,
+        SystemContentBlock, Tool, ToolChoice, ToolConfiguration, ToolInputSchema,
+        ToolResultBlock, ToolResultContentBlock, ToolSpecification, ToolUseBlock,
     },
 };
 use aws_smithy_runtime_api::http::StatusCode as AwsStatusCode;
+use aws_smithy_types::{Document, Number};
 use reqwest::StatusCode;
+use uuid::Uuid;
 
 use crate::{
     aws::load_aws_config,
@@ -28,6 +33,9 @@ use crate::{
 };
 
 use super::Driver;
+
+/// The name of the tool we tell Bedrock to use for reporting results.
+static OUTPUT_TOOL_NAME: &str = "report_result";
 
 /// Our OpenAI driver, which we also use for LiteLLM, Ollama and other
 /// compatible gateways.
@@ -81,14 +89,15 @@ impl Driver for BedrockDriver {
                 .converse()
                 .model_id(model)
                 .inference_config(inf_conf)
-                .system(req.system)
+                .tool_config(req.tool_config)
+                .set_system(req.system.map(|s| vec![s]))
                 .set_messages(Some(req.messages))
                 .send()
                 .await
         );
 
         // Check for odd stop reasons.
-        if output.stop_reason() != &StopReason::EndTurn {
+        if output.stop_reason() != &StopReason::ToolUse {
             return LlmRetryResult::Transient {
                 input: (),
                 error: anyhow!("Unexpected stop reason: {}", output.stop_reason()),
@@ -119,12 +128,14 @@ impl Driver for BedrockDriver {
                 blocks.len()
             ));
         }
-        if let ContentBlock::Text(text) = &blocks[0] {
-            // Parse our response as JSON.
-            let response =
-                try_transient!(serde_json::from_str(text).map_err(|e| anyhow!(
-                    "Failed to parse Bedrock response as JSON: {e}"
-                )));
+        if let ContentBlock::ToolUse(tool_use) = &blocks[0] {
+            if tool_use.name != OUTPUT_TOOL_NAME {
+                return retry_result_transient(anyhow!(
+                    "Bedrock response contained unexpected tool name: {}",
+                    tool_use.name
+                ));
+            }
+            let response = try_transient!(aws_document_to_value(&tool_use.input));
             debug!(%response, "Response");
             retry_result_ok(ChatCompletionResponse {
                 response,
@@ -180,7 +191,9 @@ impl IsKnownTransient for ConverseError {
 /// Information needed for a Bedrock request.
 struct BedrockRequest {
     /// The system prompt.
-    system: SystemContentBlock,
+    system: Option<SystemContentBlock>,
+    /// Our tool configuration.
+    tool_config: ToolConfiguration,
     /// The messages to send.
     messages: Vec<BedrockMessage>,
 }
@@ -199,32 +212,39 @@ impl ToBedrockRequest for ChatPrompt<Rendered> {
     type Output = BedrockRequest;
 
     async fn to_bedrock_request(&self) -> Result<Self::Output> {
-        // Build our system prompt.
-        let mut system = String::new();
-        if let Some(developer) = &self.developer {
-            system.push_str(developer);
-            system.push('\n');
-        }
-
-        // Append our schema to the system prompt. We have a choice between
-        // including the schema in the text we send the model, or of using
-        // function calling. In theory, function calling works slightly better
-        // with some models, including Claude Haiku <= 3.5. But with s
-        let schema = self.response_schema.to_json_schema().await?;
-        system.push_str(
-            "Your response should be a JSON object with the following schema:\n",
-        );
-        system.push_str(&serde_json::to_string(&schema)?);
-        system.push('\n');
-
         // Convert our messages.
         let mut messages = vec![];
         for message in &self.messages {
-            messages.push(message.to_bedrock_request().await?);
+            messages.extend(message.to_bedrock_request().await?);
         }
 
+        // Set up our tool configuration, and for
+        let tool_config = ToolConfiguration::builder()
+            .tools(Tool::ToolSpec(
+                ToolSpecification::builder()
+                    .name(OUTPUT_TOOL_NAME.to_string())
+                    .description("Report the requested data".to_string())
+                    .input_schema(ToolInputSchema::Json(
+                        value_to_aws_document(
+                            &self.response_schema.to_json_schema().await?,
+                        )
+                        .context("Cannot convert JSON to AWS Document")?,
+                    ))
+                    .build()
+                    .context("Cannot build Bedrock tool specification")?,
+            ))
+            // We have only one tool, so force the model to _some_ tool, and it
+            // has to call ours. This is more portable than SpecificToolChoice.
+            .tool_choice(ToolChoice::Any(AnyToolChoice::builder().build()))
+            .build()
+            .context("Cannot build Bedrock tool configuration")?;
+
         Ok(BedrockRequest {
-            system: SystemContentBlock::Text(system),
+            system: self
+                .developer
+                .as_ref()
+                .map(|developer| SystemContentBlock::Text(developer.to_owned())),
+            tool_config,
             messages,
         })
     }
@@ -232,14 +252,22 @@ impl ToBedrockRequest for ChatPrompt<Rendered> {
 
 #[async_trait]
 impl ToBedrockRequest for Message {
-    type Output = BedrockMessage;
+    type Output = Vec<BedrockMessage>;
 
     async fn to_bedrock_request(&self) -> Result<Self::Output> {
-        let mut builder = BedrockMessage::builder();
+        let mut messages = vec![];
         match self {
             Message::User { text, images } => {
-                builder = builder.role(ConversationRole::User);
+                let mut builder = BedrockMessage::builder().role(ConversationRole::User);
                 if let Some(text) = text {
+                    if text.is_empty() || text.chars().all(|c| c.is_ascii_whitespace()) {
+                        // The Bedrock models we've tested don't like blank user messages
+                        // and they will return an error, so bail on it now.
+                        return Err(anyhow!(
+                            "User message is blank, which is not supported: {:?}",
+                            text
+                        ));
+                    }
                     builder = builder.content(ContentBlock::Text(text.clone()));
                 }
                 for image in images {
@@ -257,13 +285,118 @@ impl ToBedrockRequest for Message {
                         ));
                     }
                 }
+                messages.push(builder.build().context("Cannot build Bedrock message")?);
             }
             Message::Assistant { json } => {
-                builder = builder
-                    .role(ConversationRole::Assistant)
-                    .content(ContentBlock::Text(json.to_string()))
+                // We need to generate a tool use and a tool result, because Bedrock
+                let id = Uuid::new_v4().to_string();
+                messages.push(
+                    BedrockMessage::builder()
+                        .role(ConversationRole::Assistant)
+                        .content(ContentBlock::ToolUse(
+                            ToolUseBlock::builder()
+                                .tool_use_id(id.clone())
+                                .name(OUTPUT_TOOL_NAME.to_string())
+                                .input(
+                                    value_to_aws_document(json)
+                                        .context("Cannot convert JSON to AWS Document")?,
+                                )
+                                .build()
+                                .context("Cannot build Bedrock tool use block")?,
+                        ))
+                        .build()
+                        .context("Cannot build Bedrock message")?,
+                );
+                messages.push(
+                    BedrockMessage::builder()
+                        .role(ConversationRole::User)
+                        .content(ContentBlock::ToolResult(
+                            ToolResultBlock::builder()
+                                .tool_use_id(id)
+                                .content(ToolResultContentBlock::Json(Document::Object(
+                                    HashMap::from([(
+                                        "status".to_string(),
+                                        Document::from("ok"),
+                                    )]),
+                                )))
+                                .build()
+                                .context("Cannot build Bedrock message")?,
+                        ))
+                        .build()
+                        .context("Cannot build Bedrock message")?,
+                );
             }
         }
-        builder.build().context("Cannot build Bedrock message")
+        Ok(messages)
+    }
+}
+
+/// Convert a [`serde_json::Value`] into an [`aws_smithy_types::Document`].
+fn value_to_aws_document(value: &serde_json::Value) -> Result<Document> {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut obj = HashMap::new();
+            for (key, val) in map {
+                obj.insert(key.clone(), value_to_aws_document(val)?);
+            }
+            Ok(Document::Object(obj))
+        }
+        serde_json::Value::Array(arr) => {
+            let docs = arr
+                .iter()
+                .map(value_to_aws_document)
+                .collect::<Result<Vec<_>>>()?;
+            Ok(Document::from(docs))
+        }
+        Value::Null => Ok(Document::Null),
+        Value::Bool(b) => Ok(Document::from(*b)),
+        Value::String(s) => Ok(Document::from(s.clone())),
+        Value::Number(num) => {
+            if let Some(i) = num.as_i64() {
+                Ok(Document::from(i))
+            } else if let Some(u) = num.as_u64() {
+                Ok(Document::from(u))
+            } else if let Some(f) = num.as_f64() {
+                Ok(Document::from(f))
+            } else {
+                Err(anyhow!("Unsupported number type: {}", num))
+            }
+        }
+    }
+}
+
+// Convert a [`aws_smithy_types::Document`] into a [`serde_json::Value`].
+fn aws_document_to_value(doc: &Document) -> Result<serde_json::Value> {
+    match doc {
+        Document::Object(map) => {
+            let mut obj = serde_json::Map::new();
+            for (key, val) in map {
+                obj.insert(key.clone(), aws_document_to_value(val)?);
+            }
+            Ok(serde_json::Value::Object(obj))
+        }
+        Document::Array(arr) => {
+            let vals = arr
+                .iter()
+                .map(aws_document_to_value)
+                .collect::<Result<Vec<_>>>()?;
+            Ok(serde_json::Value::Array(vals))
+        }
+        Document::Null => Ok(serde_json::Value::Null),
+        Document::Bool(b) => Ok(serde_json::Value::Bool(*b)),
+        Document::String(s) => Ok(serde_json::Value::String(s.clone())),
+        Document::Number(num) => match num {
+            Number::PosInt(value) => {
+                Ok(serde_json::Value::Number(serde_json::Number::from(*value)))
+            }
+            Number::NegInt(value) => {
+                Ok(serde_json::Value::Number(serde_json::Number::from(*value)))
+            }
+            Number::Float(value) => Ok(serde_json::Value::Number(
+                serde_json::Number::from_f64(*value).ok_or_else(|| {
+                    anyhow!("Cannot convert f64 to JSON number: {}", value)
+                })?,
+            )),
+        },
     }
 }
