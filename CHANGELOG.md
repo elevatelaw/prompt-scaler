@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.14] - 2025-08-07
+
+### Fixed
+
+- bedrock: Update our driver to always force tool use, because we were seeing surprisingly high rates of invalid JSON output using the text-based conversational interface and a JSON Schema. Specifically, we were not seeing the kind of numbers AWS saw in these experiments: https://aws.amazon.com/fr/blogs/machine-learning/structured-data-response-with-amazon-bedrock-prompt-engineering-and-tool-use/
+
 ## [0.2.13] - 2025-07-28
 
 ### Added
