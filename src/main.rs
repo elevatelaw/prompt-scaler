@@ -93,12 +93,12 @@ async fn main() -> Result<()> {
 
     // Call our real `main` function now that logging is set up.
     let result = real_main(&ui).await;
-    if let Err(e) = &result {
-        if let Some(diagnostics) = e.downcast_ref::<DiagnosticsError>() {
-            // Do pretty color formatting for diagnostics.
-            diagnostics.emit_to_stderr();
-            exit(1);
-        }
+    if let Err(e) = &result
+        && let Some(diagnostics) = e.downcast_ref::<DiagnosticsError>()
+    {
+        // Do pretty color formatting for diagnostics.
+        diagnostics.emit_to_stderr();
+        exit(1);
     }
     result
 }

@@ -195,10 +195,10 @@ impl<'a> OutputState<'a> {
     /// Write a block recursively.
     fn write_block(&mut self, block: &'a Block, printed_parent: bool) -> Result<()> {
         // Check to make sure we haven't already printed this block.
-        if let Some(id) = block.id() {
-            if !self.printed_block_ids.insert(id) {
-                return Ok(());
-            }
+        if let Some(id) = block.id()
+            && !self.printed_block_ids.insert(id)
+        {
+            return Ok(());
         }
 
         // If we haven't printed a parent already, print this block.

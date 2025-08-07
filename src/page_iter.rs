@@ -413,13 +413,13 @@ fn add_last_page_arg_if_needed(
     total_pages: usize,
     cmd: &mut Command,
 ) -> Result<()> {
-    if let Some(max_pages) = options.max_pages {
-        if total_pages > max_pages {
-            // The command-line tools use 1-based page numbers, as far as I can
-            // tell. But they also use an inclusive range.
-            let last_page = max_pages;
-            cmd.arg("-l").arg(last_page.to_string());
-        }
+    if let Some(max_pages) = options.max_pages
+        && total_pages > max_pages
+    {
+        // The command-line tools use 1-based page numbers, as far as I can
+        // tell. But they also use an inclusive range.
+        let last_page = max_pages;
+        cmd.arg("-l").arg(last_page.to_string());
     }
     Ok(())
 }
