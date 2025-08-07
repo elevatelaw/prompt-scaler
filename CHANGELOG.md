@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.15] - 2025-08-07
+
+### Fixed
+
+- clippy: Update to latest Rust compiler and fix warnings.
+
 ## [0.2.14] - 2025-08-07
 
 ### Fixed
