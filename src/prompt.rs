@@ -97,6 +97,7 @@ impl ChatPrompt<Template> {
         handlebars.register_helper("image-data-url", Box::new(image_data_url_helper));
         handlebars
             .register_helper("text-file-contents", Box::new(text_file_contents_helper));
+        handlebars.register_helper("to-string", Box::new(to_string_helper));
         self.render_template(&handlebars, bindings)
             .context("Could not render prompt")
     }
@@ -252,6 +253,24 @@ fn text_file_contents_helper(
     })?;
     out.write(&contents)?;
     Ok(())
+}
+
+/// Convert a value into a string, using Rust's [`std::fmt::Display`] trait.
+fn to_string_helper(
+    h: &Helper,
+    _: &Handlebars,
+    _: &Context,
+    _: &mut RenderContext,
+    out: &mut dyn Output,
+) -> HelperResult {
+    // Get our value parameter.
+    let value = h
+        .param(0)
+        .ok_or_else(|| RenderErrorReason::ParamNotFoundForIndex("to-string", 0))?
+        .value();
+
+    // Convert the value to a string.
+    Ok(out.write(&value.to_string())?)
 }
 
 /// Render a [`Template`] version of a type, and return the [`Rendered`] version
