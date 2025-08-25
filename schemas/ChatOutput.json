@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ChatOutput",
+  "description": "Output record from a [`WorkItemProcessor`].",
+  "type": "object",
+  "required": [
+    "errors",
+    "id",
+    "status"
+  ],
+  "properties": {
+    "errors": {
+      "description": "Any errors that occurred during processing.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "estimated_cost": {
+      "description": "How much money do we think we spent?",
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
+    },
+    "id": {
+      "description": "The unique ID of the work item."
+    },
+    "response": {
+      "description": "The response from the LLM. If this is present, the request succeeded."
+    },
+    "status": {
+      "description": "What is the status of this work item?",
+      "allOf": [
+        {
+          "$ref": "#/definitions/WorkStatus"
+        }
+      ]
+    },
+    "token_usage": {
+      "description": "How many tokens did we use?",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/TokenUsage"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "definitions": {
+    "TokenUsage": {
+      "description": "Token usage.",
+      "type": "object",
+      "required": [
+        "completion_tokens",
+        "prompt_tokens"
+      ],
+      "properties": {
+        "completion_tokens": {
+          "description": "How many tokens were used in the response?",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "prompt_tokens": {
+          "description": "How many tokens were used in the prompt?",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
+    "WorkStatus": {
+      "description": "Output status of a work item.",
+      "type": "string",
+      "enum": [
+        "ok",
+        "incomplete",
+        "failed"
+      ]
+    }
+  }
+}
