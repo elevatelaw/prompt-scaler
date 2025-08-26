@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::Arc;
 
+use aws_sdk_textract::operation::analyze_document::AnalyzeDocumentOutput;
 use aws_sdk_textract::types::{Block, FeatureType, RelationshipType};
 use aws_sdk_textract::{primitives::Blob, types::BlockType};
 use leaky_bucket::RateLimiter;
@@ -117,30 +118,9 @@ impl OcrPageEngine for TextractOcrEngine {
                     blocks_by_id.insert(block_id, block);
                 }
 
-                // Create our output state.
+                // Create our output state and get our text.
                 let mut output = OutputState::new(self.debug, blocks_by_id);
-
-                // Iterate over layout blocks and extract their child text.
-                for block in document.blocks() {
-                    // We only want layout blocks with text, which should
-                    // contain all the text and come in a reasonable order.
-                    trace!(?block, "Textract layout block");
-                    let Some(block_type) = block.block_type() else {
-                        continue;
-                    };
-                    if !block_type.as_str().starts_with("LAYOUT_") {
-                        continue;
-                    }
-
-                    // Print the block.
-                    let bytes_written = output.bytes_written();
-                    output.write_block(block, false)?;
-                    if output.bytes_written() > bytes_written {
-                        // We wrote something, so add a newline.
-                        output.write_text("\n");
-                    }
-                }
-
+                output.write_analyzed_document(&document)?;
                 let text = output.output;
                 debug!(%text, "Extraced text");
                 Ok(OcrPageOutput {
@@ -156,18 +136,22 @@ impl OcrPageEngine for TextractOcrEngine {
 }
 
 /// Our output state.
+///
+/// This is a slightly _ad hoc_ output system that helps handle recursion and
+/// de-duplication, making sure we get all the relevant text, and get it only
+/// once.
 #[derive(Debug)]
 struct OutputState<'a> {
-    /// The output string.
+    /// The output string we're building.
     output: String,
 
     /// Should we output debug information?
     debug: bool,
 
-    /// Blocks by ID.
+    /// Blocks by ID. Used to look up child blocks and recurse over them.
     blocks_by_id: HashMap<&'a str, &'a Block>,
 
-    /// The set of already printed blocks.
+    /// The set of already printed blocks, to prevent printing blocks twice.
     printed_block_ids: HashSet<&'a str>,
 }
 
@@ -190,6 +174,34 @@ impl<'a> OutputState<'a> {
     /// Write some text to the output.
     fn write_text(&mut self, text: &str) {
         self.output.push_str(text);
+    }
+
+    /// Write an analyzed document.
+    fn write_analyzed_document<'d: 'a>(
+        &mut self,
+        document: &'d AnalyzeDocumentOutput,
+    ) -> Result<()> {
+        // Iterate over layout blocks and extract their child text.
+        for block in document.blocks() {
+            // We only want layout blocks with text, which should
+            // contain all the text and come in a reasonable order.
+            trace!(?block, "Textract layout block");
+            let Some(block_type) = block.block_type() else {
+                continue;
+            };
+            if !block_type.as_str().starts_with("LAYOUT_") {
+                continue;
+            }
+
+            // Print the block.
+            let bytes_written = self.bytes_written();
+            self.write_block(block, false)?;
+            if self.bytes_written() > bytes_written {
+                // We wrote something, so add a newline.
+                self.write_text("\n");
+            }
+        }
+        Ok(())
     }
 
     /// Write a block recursively.
