@@ -96,11 +96,7 @@ impl PageIter {
         password: Option<&str>,
     ) -> Result<Self> {
         // Get our MIME type.
-        let mime_type = infer::get_from_path(path)
-            .with_context(|| format!("failed to get MIME type for {:?}", path.display()))?
-            .ok_or_else(|| anyhow!("unknown MIME type for {:?}", path.display()))?
-            .mime_type()
-            .to_string();
+        let mime_type = get_mime_type(path)?;
 
         // Check if we have a supported image type.
         if SUPPORTED_IMAGE_TYPES.contains(&mime_type.as_str()) {
@@ -422,6 +418,15 @@ fn add_last_page_arg_if_needed(
         cmd.arg("-l").arg(last_page.to_string());
     }
     Ok(())
+}
+
+/// Get the MIME type of a file.
+pub fn get_mime_type(path: &Path) -> Result<String> {
+    Ok(infer::get_from_path(path)
+        .with_context(|| format!("failed to get MIME type for {:?}", path.display()))?
+        .ok_or_else(|| anyhow!("unknown MIME type for {:?}", path.display()))?
+        .mime_type()
+        .to_string())
 }
 
 #[cfg(test)]

@@ -28,21 +28,32 @@ pub async fn ocr_engine_for_model(
     page_iter_opts: &PageIterOptions,
     llm_opts: LlmOpts,
 ) -> Result<(Arc<dyn OcrFileEngine>, JoinWorker)> {
-    let (page_engine, worker) = match model.as_str() {
-        "pdftotext" => pdftotext::PdfToTextOcrEngine::new(page_iter_opts)?,
-        "tesseract" => tesseract::TesseractOcrEngine::new(page_iter_opts)?,
-        "textract" => {
-            textract::TextractOcrEngine::new(concurrency_limit, &llm_opts).await?
-        }
-        // Assume all other OCR models are LLMs.
-        _ => llm::LlmOcrEngine::new(concurrency_limit, prompt, model, llm_opts).await?,
+    // Helper function wrap an OcrPageEngine.
+    let split_pages = |(page_engine, worker)| {
+        (
+            Arc::new(SplitPagesOcrEngine::new(
+                page_iter_opts.clone(),
+                concurrency_limit,
+                include_page_breaks,
+                page_engine,
+            )) as Arc<dyn OcrFileEngine>,
+            worker,
+        )
     };
-    let file_engine: Arc<dyn OcrFileEngine> = Arc::new(SplitPagesOcrEngine::new(
-        page_iter_opts.clone(),
-        concurrency_limit,
-        include_page_breaks,
-        page_engine,
-    ));
 
+    // Choose our engine.
+    let (file_engine, worker) = match model.as_str() {
+        "pdftotext" => {
+            pdftotext::PdfToTextOcrEngine::new(include_page_breaks, page_iter_opts)?
+        }
+        "tesseract" => split_pages(tesseract::TesseractOcrEngine::new(page_iter_opts)?),
+        "textract" => split_pages(
+            textract::TextractOcrEngine::new(concurrency_limit, &llm_opts).await?,
+        ),
+        // Assume all other OCR models are LLMs.
+        _ => split_pages(
+            llm::LlmOcrEngine::new(concurrency_limit, prompt, model, llm_opts).await?,
+        ),
+    };
     Ok((file_engine, worker))
 }

@@ -16,8 +16,8 @@ use toml_span::{
 };
 
 use crate::{
-    async_utils::io::JsonObject, data_url::data_url, prelude::*, schema::Schema,
-    toml_utils::JsonValue,
+    async_utils::io::JsonObject, data_url::data_url, page_iter::get_mime_type,
+    prelude::*, schema::Schema, toml_utils::JsonValue,
 };
 
 /// Super-type of allowable prompt states. This is using the popular "type
@@ -210,21 +210,14 @@ fn image_data_url_helper(
         .ok_or_else(|| RenderErrorReason::InvalidParamType("string"))?;
 
     // Get the MIME type using `infer`.
-    let mime = infer::get_from_path(path)
-        .map_err(|err| {
-            RenderErrorReason::Other(format!(
-                "error inferring MIME type for {path}: {err}"
-            ))
-        })?
-        .ok_or_else(|| {
-            RenderErrorReason::Other(format!("unknown MIME type for {path}"))
-        })?;
+    let mime = get_mime_type(Path::new(path))
+        .map_err(|err| RenderErrorReason::Other(err.to_string()))?;
 
     // Base64 encode the file.
     let bytes = fs::read(path).map_err(|err| {
         RenderErrorReason::Other(format!("error reading {path}: {err}"))
     })?;
-    let data_url = data_url(mime.mime_type(), &bytes);
+    let data_url = data_url(&mime, &bytes);
     out.write(&data_url)?;
     Ok(())
 }
