@@ -15,7 +15,7 @@ use crate::prelude::*;
 use crate::async_utils::JoinWorker;
 use crate::rate_limit::{RateLimit, RateLimitPeriod};
 
-use super::{OcrEngine, OcrPageInput, OcrPageOutput};
+use super::page::{OcrPageEngine, OcrPageInput, OcrPageOutput};
 
 /// Our estimated page cost, based on the options we use.
 const ESTIMATED_PAGE_COST: f64 = 0.004;
@@ -38,7 +38,7 @@ impl TextractOcrEngine {
     pub async fn new(
         concurrency_limit: usize,
         llm_opts: &LlmOpts,
-    ) -> Result<(Arc<dyn OcrEngine>, JoinWorker)> {
+    ) -> Result<(Arc<dyn OcrPageEngine>, JoinWorker)> {
         let config = load_aws_config().await?;
         let client = aws_sdk_textract::Client::new(&config);
 
@@ -65,7 +65,7 @@ impl TextractOcrEngine {
 }
 
 #[async_trait]
-impl OcrEngine for TextractOcrEngine {
+impl OcrPageEngine for TextractOcrEngine {
     #[instrument(level = "debug", skip_all, fields(id = %input.id, page = %input.page_idx))]
     async fn ocr_page(&self, input: OcrPageInput) -> Result<OcrPageOutput> {
         // Rate limit the request.

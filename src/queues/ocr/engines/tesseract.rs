@@ -16,7 +16,7 @@ use crate::{
     prelude::*,
 };
 
-use super::{OcrEngine, OcrPageInput, OcrPageOutput};
+use super::page::{OcrPageEngine, OcrPageInput, OcrPageOutput};
 
 /// OCR engine wrapping the `tesseract` CLI tool.
 #[non_exhaustive]
@@ -27,7 +27,7 @@ impl TesseractOcrEngine {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(
         page_iter_opts: &PageIterOptions,
-    ) -> Result<(Arc<dyn OcrEngine>, JoinWorker)> {
+    ) -> Result<(Arc<dyn OcrPageEngine>, JoinWorker)> {
         if page_iter_opts.rasterize {
             Ok((Arc::new(Self {}), JoinWorker::noop()))
         } else {
@@ -37,7 +37,7 @@ impl TesseractOcrEngine {
 }
 
 #[async_trait]
-impl OcrEngine for TesseractOcrEngine {
+impl OcrPageEngine for TesseractOcrEngine {
     #[instrument(level = "debug", skip_all, fields(id = %input.id, page = %input.page_idx))]
     async fn ocr_page(&self, input: OcrPageInput) -> Result<OcrPageOutput> {
         let extension = mime_guess::get_mime_extensions_str(&input.page.mime_type)

@@ -1,58 +1,21 @@
 //! OCR engine interface.
 
-pub mod llm;
-pub mod pdftotext;
-pub mod tesseract;
-pub mod textract;
-
 use std::sync::Arc;
 
 use crate::{
-    async_utils::JoinWorker,
-    drivers::{LlmOpts, TokenUsage},
-    page_iter::{Page, PageIterOptions},
-    prelude::*,
+    async_utils::JoinWorker, drivers::LlmOpts, page_iter::PageIterOptions, prelude::*,
     prompt::ChatPrompt,
 };
 
-use super::OcrAnalysis;
+use self::{file::OcrFileEngine, split_pages::SplitPagesOcrEngine};
 
-/// Input record describing a file to OCR.
-pub struct OcrPageInput {
-    /// The ID of the document.
-    pub id: Value,
-
-    /// The index of the page within the document.
-    pub page_idx: usize,
-
-    /// The page to OCR.
-    pub page: Page,
-}
-
-/// Output record describing the result of OCRing a page.
-pub struct OcrPageOutput {
-    /// The text, if the OCR succeeded for this page.
-    pub text: Option<String>,
-
-    /// Any errors that occurred during OCR.
-    pub errors: Vec<String>,
-
-    /// Any defects in the page that make it difficult to OCR.
-    pub analysis: Option<OcrAnalysis>,
-
-    /// How much do we think we spent on this page?
-    pub estimated_cost: Option<f64>,
-
-    /// How many tokens did the LLM use?
-    pub token_usage: Option<TokenUsage>,
-}
-
-/// Interface to an OCR engine.
-#[async_trait]
-pub trait OcrEngine: Send + Sync + 'static {
-    /// OCR a single page.
-    async fn ocr_page(&self, input: OcrPageInput) -> Result<OcrPageOutput>;
-}
+pub mod file;
+pub mod llm;
+pub mod page;
+pub mod pdftotext;
+pub mod split_pages;
+pub mod tesseract;
+pub mod textract;
 
 /// Get the OCR engine for the specified model.
 ///
@@ -61,10 +24,11 @@ pub async fn ocr_engine_for_model(
     concurrency_limit: usize,
     prompt: ChatPrompt,
     model: String,
+    include_page_breaks: bool,
     page_iter_opts: &PageIterOptions,
     llm_opts: LlmOpts,
-) -> Result<(Arc<dyn OcrEngine>, JoinWorker)> {
-    let (ocr_engine, worker) = match model.as_str() {
+) -> Result<(Arc<dyn OcrFileEngine>, JoinWorker)> {
+    let (page_engine, worker) = match model.as_str() {
         "pdftotext" => pdftotext::PdfToTextOcrEngine::new(page_iter_opts)?,
         "tesseract" => tesseract::TesseractOcrEngine::new(page_iter_opts)?,
         "textract" => {
@@ -73,5 +37,12 @@ pub async fn ocr_engine_for_model(
         // Assume all other OCR models are LLMs.
         _ => llm::LlmOcrEngine::new(concurrency_limit, prompt, model, llm_opts).await?,
     };
-    Ok((ocr_engine, worker))
+    let file_engine: Arc<dyn OcrFileEngine> = Arc::new(SplitPagesOcrEngine::new(
+        page_iter_opts.clone(),
+        concurrency_limit,
+        include_page_breaks,
+        page_engine,
+    ));
+
+    Ok((file_engine, worker))
 }

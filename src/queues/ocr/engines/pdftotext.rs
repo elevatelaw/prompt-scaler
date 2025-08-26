@@ -14,7 +14,7 @@ use crate::{
     prelude::*,
 };
 
-use super::{OcrEngine, OcrPageInput, OcrPageOutput};
+use super::page::{OcrPageEngine, OcrPageInput, OcrPageOutput};
 
 /// "OCR" engine wrapping the `pdftotext` CLI tool from `poppler-utils`.
 ///
@@ -28,7 +28,7 @@ impl PdfToTextOcrEngine {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(
         page_iter_opts: &PageIterOptions,
-    ) -> Result<(Arc<dyn OcrEngine>, JoinWorker)> {
+    ) -> Result<(Arc<dyn OcrPageEngine>, JoinWorker)> {
         if page_iter_opts.rasterize {
             Err(anyhow!("pdftotext does not work with --rasterize"))
         } else {
@@ -38,7 +38,7 @@ impl PdfToTextOcrEngine {
 }
 
 #[async_trait]
-impl OcrEngine for PdfToTextOcrEngine {
+impl OcrPageEngine for PdfToTextOcrEngine {
     #[instrument(level = "debug", skip_all, fields(id = %input.id, page = %input.page_idx))]
     async fn ocr_page(&self, input: OcrPageInput) -> Result<OcrPageOutput> {
         // Fail all non-PDF files immediately.

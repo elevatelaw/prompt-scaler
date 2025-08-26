@@ -20,7 +20,7 @@ use crate::{
     toml_utils::from_toml_str,
 };
 
-use super::{OcrEngine, OcrPageInput, OcrPageOutput};
+use super::page::{OcrPageEngine, OcrPageInput, OcrPageOutput};
 
 /// The default OCR prompt, used if no prompt is provided.
 const DEFAULT_OCR_PROMPT: &str = include_str!("llm/default_ocr_prompt.toml");
@@ -62,7 +62,7 @@ impl LlmOcrEngine {
         mut prompt: ChatPrompt,
         model: String,
         llm_opts: LlmOpts,
-    ) -> Result<(Arc<dyn OcrEngine>, JoinWorker)> {
+    ) -> Result<(Arc<dyn OcrPageEngine>, JoinWorker)> {
         // Add our schema to our prompt.
         prompt.response_schema = Schema::from_type::<PageChatResponse>();
 
@@ -75,7 +75,7 @@ impl LlmOcrEngine {
 }
 
 #[async_trait]
-impl OcrEngine for LlmOcrEngine {
+impl OcrPageEngine for LlmOcrEngine {
     #[instrument(level = "debug", skip_all, fields(id = %input.id, page = %input.page_idx))]
     async fn ocr_page(&self, mut input: OcrPageInput) -> Result<OcrPageOutput> {
         // Get a chat handle.
