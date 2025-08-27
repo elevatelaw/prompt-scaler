@@ -19,12 +19,12 @@ use crate::{
 /// This will miss any "non-searchable" text in a PDF, but sometimes you just
 /// want cheap and fast.
 #[non_exhaustive]
-pub struct PdfToTextOcrEngine {
+pub struct PdfToTextOcrFileEngine {
     include_page_breaks: bool,
     page_iter_opts: PageIterOptions,
 }
 
-impl PdfToTextOcrEngine {
+impl PdfToTextOcrFileEngine {
     /// Create a new `pdftotext` engine.
     #[allow(clippy::new_ret_no_self)]
     pub fn new(
@@ -46,7 +46,7 @@ impl PdfToTextOcrEngine {
 }
 
 #[async_trait]
-impl OcrFileEngine for PdfToTextOcrEngine {
+impl OcrFileEngine for PdfToTextOcrFileEngine {
     #[instrument(level = "debug", skip_all, fields(id = %ocr_input.id, page = %ocr_input.data.path.display()))]
     async fn ocr_file(
         &self,

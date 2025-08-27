@@ -44,15 +44,18 @@ pub async fn ocr_engine_for_model(
     // Choose our engine.
     let (file_engine, worker) = match model.as_str() {
         "pdftotext" => {
-            pdftotext::PdfToTextOcrEngine::new(include_page_breaks, page_iter_opts)?
+            pdftotext::PdfToTextOcrFileEngine::new(include_page_breaks, page_iter_opts)?
         }
-        "tesseract" => split_pages(tesseract::TesseractOcrEngine::new(page_iter_opts)?),
+        "tesseract" => {
+            split_pages(tesseract::TesseractOcrPageEngine::new(page_iter_opts)?)
+        }
         "textract" => split_pages(
-            textract::TextractOcrEngine::new(concurrency_limit, &llm_opts).await?,
+            textract::TextractOcrPageEngine::new(concurrency_limit, &llm_opts).await?,
         ),
         // Assume all other OCR models are LLMs.
         _ => split_pages(
-            llm::LlmOcrEngine::new(concurrency_limit, prompt, model, llm_opts).await?,
+            llm::LlmOcrPageEngine::new(concurrency_limit, prompt, model, llm_opts)
+                .await?,
         ),
     };
     Ok((file_engine, worker))

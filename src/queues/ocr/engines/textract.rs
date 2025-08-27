@@ -21,8 +21,11 @@ use super::page::{OcrPageEngine, OcrPageInput, OcrPageOutput};
 /// Our estimated page cost, based on the options we use.
 const ESTIMATED_PAGE_COST: f64 = 0.004;
 
-/// OCR engine wrapping the AWS Textract API.
-pub struct TextractOcrEngine {
+/// OCR engine wrapping the synchronous AWS Textract `analyze_document` API.
+///
+/// This needs to be a page engine because Textract does not support multi-page
+/// PDFs in this mode.
+pub struct TextractOcrPageEngine {
     /// AWS Textract client.
     client: aws_sdk_textract::Client,
 
@@ -33,7 +36,7 @@ pub struct TextractOcrEngine {
     debug: bool,
 }
 
-impl TextractOcrEngine {
+impl TextractOcrPageEngine {
     /// Create a new `textract` engine.
     #[allow(clippy::new_ret_no_self)]
     pub async fn new(
@@ -66,7 +69,7 @@ impl TextractOcrEngine {
 }
 
 #[async_trait]
-impl OcrPageEngine for TextractOcrEngine {
+impl OcrPageEngine for TextractOcrPageEngine {
     #[instrument(level = "debug", skip_all, fields(id = %input.id, page = %input.page_idx))]
     async fn ocr_page(&self, input: OcrPageInput) -> Result<OcrPageOutput> {
         // Rate limit the request.
@@ -109,20 +112,11 @@ impl OcrPageEngine for TextractOcrEngine {
             Ok(document) => {
                 trace!("Document response: {document:#?}");
 
-                // Build a table of blocks by ID.
-                let mut blocks_by_id = HashMap::new();
-                for block in document.blocks() {
-                    let Some(block_id) = block.id() else {
-                        continue;
-                    };
-                    blocks_by_id.insert(block_id, block);
-                }
-
                 // Create our output state and get our text.
-                let mut output = OutputState::new(self.debug, blocks_by_id);
-                output.write_analyzed_document(&document)?;
+                let mut output = OutputState::new(self.debug, &document);
+                output.write_analyzed_document()?;
                 let text = output.output;
-                debug!(%text, "Extraced text");
+                debug!(%text, "Extracted text");
                 Ok(OcrPageOutput {
                     text: Some(text),
                     errors,
@@ -148,6 +142,9 @@ struct OutputState<'a> {
     /// Should we output debug information?
     debug: bool,
 
+    /// Our document.
+    document: &'a AnalyzeDocumentOutput,
+
     /// Blocks by ID. Used to look up child blocks and recurse over them.
     blocks_by_id: HashMap<&'a str, &'a Block>,
 
@@ -157,10 +154,20 @@ struct OutputState<'a> {
 
 impl<'a> OutputState<'a> {
     /// Create a new output state.
-    fn new(debug: bool, blocks_by_id: HashMap<&'a str, &'a Block>) -> Self {
+    fn new(debug: bool, document: &'a AnalyzeDocumentOutput) -> Self {
+        // Build a table of blocks by ID.
+        let mut blocks_by_id = HashMap::new();
+        for block in document.blocks() {
+            let Some(block_id) = block.id() else {
+                continue;
+            };
+            blocks_by_id.insert(block_id, block);
+        }
+
         Self {
             output: String::new(),
             debug,
+            document,
             blocks_by_id,
             printed_block_ids: HashSet::new(),
         }
@@ -177,12 +184,9 @@ impl<'a> OutputState<'a> {
     }
 
     /// Write an analyzed document.
-    fn write_analyzed_document<'d: 'a>(
-        &mut self,
-        document: &'d AnalyzeDocumentOutput,
-    ) -> Result<()> {
+    fn write_analyzed_document<'d: 'a>(&mut self) -> Result<()> {
         // Iterate over layout blocks and extract their child text.
-        for block in document.blocks() {
+        for block in self.document.blocks() {
             // We only want layout blocks with text, which should
             // contain all the text and come in a reasonable order.
             trace!(?block, "Textract layout block");

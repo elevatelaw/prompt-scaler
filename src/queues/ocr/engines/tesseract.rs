@@ -20,9 +20,9 @@ use super::page::{OcrPageEngine, OcrPageInput, OcrPageOutput};
 
 /// OCR engine wrapping the `tesseract` CLI tool.
 #[non_exhaustive]
-pub struct TesseractOcrEngine {}
+pub struct TesseractOcrPageEngine {}
 
-impl TesseractOcrEngine {
+impl TesseractOcrPageEngine {
     /// Create a new `tesseract` engine.
     #[allow(clippy::new_ret_no_self)]
     pub fn new(
@@ -37,7 +37,7 @@ impl TesseractOcrEngine {
 }
 
 #[async_trait]
-impl OcrPageEngine for TesseractOcrEngine {
+impl OcrPageEngine for TesseractOcrPageEngine {
     #[instrument(level = "debug", skip_all, fields(id = %input.id, page = %input.page_idx))]
     async fn ocr_page(&self, input: OcrPageInput) -> Result<OcrPageOutput> {
         let extension = mime_guess::get_mime_extensions_str(&input.page.mime_type)

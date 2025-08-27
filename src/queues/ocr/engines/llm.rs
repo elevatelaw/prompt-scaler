@@ -49,12 +49,12 @@ struct PageChatResponse {
 }
 
 /// An LLM-based OCR engine.
-pub struct LlmOcrEngine {
+pub struct LlmOcrPageEngine {
     /// Pointer to the work queue that talks to the LLM.
     chat_queue: WorkQueue<ChatInput, ChatOutput>,
 }
 
-impl LlmOcrEngine {
+impl LlmOcrPageEngine {
     /// Create a new LLM-based OCR engine.
     #[allow(clippy::new_ret_no_self)]
     pub async fn new(
@@ -75,7 +75,7 @@ impl LlmOcrEngine {
 }
 
 #[async_trait]
-impl OcrPageEngine for LlmOcrEngine {
+impl OcrPageEngine for LlmOcrPageEngine {
     #[instrument(level = "debug", skip_all, fields(id = %input.id, page = %input.page_idx))]
     async fn ocr_page(&self, mut input: OcrPageInput) -> Result<OcrPageOutput> {
         // Get a chat handle.
