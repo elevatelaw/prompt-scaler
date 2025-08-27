@@ -52,6 +52,9 @@ pub async fn ocr_engine_for_model(
         "textract" => split_pages(
             textract::TextractOcrPageEngine::new(concurrency_limit, &llm_opts).await?,
         ),
+        "textract-async" => {
+            textract::TextractOcrFileEngine::new(concurrency_limit, &llm_opts).await?
+        }
         // Assume all other OCR models are LLMs.
         _ => split_pages(
             llm::LlmOcrPageEngine::new(concurrency_limit, prompt, model, llm_opts)

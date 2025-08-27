@@ -12,6 +12,9 @@
 use std::process::Command;
 
 use assert_cmd::prelude::*;
+use csv::{ReaderBuilder, WriterBuilder};
+use serde::{Deserialize, Serialize};
+use tempfile::NamedTempFile;
 
 /// Fake API key for local LiteLLM instance.
 static LITELLM_API_KEY: &str = "sk-1234";
@@ -345,6 +348,58 @@ fn test_ocr_textract() {
         .arg("3")
         .arg("--model")
         .arg("textract")
+        .assert()
+        .success();
+}
+
+#[test]
+#[ignore = "Slightly expensive and needs AWS credentials + files in bucket"]
+fn test_ocr_textract_async() {
+    dotenvy::dotenv().ok();
+
+    // Prepare to make a temp copy of input.csv. NamedTempFile can theoretically
+    // be insecure on Linux and Unix-like systems if a temporary file cleaner is
+    // active and deletes the file before we're done with it. Since this a short
+    // test, written in a fairly secure programming language, that OCRs things
+    // in S3 buckets, the risks are extremely minimal.
+    let mut reader = ReaderBuilder::new()
+        .from_path("tests/fixtures/ocr/input.csv")
+        .expect("Failed to read input.csv");
+    let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+    let mut writer = WriterBuilder::new()
+        .from_path(temp_file.path())
+        .expect("Failed to create temp file writer");
+
+    // Row format.
+    #[derive(Deserialize, Serialize)]
+    struct Row {
+        id: String,
+        path: String,
+    }
+
+    // Prepend paths with our S3 locations.
+    let mut s3_location = std::env::var("S3_TEST_FIXTURE_LOCATION")
+        .expect("S3_TEST_FIXTURE_LOCATION environment variable not set");
+    if !s3_location.ends_with('/') {
+        s3_location.push('/');
+    }
+    for row in reader.deserialize::<Row>() {
+        let mut row = row.expect("Failed to read record");
+        row.path = format!("{}{}", s3_location, row.path);
+        writer.serialize(&row).expect("Failed to write record");
+    }
+
+    // Flush our writer.
+    writer.flush().expect("Failed to flush writer");
+    drop(writer);
+
+    cmd()
+        .arg("ocr")
+        .arg(temp_file.path())
+        .arg("--jobs")
+        .arg("2")
+        .arg("--model")
+        .arg("textract-async")
         .assert()
         .success();
 }

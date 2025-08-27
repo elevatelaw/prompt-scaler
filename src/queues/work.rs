@@ -121,6 +121,18 @@ impl<T> WorkOutput<T>
 where
     T: Clone + Serialize + Send + 'static,
 {
+    /// Create a new failed output record.
+    pub fn new_failed(id: Value, errors: Vec<String>, data: T) -> Self {
+        Self {
+            id,
+            status: WorkStatus::Failed,
+            estimated_cost: None,
+            token_usage: None,
+            errors,
+            data,
+        }
+    }
+
     /// Convert from the output type to a JSON value.
     pub fn to_json(&self) -> Result<Value> {
         serde_json::to_value::<Self>((*self).to_owned())

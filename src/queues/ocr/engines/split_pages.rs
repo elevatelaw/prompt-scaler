@@ -57,7 +57,7 @@ impl OcrFileEngine for SplitPagesOcrEngine {
         // Create a page stream, using BlockingIterStream to avoid blocking the
         // async executor with slow PDF processing.
         let page_iter = PageIter::from_path(
-            &ocr_input.data.path,
+            ocr_input.data.path(),
             &self.page_iter_opts,
             ocr_input.data.password.as_deref(),
         )

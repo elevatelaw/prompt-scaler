@@ -39,6 +39,13 @@ pub struct ChatOutput {
     pub response: Option<Value>,
 }
 
+impl ChatOutput {
+    /// Create an empty chat output record for use when an error occurs.
+    pub fn empty_for_error() -> Self {
+        Self { response: None }
+    }
+}
+
 impl WorkOutput<ChatOutput> {
     /// Create a new output record from a [`ResolvedResult`].
     fn from_resolved_result(
@@ -67,14 +74,11 @@ impl WorkOutput<ChatOutput> {
                     response: Some(response),
                 },
             },
-            ResolvedResult::Fatal { error, .. } => WorkOutput {
+            ResolvedResult::Fatal { error, .. } => WorkOutput::new_failed(
                 id,
-                status: WorkStatus::Failed,
-                errors: vec![full_err(error)],
-                estimated_cost: None,
-                token_usage: None,
-                data: ChatOutput { response: None },
-            },
+                vec![full_err(error)],
+                ChatOutput::empty_for_error(),
+            ),
             ResolvedResult::Recovered {
                 output:
                     ChatCompletionResponse {
@@ -102,18 +106,15 @@ impl WorkOutput<ChatOutput> {
                 retry_errors,
                 fatal_error,
                 ..
-            } => WorkOutput {
+            } => WorkOutput::new_failed(
                 id,
-                status: WorkStatus::Failed,
-                errors: retry_errors
+                retry_errors
                     .into_iter()
                     .map(full_err)
                     .chain(iter::once(full_err(fatal_error)))
                     .collect(),
-                estimated_cost: None,
-                token_usage: None,
-                data: ChatOutput { response: None },
-            },
+                ChatOutput::empty_for_error(),
+            ),
         }
     }
 }

@@ -26,11 +26,18 @@ use crate::{
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct OcrInput {
     /// The path to the PDF file.
-    pub path: PathBuf,
+    pub path: String,
 
     /// The password to decrypt the PDF file, if any.
     #[serde(default)]
     pub password: Option<String>,
+}
+
+impl OcrInput {
+    /// Get `path` as a `&Path`.
+    pub fn path(&self) -> &Path {
+        Path::new(&self.path)
+    }
 }
 
 /// An output record describing an OCRed PDF.
@@ -38,7 +45,7 @@ pub struct OcrInput {
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct OcrOutput {
     /// The input path.
-    pub path: PathBuf,
+    pub path: String,
 
     /// The text extracted from the PDF. If errors occur on specific pages,
     /// those pages will be replaced with `**COULD_NOT_OCR_PAGE**`.
@@ -50,6 +57,19 @@ pub struct OcrOutput {
     /// Any defects in the page that make it difficult to OCR.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub analysis: Option<OcrAnalysis>,
+}
+
+impl OcrOutput {
+    /// Create an empty output record for use when an error
+    /// occurs.
+    pub fn empty_for_error(path: String) -> Self {
+        Self {
+            path,
+            text: None,
+            page_count: None,
+            analysis: None,
+        }
+    }
 }
 
 impl WorkOutput<OcrOutput> {
@@ -102,7 +122,7 @@ pub struct FlatOcrOutput {
     pub errors: Option<String>,
 
     /// The path to the PDF file.
-    pub path: PathBuf,
+    pub path: String,
 
     /// The text extracted from the PDF. If errors occur on specific pages,
     /// those pages will be replaced with `**COULD_NOT_OCR_PAGE**`.
@@ -267,19 +287,11 @@ pub async fn ocr_file(
         Ok(output) => Ok(output),
         Err(err) => {
             let errors = vec![format!("{:?}", err)];
-            Ok(WorkOutput {
+            Ok(WorkOutput::new_failed(
                 id,
-                status: WorkStatus::Failed,
                 errors,
-                estimated_cost: None,
-                token_usage: None,
-                data: OcrOutput {
-                    path,
-                    text: None,
-                    page_count: None,
-                    analysis: None,
-                },
-            })
+                OcrOutput::empty_for_error(path),
+            ))
         }
     }
 }

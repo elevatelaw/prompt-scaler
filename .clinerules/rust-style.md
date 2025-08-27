@@ -22,3 +22,5 @@ We use `tracing`. You may use `debug!` and `trace!`. Use `#[instrument(level = .
 ## Philosophy
 
 We strongly encourage correctness.
+
+Avoid using `as` when there's a better alternative. Always use `TYPE::from` or `TYPE::try_from` to convert numeric types.

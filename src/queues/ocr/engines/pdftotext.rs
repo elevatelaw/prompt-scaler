@@ -47,27 +47,19 @@ impl PdfToTextOcrFileEngine {
 
 #[async_trait]
 impl OcrFileEngine for PdfToTextOcrFileEngine {
-    #[instrument(level = "debug", skip_all, fields(id = %ocr_input.id, page = %ocr_input.data.path.display()))]
+    #[instrument(level = "debug", skip_all, fields(id = %ocr_input.id, page = %ocr_input.data.path))]
     async fn ocr_file(
         &self,
         ocr_input: WorkInput<OcrInput>,
     ) -> Result<WorkOutput<OcrOutput>> {
         // Fail all non-PDF files immediately.
-        let mime_type = get_mime_type(&ocr_input.data.path)?;
+        let mime_type = get_mime_type(ocr_input.data.path())?;
         if mime_type != "application/pdf" {
-            return Ok(WorkOutput {
-                id: ocr_input.id,
-                status: WorkStatus::Failed,
-                estimated_cost: None,
-                token_usage: None,
-                errors: vec!["pdftotext only works with PDFs".to_string()],
-                data: OcrOutput {
-                    path: ocr_input.data.path.clone(),
-                    text: None,
-                    page_count: None,
-                    analysis: None,
-                },
-            });
+            return Ok(WorkOutput::new_failed(
+                ocr_input.id,
+                vec!["pdftotext only works with PDFs".to_string()],
+                OcrOutput::empty_for_error(ocr_input.data.path.clone()),
+            ));
         }
 
         // Run pdftotext on the input file.

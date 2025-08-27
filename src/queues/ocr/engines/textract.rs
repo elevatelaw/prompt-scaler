@@ -4,10 +4,12 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::Arc;
 
-use aws_sdk_textract::operation::analyze_document::AnalyzeDocumentOutput;
-use aws_sdk_textract::types::{Block, FeatureType, RelationshipType};
+use aws_sdk_textract::types::{
+    Block, DocumentLocation, FeatureType, JobStatus, RelationshipType, S3Object,
+};
 use aws_sdk_textract::{primitives::Blob, types::BlockType};
 use leaky_bucket::RateLimiter;
+use tokio::time::{Duration, sleep};
 
 use crate::aws::load_aws_config;
 use crate::drivers::LlmOpts;
@@ -16,10 +18,33 @@ use crate::prelude::*;
 use crate::async_utils::JoinWorker;
 use crate::rate_limit::{RateLimit, RateLimitPeriod};
 
+use super::file::OcrFileEngine;
 use super::page::{OcrPageEngine, OcrPageInput, OcrPageOutput};
+use crate::queues::ocr::{OcrInput, OcrOutput};
+use crate::queues::work::{WorkInput, WorkOutput, WorkStatus};
 
 /// Our estimated page cost, based on the options we use.
 const ESTIMATED_PAGE_COST: f64 = 0.004;
+
+/// Create a Textract client.
+async fn create_textract_client() -> Result<aws_sdk_textract::Client> {
+    let config = load_aws_config().await?;
+    Ok(aws_sdk_textract::Client::new(&config))
+}
+
+/// Create a rate limiter, defaulting as best we can.
+fn create_rate_limiter(concurrency_limit: usize, llm_opts: &LlmOpts) -> RateLimiter {
+    // If we don't have a rate limit, set one based on the concurrency
+    // limit.
+    //
+    // TODO: We may want to remove the default rate limit, but that would be
+    // a breaking change.
+    let rate_limit = llm_opts
+        .rate_limit
+        .clone()
+        .unwrap_or_else(|| RateLimit::new(concurrency_limit, RateLimitPeriod::Second));
+    rate_limit.to_rate_limiter()
+}
 
 /// OCR engine wrapping the synchronous AWS Textract `analyze_document` API.
 ///
@@ -31,9 +56,6 @@ pub struct TextractOcrPageEngine {
 
     /// A rate limiter to avoid hitting API limits.
     rate_limiter: RateLimiter,
-
-    /// Includes layout debug information in the output.
-    debug: bool,
 }
 
 impl TextractOcrPageEngine {
@@ -43,25 +65,13 @@ impl TextractOcrPageEngine {
         concurrency_limit: usize,
         llm_opts: &LlmOpts,
     ) -> Result<(Arc<dyn OcrPageEngine>, JoinWorker)> {
-        let config = load_aws_config().await?;
-        let client = aws_sdk_textract::Client::new(&config);
+        let client = create_textract_client().await?;
+        let rate_limiter = create_rate_limiter(concurrency_limit, llm_opts);
 
-        // If we don't have a rate limit, set one based on the concurrency
-        // limit.
-        //
-        // TODO: We may want to remove the default rate limit, but that would be
-        // a breaking change.
-        let rate_limit = llm_opts.rate_limit.clone().unwrap_or_else(|| {
-            RateLimit::new(concurrency_limit, RateLimitPeriod::Second)
-        });
-        let rate_limiter = rate_limit.to_rate_limiter();
-
-        let debug = env::var("TEXTRACT_DEBUG").is_ok();
         Ok((
             Arc::new(Self {
                 client,
                 rate_limiter,
-                debug,
             }),
             JoinWorker::noop(),
         ))
@@ -74,9 +84,6 @@ impl OcrPageEngine for TextractOcrPageEngine {
     async fn ocr_page(&self, input: OcrPageInput) -> Result<OcrPageOutput> {
         // Rate limit the request.
         self.rate_limiter.acquire_one().await;
-
-        // Keep track of errors.
-        let mut errors = Vec::new();
 
         // TODO: We may need to convert GIF and WEBP to a supported format.
 
@@ -98,12 +105,9 @@ impl OcrPageEngine for TextractOcrPageEngine {
             .await;
         match response {
             Err(e) => {
-                let err = format!("AWS Textract error: {e:?}");
-                error!("{err}");
-                errors.push(err);
                 return Ok(OcrPageOutput {
                     text: None,
-                    errors,
+                    errors: vec![format!("AWS Textract error: {e:?}")],
                     analysis: None,
                     estimated_cost: None,
                     token_usage: None,
@@ -113,13 +117,13 @@ impl OcrPageEngine for TextractOcrPageEngine {
                 trace!("Document response: {document:#?}");
 
                 // Create our output state and get our text.
-                let mut output = OutputState::new(self.debug, &document);
+                let mut output = OutputState::new(document.blocks());
                 output.write_analyzed_document()?;
                 let text = output.output;
                 debug!(%text, "Extracted text");
                 Ok(OcrPageOutput {
                     text: Some(text),
-                    errors,
+                    errors: vec![],
                     analysis: None,
                     estimated_cost: Some(ESTIMATED_PAGE_COST),
                     token_usage: None,
@@ -127,6 +131,190 @@ impl OcrPageEngine for TextractOcrPageEngine {
             }
         }
     }
+}
+
+/// OCR engine wrapping the asynchronous AWS Textract `start_document_analysis`
+/// and `get_document_analysis` APIs.
+///
+/// For now, this can only operate on files stored in S3. All passed-in file
+/// paths must be valid S3 URIs.
+pub struct TextractOcrFileEngine {
+    /// AWS Textract client.
+    client: aws_sdk_textract::Client,
+
+    /// A rate limiter to avoid hitting API limits.
+    rate_limiter: RateLimiter,
+}
+
+impl TextractOcrFileEngine {
+    /// Create a new `textract` engine.
+    #[allow(clippy::new_ret_no_self)]
+    pub async fn new(
+        concurrency_limit: usize,
+        llm_opts: &LlmOpts,
+    ) -> Result<(Arc<dyn OcrFileEngine>, JoinWorker)> {
+        let client = create_textract_client().await?;
+        let rate_limiter = create_rate_limiter(concurrency_limit, llm_opts);
+
+        Ok((
+            Arc::new(Self {
+                client,
+                rate_limiter,
+            }) as Arc<dyn OcrFileEngine>,
+            JoinWorker::noop(),
+        ))
+    }
+}
+
+#[async_trait]
+impl OcrFileEngine for TextractOcrFileEngine {
+    #[instrument(level = "debug", skip_all, fields(id = %ocr_input.id))]
+    async fn ocr_file(
+        &self,
+        ocr_input: WorkInput<OcrInput>,
+    ) -> Result<WorkOutput<OcrOutput>> {
+        let id = ocr_input.id.clone();
+
+        // Rate limit the request.
+        self.rate_limiter.acquire_one().await;
+
+        // Parse the S3 URI.
+        let s3_uri = &ocr_input.data.path;
+        let (bucket, key) = parse_s3_uri(s3_uri)
+            .with_context(|| format!("Failed to parse S3 URI: {}", s3_uri))?;
+
+        // Start document analysis.
+        //
+        // TODO: Integrate crate::retry support here, and maybe also rate limit
+        // error handling for automatic backoff.
+        let document_location = DocumentLocation::builder()
+            .s3_object(
+                S3Object::builder()
+                    .bucket(bucket.clone())
+                    .name(key.clone())
+                    .build(),
+            )
+            .build();
+        let start_response = self
+            .client
+            .start_document_analysis()
+            .document_location(document_location)
+            .client_request_token(uuid::Uuid::new_v4())
+            .set_feature_types(Some(vec![FeatureType::Layout]))
+            .send()
+            .await?;
+
+        let job_id = start_response
+            .job_id()
+            .ok_or_else(|| anyhow!("No job ID returned from start_document_analysis"))?;
+
+        // Poll for results.
+        //
+        // TODO: Integrate crate::retry support here.
+        let max_retries = 60; // 5 minutes max with 5-second intervals
+        let mut retry_count = 0;
+        let (status, response) = loop {
+            let response = self
+                .client
+                .get_document_analysis()
+                .job_id(job_id)
+                .send()
+                .await?;
+
+            if let Some(status) = response.job_status() {
+                match status {
+                    JobStatus::InProgress => {
+                        debug!("Job {} still in progress", job_id);
+                        retry_count += 1;
+                        if retry_count >= max_retries {
+                            return Ok(WorkOutput::new_failed(
+                                id,
+                                vec![format!(
+                                    "Textract job {} timed out after {} retries",
+                                    job_id, max_retries
+                                )],
+                                OcrOutput::empty_for_error(ocr_input.data.path),
+                            ));
+                        } else {
+                            sleep(Duration::from_secs(5)).await;
+                            continue;
+                        }
+                    }
+                    JobStatus::Succeeded => {
+                        break (WorkStatus::Ok, response);
+                    }
+                    JobStatus::Failed => {
+                        return Ok(WorkOutput::new_failed(
+                            id,
+                            vec![format!("Textract job {} failed", job_id)],
+                            OcrOutput::empty_for_error(ocr_input.data.path),
+                        ));
+                    }
+                    JobStatus::PartialSuccess => {
+                        warn!("Textract job {} completed with partial success", job_id);
+                        break (WorkStatus::Incomplete, response);
+                    }
+                    _ => {
+                        return Ok(WorkOutput::new_failed(
+                            id,
+                            vec![format!(
+                                "Textract job {} returned unknown status",
+                                job_id
+                            )],
+                            OcrOutput::empty_for_error(ocr_input.data.path),
+                        ));
+                    }
+                }
+            } else {
+                return Ok(WorkOutput::new_failed(
+                    id,
+                    vec![format!("No job status in response for job {}", job_id)],
+                    OcrOutput::empty_for_error(ocr_input.data.path),
+                ));
+            }
+        };
+
+        trace!("Document analysis response: {:#?}", response);
+
+        // Create our output state and get our text.
+        let mut output = OutputState::new(response.blocks());
+        output.write_analyzed_document()?;
+        let text = output.output;
+        debug!(%text, "Extracted text");
+
+        // Calculate estimated cost based on pages.
+        let page_count = response
+            .document_metadata()
+            .and_then(|metadata| metadata.pages())
+            .unwrap_or(0);
+        let estimated_cost = ESTIMATED_PAGE_COST * f64::from(page_count);
+
+        Ok(WorkOutput {
+            id,
+            status,
+            errors: vec![],
+            estimated_cost: Some(estimated_cost),
+            token_usage: None,
+            data: OcrOutput {
+                path: ocr_input.data.path,
+                text: Some(text),
+                page_count: usize::try_from(page_count).ok(),
+                analysis: None,
+            },
+        })
+    }
+}
+
+/// Parse an S3 URI into bucket and key.
+fn parse_s3_uri(uri: &str) -> Result<(String, String)> {
+    let uri = uri
+        .strip_prefix("s3://")
+        .ok_or_else(|| anyhow!("S3 URI must start with s3://"))?;
+    let parts: Vec<&str> = uri.splitn(2, '/').collect();
+    if parts.len() != 2 {
+        return Err(anyhow!("S3 URI must be in the format s3://bucket/key"));
+    }
+    Ok((parts[0].to_string(), parts[1].to_string()))
 }
 
 /// Our output state.
@@ -143,7 +331,7 @@ struct OutputState<'a> {
     debug: bool,
 
     /// Our document.
-    document: &'a AnalyzeDocumentOutput,
+    all_blocks: &'a [Block],
 
     /// Blocks by ID. Used to look up child blocks and recurse over them.
     blocks_by_id: HashMap<&'a str, &'a Block>,
@@ -154,20 +342,22 @@ struct OutputState<'a> {
 
 impl<'a> OutputState<'a> {
     /// Create a new output state.
-    fn new(debug: bool, document: &'a AnalyzeDocumentOutput) -> Self {
+    fn new(all_blocks: &'a [Block]) -> Self {
         // Build a table of blocks by ID.
         let mut blocks_by_id = HashMap::new();
-        for block in document.blocks() {
+        for block in all_blocks {
             let Some(block_id) = block.id() else {
                 continue;
             };
             blocks_by_id.insert(block_id, block);
         }
 
+        let debug = env::var("TEXTRACT_DEBUG").is_ok();
+
         Self {
             output: String::new(),
             debug,
-            document,
+            all_blocks,
             blocks_by_id,
             printed_block_ids: HashSet::new(),
         }
@@ -186,7 +376,7 @@ impl<'a> OutputState<'a> {
     /// Write an analyzed document.
     fn write_analyzed_document<'d: 'a>(&mut self) -> Result<()> {
         // Iterate over layout blocks and extract their child text.
-        for block in self.document.blocks() {
+        for block in self.all_blocks {
             // We only want layout blocks with text, which should
             // contain all the text and come in a reasonable order.
             trace!(?block, "Textract layout block");
