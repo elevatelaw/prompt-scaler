@@ -240,13 +240,10 @@ impl OcrFileEngine for TextractOcrFileEngine {
                         debug!("Job {} still in progress", job_id);
                         retry_count += 1;
                         if retry_count >= max_retries {
-                            return Ok(WorkOutput::new_failed(
-                                id,
-                                vec![format!(
-                                    "Textract job {} timed out after {} retries",
-                                    job_id, max_retries
-                                )],
-                                OcrOutput::empty_for_error(ocr_input.data.path),
+                            return Err(anyhow!(
+                                "Textract job {} timed out after {} retries",
+                                job_id,
+                                max_retries
                             ));
                         } else {
                             sleep(Duration::from_secs(5)).await;
@@ -257,33 +254,21 @@ impl OcrFileEngine for TextractOcrFileEngine {
                         break (WorkStatus::Ok, response);
                     }
                     JobStatus::Failed => {
-                        return Ok(WorkOutput::new_failed(
-                            id,
-                            vec![format!("Textract job {} failed", job_id)],
-                            OcrOutput::empty_for_error(ocr_input.data.path),
-                        ));
+                        return Err(anyhow!("Textract job {} failed", job_id));
                     }
                     JobStatus::PartialSuccess => {
                         warn!("Textract job {} completed with partial success", job_id);
                         break (WorkStatus::Incomplete, response);
                     }
                     _ => {
-                        return Ok(WorkOutput::new_failed(
-                            id,
-                            vec![format!(
-                                "Textract job {} returned unknown status",
-                                job_id
-                            )],
-                            OcrOutput::empty_for_error(ocr_input.data.path),
+                        return Err(anyhow!(
+                            "Textract job {} returned unknown status",
+                            job_id
                         ));
                     }
                 }
             } else {
-                return Ok(WorkOutput::new_failed(
-                    id,
-                    vec![format!("No job status in response for job {}", job_id)],
-                    OcrOutput::empty_for_error(ocr_input.data.path),
-                ));
+                return Err(anyhow!("No job status in response for job {}", job_id));
             }
         };
 
