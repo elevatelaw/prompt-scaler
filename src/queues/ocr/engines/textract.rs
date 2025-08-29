@@ -13,6 +13,7 @@ use tokio::time::{Duration, sleep};
 
 use crate::aws::load_aws_config;
 use crate::drivers::LlmOpts;
+use crate::page_iter::PageIterOptions;
 use crate::prelude::*;
 
 use crate::async_utils::JoinWorker;
@@ -117,7 +118,7 @@ impl OcrPageEngine for TextractOcrPageEngine {
                 trace!("Document response: {document:#?}");
 
                 // Create our output state and get our text.
-                let mut output = OutputState::new(document.blocks());
+                let mut output = OutputState::new(document.blocks(), false);
                 output.write_analyzed_document()?;
                 let text = output.output;
                 debug!(%text, "Extracted text");
@@ -139,6 +140,9 @@ impl OcrPageEngine for TextractOcrPageEngine {
 /// For now, this can only operate on files stored in S3. All passed-in file
 /// paths must be valid S3 URIs.
 pub struct TextractOcrFileEngine {
+    /// Should we include page breaks between pages using a form-feed character?
+    include_page_breaks: bool,
+
     /// AWS Textract client.
     client: aws_sdk_textract::Client,
 
@@ -150,14 +154,23 @@ impl TextractOcrFileEngine {
     /// Create a new `textract` engine.
     #[allow(clippy::new_ret_no_self)]
     pub async fn new(
+        page_iter_opts: &PageIterOptions,
         concurrency_limit: usize,
+        include_page_breaks: bool,
         llm_opts: &LlmOpts,
     ) -> Result<(Arc<dyn OcrFileEngine>, JoinWorker)> {
         let client = create_textract_client().await?;
         let rate_limiter = create_rate_limiter(concurrency_limit, llm_opts);
 
+        if page_iter_opts.max_pages.is_some() || page_iter_opts.rasterize {
+            return Err(anyhow!(
+                "textract-async does not work with --max-pages or --rasterize"
+            ));
+        }
+
         Ok((
             Arc::new(Self {
+                include_page_breaks,
                 client,
                 rate_limiter,
             }) as Arc<dyn OcrFileEngine>,
@@ -277,7 +290,7 @@ impl OcrFileEngine for TextractOcrFileEngine {
         trace!("Document analysis response: {:#?}", response);
 
         // Create our output state and get our text.
-        let mut output = OutputState::new(response.blocks());
+        let mut output = OutputState::new(response.blocks(), self.include_page_breaks);
         output.write_analyzed_document()?;
         let text = output.output;
         debug!(%text, "Extracted text");
@@ -324,6 +337,12 @@ fn parse_s3_uri(uri: &str) -> Result<(String, String)> {
 /// once.
 #[derive(Debug)]
 struct OutputState<'a> {
+    /// Should we include page breaks between pages?
+    include_page_breaks: bool,
+
+    /// Is this the first page?
+    first_page: bool,
+
     /// The output string we're building.
     output: String,
 
@@ -342,7 +361,7 @@ struct OutputState<'a> {
 
 impl<'a> OutputState<'a> {
     /// Create a new output state.
-    fn new(all_blocks: &'a [Block]) -> Self {
+    fn new(all_blocks: &'a [Block], include_page_breaks: bool) -> Self {
         // Build a table of blocks by ID.
         let mut blocks_by_id = HashMap::new();
         for block in all_blocks {
@@ -355,6 +374,8 @@ impl<'a> OutputState<'a> {
         let debug = env::var("TEXTRACT_DEBUG").is_ok();
 
         Self {
+            include_page_breaks,
+            first_page: true,
             output: String::new(),
             debug,
             all_blocks,
@@ -377,12 +398,28 @@ impl<'a> OutputState<'a> {
     fn write_analyzed_document<'d: 'a>(&mut self) -> Result<()> {
         // Iterate over layout blocks and extract their child text.
         for block in self.all_blocks {
-            // We only want layout blocks with text, which should
-            // contain all the text and come in a reasonable order.
-            trace!(?block, "Textract layout block");
+            trace!(?block, "Textract block");
             let Some(block_type) = block.block_type() else {
                 continue;
             };
+
+            // Handle page breaks, if requested.
+            if self.include_page_breaks && block_type == &BlockType::Page {
+                if self.first_page {
+                    trace!("No break before first page");
+                    self.first_page = false;
+                } else {
+                    trace!("Inserting page break");
+                    if !self.output.ends_with('\n') {
+                        self.write_text("\n");
+                    }
+                    self.write_text("\x0C");
+                }
+                continue;
+            }
+
+            // We only want layout blocks with text, which should
+            // contain all the text and come in a reasonable order.
             if !block_type.as_str().starts_with("LAYOUT_") {
                 continue;
             }

@@ -20,24 +20,24 @@ use crate::{
 /// want cheap and fast.
 #[non_exhaustive]
 pub struct PdfToTextOcrFileEngine {
-    include_page_breaks: bool,
     page_iter_opts: PageIterOptions,
+    include_page_breaks: bool,
 }
 
 impl PdfToTextOcrFileEngine {
     /// Create a new `pdftotext` engine.
     #[allow(clippy::new_ret_no_self)]
     pub fn new(
-        include_page_breaks: bool,
         page_iter_opts: &PageIterOptions,
+        include_page_breaks: bool,
     ) -> Result<(Arc<dyn OcrFileEngine>, JoinWorker)> {
         if page_iter_opts.rasterize {
             Err(anyhow!("pdftotext does not work with --rasterize"))
         } else {
             Ok((
                 Arc::new(Self {
-                    include_page_breaks,
                     page_iter_opts: page_iter_opts.clone(),
+                    include_page_breaks,
                 }),
                 JoinWorker::noop(),
             ))

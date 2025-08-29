@@ -400,6 +400,10 @@ fn test_ocr_textract_async() {
         .arg("2")
         .arg("--model")
         .arg("textract-async")
+        .arg("--include-page-breaks")
         .assert()
+        // The actual line-feed will be escaped in the JSON output using JSON
+        // escape sequences, not Rust ones.
+        .stdout(predicates::str::contains("\\fOCR TEST DOCUMENT"))
         .success();
 }

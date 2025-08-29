@@ -2532,6 +2532,7 @@ dependencies = [
  "mime_guess",
  "num_cpus",
  "peekable",
+ "predicates",
  "regex",
  "reqwest",
  "schemars 0.8.22",
