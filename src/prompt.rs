@@ -27,19 +27,19 @@ use crate::{
 pub trait PromptState: fmt::Debug + DeserializeOwned + JsonSchema + 'static {}
 
 /// The state for a prompt that is still a template, which needs to be rendered.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct Template;
 
 impl PromptState for Template {}
 
 /// The state for a prompt that has been rendered.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct Rendered;
 
 impl PromptState for Rendered {}
 
 /// A chat completion prompt.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct ChatPrompt<State: PromptState = Template> {
     /// The developer (aka "system") message, if any.
@@ -123,7 +123,7 @@ impl<'de> toml_span::Deserialize<'de> for ChatPrompt<Template> {
 /// We would also have a `State: PromptState` field here, but that interacts badly
 /// with the [`Deserialize`] trait from [`serde`]. So just pretend that this
 /// type exists in two versions: one [`Template`] and one [`Rendered`].
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Message {
     /// A user message.

@@ -1,7 +1,82 @@
 //! Support utilities for [`keen_retry`]'s retry API.
 
-use keen_retry::RetryResult;
+use std::{
+    pin::{Pin},
+    sync::{Arc, Mutex},
+};
+
+use keen_retry::{ExponentialJitter, ResolvedResult, RetryResult};
 use reqwest::StatusCode;
+use tokio::sync::Mutex as AsyncMutex;
+
+use crate::prelude::*;
+
+/// Retry with exponential backoff and jitter.
+///
+/// We wrap `keen_retry`'s API in something a bit less general-purpose, but
+/// hopefully easier to use.
+#[instrument(level = "debug", skip_all)]
+pub async fn retry_with_backoff<Output, Func>(
+    jitter: ExponentialJitter<anyhow::Error>,
+    func: Func,
+) -> ResolvedResult<(), (), Output, anyhow::Error>
+where
+    Func: FnMut() -> Pin<Box<dyn Future<Output = RetryResult<(), (), Output, anyhow::Error>> + Send>>
+        + Send
+        + Sync,
+{
+    // Do our real work, retrying as specified.
+    let attempt_number = Arc::new(Mutex::new(0));
+    let shared_func = Arc::pin(AsyncMutex::new(func));
+    retry_helper(attempt_number.clone(), shared_func.clone())
+        .await
+        .retry_with_async(move |_| { 
+            retry_helper(attempt_number.clone(), shared_func.clone())
+        })
+        .with_exponential_jitter(|| jitter)
+        .await
+        .inspect_fatal(|_, fatal_error| {
+            error!(
+                "FAILED with error {fatal_error:?}"
+            )
+        })
+        .inspect_recovered(|_, _, retry_errors_list| {
+            warn!(
+                "suceeded after retrying {} times (failed attempts: [{}])",
+                retry_errors_list.len(),
+                keen_retry::loggable_retry_errors(retry_errors_list)
+            )
+        })
+        .inspect_given_up(|_, retry_errors_list, fatal_error| {
+            error!(
+                "FAILED after exhausting all {} retrying attempts with error {fatal_error:?}. Previous transient failures: [{}]",
+                retry_errors_list.len(),
+                keen_retry::loggable_retry_errors(retry_errors_list)
+            )
+        })
+}
+
+/// Helper function to update the attempt number and call a user function.
+#[instrument(level = "debug", skip_all, fields(attempt_number = %*attempt_number.lock().expect("lock poisoned")))]
+async fn retry_helper<Output, Func>(
+    attempt_number: Arc<Mutex<usize>>,
+    func: Pin<Arc<AsyncMutex<Func>>>,
+) -> RetryResult<(), (), Output, anyhow::Error>
+where
+    Func: FnMut() -> Pin<Box<dyn Future<Output = RetryResult<(), (), Output, anyhow::Error>> + Send>>
+        + Send
+        + Sync,
+{
+    // Increment our attempt number.
+    {
+        let mut attempt_number = attempt_number.lock().expect("lock poisoned");
+        *attempt_number += 1;
+    };
+
+    // Call the user function.
+    let mut func = func.lock().await;
+    func().await
+}
 
 /// Macro which implements `?`-like behavior for [`RetryResult`].
 macro_rules! try_retry_result {
