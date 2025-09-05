@@ -261,7 +261,7 @@ impl OcrFileEngine for TextractOcrFileEngine {
             if let Some(status) = response.job_status() {
                 match status {
                     JobStatus::InProgress => {
-                        debug!("Job {} still in progress", job_id);
+                        trace!("Job {} still in progress", job_id);
                         retry_count += 1;
                         if retry_count >= max_retries {
                             return Err(anyhow!(
