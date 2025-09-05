@@ -11,19 +11,26 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::prelude::*;
 
+pub const DEFAULT_JITTER: ExponentialJitter<anyhow::Error> = ExponentialJitter::FromBackoffRange {
+    backoff_range_millis: 1..=30_000,
+    re_attempts: 5,
+    jitter_ratio: 0.2,
+};
+
 /// Retry with exponential backoff and jitter.
 ///
 /// We wrap `keen_retry`'s API in something a bit less general-purpose, but
 /// hopefully easier to use.
 #[instrument(level = "debug", skip_all)]
-pub async fn retry_with_backoff<Output, Func>(
+pub async fn retry_with_backoff<'fut, Output, Func, Fut>(
     jitter: ExponentialJitter<anyhow::Error>,
     func: Func,
 ) -> ResolvedResult<(), (), Output, anyhow::Error>
 where
-    Func: FnMut() -> Pin<Box<dyn Future<Output = RetryResult<(), (), Output, anyhow::Error>> + Send>>
+    Func: (FnMut() -> Fut)
         + Send
         + Sync,
+    Fut: Future<Output = RetryResult<(), (), Output, anyhow::Error>> + Send + 'fut,
 {
     // Do our real work, retrying as specified.
     let attempt_number = Arc::new(Mutex::new(0));
@@ -58,14 +65,15 @@ where
 
 /// Helper function to update the attempt number and call a user function.
 #[instrument(level = "debug", skip_all, fields(attempt_number = %*attempt_number.lock().expect("lock poisoned")))]
-async fn retry_helper<Output, Func>(
+async fn retry_helper<'fut, Output, Func, Fut>(
     attempt_number: Arc<Mutex<usize>>,
     func: Pin<Arc<AsyncMutex<Func>>>,
 ) -> RetryResult<(), (), Output, anyhow::Error>
 where
-    Func: FnMut() -> Pin<Box<dyn Future<Output = RetryResult<(), (), Output, anyhow::Error>> + Send>>
+    Func: (FnMut() -> Fut)
         + Send
         + Sync,
+    Fut: Future<Output = RetryResult<(), (), Output, anyhow::Error>> + Send + 'fut,
 {
     // Increment our attempt number.
     {
@@ -136,7 +144,7 @@ macro_rules! try_potentially_transient {
     ($result:expr) => {
         match $result {
             Ok(value) => value,
-            Err(error) if IsKnownTransient::is_known_transient(&error) => {
+            Err(error) if crate::retry::IsKnownTransient::is_known_transient(&error) => {
                 debug!("Potentially transient error: {:?}", error);
                 return ::keen_retry::RetryResult::Transient {
                     input: (),

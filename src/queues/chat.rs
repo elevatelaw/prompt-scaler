@@ -251,7 +251,7 @@ async fn run_chat(
     // Do our real work, retrying as specified.
     let result = retry_with_backoff(jitter, || {
         let prompt = prompt.clone();
-        Box::pin(run_chat_inner(state.clone(), prompt))
+        run_chat_inner(state.clone(), prompt)
     })
     .await;
 

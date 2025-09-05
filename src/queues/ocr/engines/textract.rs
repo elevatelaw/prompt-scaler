@@ -4,12 +4,17 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::Arc;
 
+use aws_sdk_textract::operation::get_document_analysis::GetDocumentAnalysisError;
+use aws_sdk_textract::operation::start_document_analysis::{
+    StartDocumentAnalysisError, StartDocumentAnalysisOutput,
+};
 use aws_sdk_textract::types::{
     Block, DocumentLocation, FeatureType, JobStatus, RelationshipType, S3Object,
 };
 use aws_sdk_textract::{primitives::Blob, types::BlockType};
 use leaky_bucket::RateLimiter;
 use tokio::time::{Duration, sleep};
+use uuid::Uuid;
 
 use crate::aws::load_aws_config;
 use crate::drivers::LlmOpts;
@@ -18,6 +23,10 @@ use crate::prelude::*;
 
 use crate::async_utils::JoinWorker;
 use crate::rate_limit::{RateLimit, RateLimitPeriod};
+use crate::retry::{
+    DEFAULT_JITTER, IsKnownTransient, retry_result_ok, retry_with_backoff,
+    try_potentially_transient,
+};
 
 use super::file::OcrFileEngine;
 use super::page::{OcrPageEngine, OcrPageInput, OcrPageOutput};
@@ -208,14 +217,24 @@ impl OcrFileEngine for TextractOcrFileEngine {
                     .build(),
             )
             .build();
-        let start_response = self
-            .client
-            .start_document_analysis()
-            .document_location(document_location)
-            .client_request_token(uuid::Uuid::new_v4())
-            .set_feature_types(Some(vec![FeatureType::Layout]))
-            .send()
-            .await?;
+        let idempotency_id = Uuid::new_v4();
+        let start_response: StartDocumentAnalysisOutput =
+            retry_with_backoff(DEFAULT_JITTER, move || {
+                let document_location = document_location.clone();
+                async move {
+                    retry_result_ok(try_potentially_transient!(
+                        self.client
+                            .start_document_analysis()
+                            .document_location(document_location)
+                            .client_request_token(idempotency_id)
+                            .set_feature_types(Some(vec![FeatureType::Layout]))
+                            .send()
+                            .await
+                    ))
+                }
+            })
+            .await
+            .into_result()?;
 
         let job_id = start_response
             .job_id()
@@ -227,12 +246,17 @@ impl OcrFileEngine for TextractOcrFileEngine {
         let max_retries = 60; // 5 minutes max with 5-second intervals
         let mut retry_count = 0;
         let (status, response) = loop {
-            let response = self
-                .client
-                .get_document_analysis()
-                .job_id(job_id)
-                .send()
-                .await?;
+            let response = retry_with_backoff(DEFAULT_JITTER, move || async move {
+                retry_result_ok(try_potentially_transient!(
+                    self.client
+                        .get_document_analysis()
+                        .job_id(job_id)
+                        .send()
+                        .await
+                ))
+            })
+            .await
+            .into_result()?;
 
             if let Some(status) = response.job_status() {
                 match status {
@@ -300,6 +324,28 @@ impl OcrFileEngine for TextractOcrFileEngine {
                 analysis: None,
             },
         })
+    }
+}
+
+impl IsKnownTransient for StartDocumentAnalysisError {
+    fn is_known_transient(&self) -> bool {
+        matches!(
+            self,
+            StartDocumentAnalysisError::LimitExceededException(_)
+                | StartDocumentAnalysisError::ProvisionedThroughputExceededException(_)
+                | StartDocumentAnalysisError::ThrottlingException(_)
+        )
+    }
+}
+
+impl IsKnownTransient for GetDocumentAnalysisError {
+    fn is_known_transient(&self) -> bool {
+        matches!(
+            self,
+            GetDocumentAnalysisError::InternalServerError(_)
+                | GetDocumentAnalysisError::ProvisionedThroughputExceededException(_)
+                | GetDocumentAnalysisError::ThrottlingException(_)
+        )
     }
 }
 
