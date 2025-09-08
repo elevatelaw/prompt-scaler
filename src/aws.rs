@@ -11,7 +11,7 @@ use crate::{prelude::*, retry::IsKnownTransient};
 
 /// Load the user's AWS configuration using standard conventions.
 pub async fn load_aws_config() -> Result<aws_config::SdkConfig> {
-    Ok(aws_config::load_defaults(BehaviorVersion::v2025_01_17()).await)
+    Ok(aws_config::load_defaults(BehaviorVersion::v2025_08_07()).await)
 }
 
 impl<ServiceErrorType> IsKnownTransient for SdkError<ServiceErrorType, HttpResponse>
