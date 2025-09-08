@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.16] - 2025-09-08
+
+### Added
+
+- textract-async: New OCR driver which operates on S3 URLs instead of file names.
+- vertex: New Gemini driver which uses the Vertex APIs instead of the API Studio ones. Both modes are planned to exist going forward.
+- aws: Updated from v2025_01_17 credential loading policy to v2025_08_07. This should theoretically add support for `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY`, but this has not been specifically tested.
+
 ## [0.2.15] - 2025-08-07
 
 ### Fixed
