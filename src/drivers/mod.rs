@@ -25,6 +25,7 @@ use crate::{
 pub mod bedrock;
 pub mod native;
 pub mod openai;
+pub mod vertex;
 
 /// Our different driver types.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -40,6 +41,9 @@ pub enum DriverType {
 
     /// Attempt to use a native driver for each specific AI.
     Native,
+
+    /// Vertex driver.
+    Vertex,
 }
 
 impl DriverType {
@@ -49,6 +53,7 @@ impl DriverType {
             DriverType::OpenAI => Ok(Box::new(openai::OpenAiDriver::new().await?)),
             DriverType::Bedrock => Ok(Box::new(bedrock::BedrockDriver::new().await?)),
             DriverType::Native => Ok(Box::new(native::NativeDriver::new().await?)),
+            DriverType::Vertex => Ok(Box::new(vertex::VertexDriver::new().await?)),
         }
     }
 }

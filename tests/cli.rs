@@ -9,7 +9,7 @@
 //! 2. It's convenient to be able to run LiteLLM tests using real credentials
 //!    on CI runners and other machines that can't reasonably host Ollama.
 
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use assert_cmd::prelude::*;
 use csv::{ReaderBuilder, WriterBuilder};
@@ -41,6 +41,9 @@ static NATIVE_CHEAP_MODELS: &[&str] = &[
     // Works fine in native mode!
     "gemini-2.0-flash",
 ];
+
+/// Some cheap models for use with `--driver=vertex`.
+static VERTEX_CHEAP_MODELS: &[&str] = &["gemini-2.0-flash"];
 
 /// Fake API key for local Ollama instance.
 static OLLAMA_API_KEY: &str = "sk-1234";
@@ -185,6 +188,25 @@ fn test_chat_image_csv_input_native() {
             .arg(model)
             .arg("--prompt")
             .arg("tests/fixtures/images/prompt.toml")
+            .assert()
+            .success();
+    }
+}
+
+#[test]
+#[ignore = "Needs Vertex AI access and credentials"]
+fn test_chat_image_csv_input_vertex() {
+    for &model in VERTEX_CHEAP_MODELS {
+        println!("Testing model: {model}");
+        cmd()
+            .arg("chat")
+            .arg("tests/fixtures/images/input.csv")
+            .args(["--driver", "vertex"])
+            .arg("--model")
+            .arg(model)
+            .arg("--prompt")
+            .arg("tests/fixtures/images/prompt.toml")
+            .stderr(Stdio::inherit())
             .assert()
             .success();
     }

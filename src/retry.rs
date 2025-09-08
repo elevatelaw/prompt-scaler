@@ -1,7 +1,7 @@
 //! Support utilities for [`keen_retry`]'s retry API.
 
 use std::{
-    pin::{Pin},
+    pin::Pin,
     sync::{Arc, Mutex},
 };
 
@@ -11,11 +11,12 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::prelude::*;
 
-pub const DEFAULT_JITTER: ExponentialJitter<anyhow::Error> = ExponentialJitter::FromBackoffRange {
-    backoff_range_millis: 1..=30_000,
-    re_attempts: 5,
-    jitter_ratio: 0.2,
-};
+pub const DEFAULT_JITTER: ExponentialJitter<anyhow::Error> =
+    ExponentialJitter::FromBackoffRange {
+        backoff_range_millis: 1..=30_000,
+        re_attempts: 5,
+        jitter_ratio: 0.2,
+    };
 
 /// Retry with exponential backoff and jitter.
 ///
@@ -27,9 +28,7 @@ pub async fn retry_with_backoff<'fut, Output, Func, Fut>(
     func: Func,
 ) -> ResolvedResult<(), (), Output, anyhow::Error>
 where
-    Func: (FnMut() -> Fut)
-        + Send
-        + Sync,
+    Func: (FnMut() -> Fut) + Send + Sync,
     Fut: Future<Output = RetryResult<(), (), Output, anyhow::Error>> + Send + 'fut,
 {
     // Do our real work, retrying as specified.
@@ -37,7 +36,7 @@ where
     let shared_func = Arc::pin(AsyncMutex::new(func));
     retry_helper(attempt_number.clone(), shared_func.clone())
         .await
-        .retry_with_async(move |_| { 
+        .retry_with_async(move |_| {
             retry_helper(attempt_number.clone(), shared_func.clone())
         })
         .with_exponential_jitter(|| jitter)
@@ -70,9 +69,7 @@ async fn retry_helper<'fut, Output, Func, Fut>(
     func: Pin<Arc<AsyncMutex<Func>>>,
 ) -> RetryResult<(), (), Output, anyhow::Error>
 where
-    Func: (FnMut() -> Fut)
-        + Send
-        + Sync,
+    Func: (FnMut() -> Fut) + Send + Sync,
     Fut: Future<Output = RetryResult<(), (), Output, anyhow::Error>> + Send + 'fut,
 {
     // Increment our attempt number.
