@@ -69,6 +69,7 @@ impl ChatPrompt<Template> {
                 Message::User { text: None, images } if images.is_empty() => {
                     return Err(anyhow!("User message must have either text or images"));
                 }
+                // TODO: Warn or optionally fail on empty user text?
                 Message::User { .. } if expect_user_message => true,
                 Message::Assistant { .. } if !expect_user_message => true,
                 _ => false,
