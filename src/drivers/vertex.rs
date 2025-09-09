@@ -48,7 +48,7 @@ impl VertexDriver {
 
 #[async_trait]
 impl Driver for VertexDriver {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "debug", skip_all)]
     async fn chat_completion(
         &self,
         model: &str,
@@ -58,7 +58,8 @@ impl Driver for VertexDriver {
         llm_opts: &LlmOpts,
     ) -> LlmRetryResult<ChatCompletionResponse> {
         // Convert our prompt to Vertex AI format.
-        let contents = try_fatal!(prompt.to_vertex_contents().await);
+        let (system_instruction, contents) =
+            try_fatal!(prompt.to_vertex_contents().await);
         trace!(?contents, "Vertex request");
 
         // Set up generation config.
@@ -87,6 +88,7 @@ impl Driver for VertexDriver {
             .client
             .generate_content()
             .set_model(model_path)
+            .set_or_clear_system_instruction(system_instruction)
             .set_contents(contents)
             .set_generation_config(generation_config);
 
@@ -165,26 +167,24 @@ trait ToVertexContents {
 
 #[async_trait]
 impl ToVertexContents for ChatPrompt<Rendered> {
-    type Output = Vec<Content>;
+    type Output = (Option<Content>, Vec<Content>);
 
     async fn to_vertex_contents(&self) -> Result<Self::Output> {
         let mut contents = vec![];
 
         // Add developer/system message if present
-        if let Some(developer) = &self.developer {
-            contents.push(
-                Content::new()
-                    .set_role("model")
-                    .set_parts([Part::new().set_text(developer)]),
-            );
-        }
+        let system_instruction = self.developer.as_ref().map(|d| {
+            Content::new()
+                .set_role("model")
+                .set_parts([Part::new().set_text(d)])
+        });
 
         // Convert our messages
         for message in &self.messages {
             contents.extend(message.to_vertex_contents().await?);
         }
 
-        Ok(contents)
+        Ok((system_instruction, contents))
     }
 }
 
