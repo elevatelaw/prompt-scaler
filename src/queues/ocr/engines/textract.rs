@@ -44,11 +44,10 @@ async fn create_textract_client() -> Result<aws_sdk_textract::Client> {
 
 /// Create a rate limiter, defaulting as best we can.
 fn create_rate_limiter(concurrency_limit: usize, llm_opts: &LlmOpts) -> RateLimiter {
-    // If we don't have a rate limit, set one based on the concurrency
-    // limit.
+    // If we don't have a rate limit, set one based on the concurrency limit.
     //
-    // TODO: We may want to remove the default rate limit, but that would be
-    // a breaking change.
+    // TODO: FUTURE BREAKING: We may want to remove the default rate limit, but
+    // that would be a breaking change.
     let rate_limit = llm_opts
         .rate_limit
         .clone()
@@ -103,9 +102,6 @@ impl OcrPageEngine for TextractOcrPageEngine {
             .build();
 
         // Use the Textract API to process the image.
-        //
-        // TODO: Retry non-fatal errors as we discover them. See the
-        // LLM chat client for details.
         let response = self
             .client
             .analyze_document()
@@ -206,9 +202,6 @@ impl OcrFileEngine for TextractOcrFileEngine {
             .with_context(|| format!("Failed to parse S3 URI: {}", s3_uri))?;
 
         // Start document analysis.
-        //
-        // TODO: Integrate crate::retry support here, and maybe also rate limit
-        // error handling for automatic backoff.
         let document_location = DocumentLocation::builder()
             .s3_object(
                 S3Object::builder()
