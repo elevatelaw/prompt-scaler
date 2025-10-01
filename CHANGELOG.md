@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.16] - 2025-09-08
+
+### Added
+
+- textract-async: New OCR driver which operates on S3 URLs instead of file names.
+- vertex: New Gemini driver which uses the Vertex APIs instead of the API Studio ones. Both modes are planned to exist going forward.
+- aws: Updated from v2025_01_17 credential loading policy to v2025_08_07. This should theoretically add support for `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY`, but this has not been specifically tested.
+
+## [0.2.15] - 2025-08-07
+
+### Fixed
+
+- clippy: Update to latest Rust compiler and fix warnings.
+
+## [0.2.14] - 2025-08-07
+
+### Fixed
+
+- bedrock: Update our driver to always force tool use, because we were seeing surprisingly high rates of invalid JSON output using the text-based conversational interface and a JSON Schema. Specifically, we were not seeing the kind of numbers AWS saw in these experiments: https://aws.amazon.com/fr/blogs/machine-learning/structured-data-response-with-amazon-bedrock-prompt-engineering-and-tool-use/
+
 ## [0.2.13] - 2025-07-28
 
 ### Added

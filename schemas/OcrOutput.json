@@ -1,0 +1,182 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OcrOutput",
+  "description": "Output record from a [`WorkItemProcessor`].",
+  "type": "object",
+  "required": [
+    "errors",
+    "id",
+    "path",
+    "status"
+  ],
+  "properties": {
+    "analysis": {
+      "description": "Any defects in the page that make it difficult to OCR.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/OcrAnalysis"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "errors": {
+      "description": "Any errors that occurred during processing.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "estimated_cost": {
+      "description": "How much money do we think we spent?",
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
+    },
+    "id": {
+      "description": "The unique ID of the work item."
+    },
+    "page_count": {
+      "description": "The number of pages in the PDF, if known.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint",
+      "minimum": 0.0
+    },
+    "path": {
+      "description": "The input path.",
+      "type": "string"
+    },
+    "status": {
+      "description": "What is the status of this work item?",
+      "allOf": [
+        {
+          "$ref": "#/definitions/WorkStatus"
+        }
+      ]
+    },
+    "text": {
+      "description": "The text extracted from the PDF. If errors occur on specific pages, those pages will be replaced with `**COULD_NOT_OCR_PAGE**`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "token_usage": {
+      "description": "How many tokens did we use?",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/TokenUsage"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "definitions": {
+    "ImageSource": {
+      "description": "How was this image generated?",
+      "type": "string",
+      "enum": [
+        "PHOTO_OR_VIDEO",
+        "SCAN",
+        "DIGITAL"
+      ]
+    },
+    "OcrAnalysis": {
+      "description": "Flags describing defects in the page that make it difficult to OCR.",
+      "type": "object",
+      "required": [
+        "background_is_noisy",
+        "contains_blurred_text",
+        "contains_cutoff_text",
+        "contains_distorted_text",
+        "contains_faint_text",
+        "contains_handwriting",
+        "contains_unreadable_or_ambiguous_text",
+        "glare_on_some_text",
+        "image_source"
+      ],
+      "properties": {
+        "background_is_noisy": {
+          "description": "The background behind the text is noisy.",
+          "type": "boolean"
+        },
+        "contains_blurred_text": {
+          "description": "The document contains text is blurred or out of focus.",
+          "type": "boolean"
+        },
+        "contains_cutoff_text": {
+          "description": "The document contains text that is cut off.",
+          "type": "boolean"
+        },
+        "contains_distorted_text": {
+          "description": "The document contains distorted text, including from crinkled paper, perspective distortion, or other artifacts.",
+          "type": "boolean"
+        },
+        "contains_faint_text": {
+          "description": "The document contains text that is faint or low-contrast.",
+          "type": "boolean"
+        },
+        "contains_handwriting": {
+          "description": "The document contains handwriting.",
+          "type": "boolean"
+        },
+        "contains_unreadable_or_ambiguous_text": {
+          "description": "The document contains text that may not have been OCRed correctly.",
+          "type": "boolean"
+        },
+        "glare_on_some_text": {
+          "description": "The image contains glare obscuring the text.",
+          "type": "boolean"
+        },
+        "image_source": {
+          "description": "The source of this image.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/ImageSource"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "TokenUsage": {
+      "description": "Token usage.",
+      "type": "object",
+      "required": [
+        "completion_tokens",
+        "prompt_tokens"
+      ],
+      "properties": {
+        "completion_tokens": {
+          "description": "How many tokens were used in the response?",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "prompt_tokens": {
+          "description": "How many tokens were used in the prompt?",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
+    "WorkStatus": {
+      "description": "Output status of a work item.",
+      "type": "string",
+      "enum": [
+        "ok",
+        "incomplete",
+        "failed"
+      ]
+    }
+  }
+}

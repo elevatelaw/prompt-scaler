@@ -20,18 +20,24 @@ update-test-schemas:
         -o tests/fixtures/external_schemas/schema_ts.json \
         tests/fixtures/external_schemas/schema.ts ImageInfo
 
+# Export our main JSON Schemas to JSON files in the schemas directory.
+update-schemas:
+    mkdir -p schemas
+    for model in ChatInput ChatOutput ChatPrompt OcrInput OcrOutput; do \
+        cargo run -- schema "$model" -o "schemas/$model.json"; \
+    done
+
 # Export our main JSON Schemas as Pydantic models.
-update-pydantic-models:
+update-pydantic-models: update-schemas
     mkdir -p scripts/support/models
     for model in ChatInput ChatOutput ChatPrompt OcrInput OcrOutput; do \
-        cargo run -- schema $model -o tmp_schema.json; \
-        snake_case=$(echo $model | sed 's/\([a-z]\)\([A-Z]\)/\1_\L\2/g' | tr '[:upper:]' '[:lower:]'); \
+        snake_case=$(echo "$model" | sed 's/\([a-z]\)\([A-Z]\)/\1_\L\2/g' | tr '[:upper:]' '[:lower:]'); \
         uv run datamodel-codegen \
-            --input tmp_schema.json \
+            --input "schemas/$model.json" \
             --input-file-type jsonschema \
-            --output scripts/support/models/$snake_case.py \
+            --output "scripts/support/models/$snake_case.py" \
             --output-model-type=pydantic_v2.BaseModel \
             --use-annotated \
             --use-subclass-enum; \
     done
-    rm tmp_schema.json
+

@@ -1,0 +1,237 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ChatPrompt",
+  "description": "A chat completion prompt.",
+  "type": "object",
+  "required": [
+    "messages",
+    "response_schema"
+  ],
+  "properties": {
+    "developer": {
+      "description": "The developer (aka \"system\") message, if any.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "messages": {
+      "description": "Messages.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Message"
+      }
+    },
+    "response_schema": {
+      "description": "Our schema.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/Schema"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "ExternalSchema": {
+      "description": "An external schema, provided as a file path.",
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "description": "The path to the schema.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "InternalSchema": {
+      "description": "A simplified version of JSON Schema, used for validation.",
+      "type": "object",
+      "anyOf": [
+        {
+          "description": "An array.",
+          "type": "object",
+          "required": [
+            "items"
+          ],
+          "properties": {
+            "items": {
+              "description": "The items in the array.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/InternalSchema"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "A JSON object.\n\nAll fields will be automatically marked as required, and `additionalProperties` will be set to `false`.",
+          "type": "object",
+          "required": [
+            "properties"
+          ],
+          "properties": {
+            "properties": {
+              "description": "The properties of the object.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/definitions/InternalSchema"
+              }
+            },
+            "title": {
+              "description": "The title of this object.",
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "enum": {
+              "description": "Allowed enum values.",
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": true
+            },
+            "type": {
+              "description": "The type of this scalar.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ScalarType"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ],
+      "required": [
+        "description"
+      ],
+      "properties": {
+        "description": {
+          "description": "A description of this value.",
+          "type": "string"
+        }
+      }
+    },
+    "Message": {
+      "description": "A message, and optionally a response (represented as a JSON object).\n\nWe would also have a `State: PromptState` field here, but that interacts badly with the [`Deserialize`] trait from [`serde`]. So just pretend that this type exists in two versions: one [`Template`] and one [`Rendered`].",
+      "oneOf": [
+        {
+          "description": "A user message.",
+          "type": "object",
+          "required": [
+            "user"
+          ],
+          "properties": {
+            "user": {
+              "type": "object",
+              "properties": {
+                "images": {
+                  "description": "Images to include with the user message, provided as URLs.",
+                  "default": [],
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "text": {
+                  "description": "Text provided by the user.",
+                  "default": null,
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "An assistant message.",
+          "type": "object",
+          "required": [
+            "assistant"
+          ],
+          "properties": {
+            "assistant": {
+              "type": "object",
+              "required": [
+                "json"
+              ],
+              "properties": {
+                "json": {
+                  "description": "The assistant response. This is always a JSON [`Value`]."
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ScalarType": {
+      "description": "Basic types we support.",
+      "oneOf": [
+        {
+          "description": "A string.",
+          "type": "string",
+          "enum": [
+            "string"
+          ]
+        },
+        {
+          "description": "A number.",
+          "type": "string",
+          "enum": [
+            "number"
+          ]
+        },
+        {
+          "description": "A boolean.",
+          "type": "string",
+          "enum": [
+            "boolean"
+          ]
+        }
+      ]
+    },
+    "Schema": {
+      "description": "Either an external or an internal schema.",
+      "anyOf": [
+        {
+          "description": "An internal schema (one stored in the prompt file), using a very simplified version of JSON Schema format. If this is insufficient for your needs, consider using an external schema.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/InternalSchema"
+            }
+          ]
+        },
+        {
+          "description": "An external schema, provided as a file path.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/ExternalSchema"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

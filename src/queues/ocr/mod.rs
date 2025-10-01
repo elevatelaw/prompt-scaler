@@ -2,28 +2,23 @@
 
 pub mod engines;
 
-use std::{env, sync::Arc, vec};
+use std::{sync::Arc, vec};
 
-use engines::ocr_engine_for_model;
 use futures::{FutureExt as _, StreamExt as _};
 use schemars::JsonSchema;
 
-use self::engines::OcrPageInput;
+use self::engines::{file::OcrFileEngine, ocr_engine_for_model};
+use super::work::{
+    WorkInput, WorkItemCounterExt as _, WorkOutput, WorkOutputCounters, WorkStatus,
+};
 use crate::{
-    async_utils::{
-        BoxedFuture, BoxedStream, JoinWorker, blocking_iter_streams::BlockingIterStream,
-        io::write_output_csv,
-    },
+    async_utils::{BoxedFuture, BoxedStream, JoinWorker, io::write_output_csv},
     cmd::StreamOpts,
-    drivers::{LlmOpts, TokenUsage},
-    page_iter::{PageIter, PageIterOptions},
+    drivers::LlmOpts,
+    page_iter::PageIterOptions,
     prelude::*,
     prompt::ChatPrompt,
     ui::Ui,
-};
-
-use super::work::{
-    WorkInput, WorkItemCounterExt as _, WorkOutput, WorkOutputCounters, WorkStatus,
 };
 
 /// A input record describing a file to OCR.
@@ -31,11 +26,18 @@ use super::work::{
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct OcrInput {
     /// The path to the PDF file.
-    pub path: PathBuf,
+    pub path: String,
 
     /// The password to decrypt the PDF file, if any.
     #[serde(default)]
     pub password: Option<String>,
+}
+
+impl OcrInput {
+    /// Get `path` as a `&Path`.
+    pub fn path(&self) -> &Path {
+        Path::new(&self.path)
+    }
 }
 
 /// An output record describing an OCRed PDF.
@@ -43,7 +45,7 @@ pub struct OcrInput {
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct OcrOutput {
     /// The input path.
-    pub path: PathBuf,
+    pub path: String,
 
     /// The text extracted from the PDF. If errors occur on specific pages,
     /// those pages will be replaced with `**COULD_NOT_OCR_PAGE**`.
@@ -55,6 +57,19 @@ pub struct OcrOutput {
     /// Any defects in the page that make it difficult to OCR.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub analysis: Option<OcrAnalysis>,
+}
+
+impl OcrOutput {
+    /// Create an empty output record for use when an error
+    /// occurs.
+    pub fn empty_for_error(path: String) -> Self {
+        Self {
+            path,
+            text: None,
+            page_count: None,
+            analysis: None,
+        }
+    }
 }
 
 impl WorkOutput<OcrOutput> {
@@ -107,7 +122,7 @@ pub struct FlatOcrOutput {
     pub errors: Option<String>,
 
     /// The path to the PDF file.
-    pub path: PathBuf,
+    pub path: String,
 
     /// The text extracted from the PDF. If errors occur on specific pages,
     /// those pages will be replaced with `**COULD_NOT_OCR_PAGE**`.
@@ -226,23 +241,22 @@ pub async fn ocr_files(
     llm_opts: LlmOpts,
 ) -> Result<OcrStreamInfo> {
     // Create an OCR engine.
-    let (engine, worker) =
-        ocr_engine_for_model(job_count, prompt, model, &page_iter_opts, llm_opts).await?;
+    let (engine, worker) = ocr_engine_for_model(
+        job_count,
+        prompt,
+        model,
+        include_page_breaks,
+        &page_iter_opts,
+        llm_opts,
+    )
+    .await?;
 
     let output = input
         .map(move |pdf_input| {
-            let page_iter_opts = page_iter_opts.clone();
             let engine = engine.clone();
             async move {
                 let pdf_input = pdf_input?;
-                ocr_file(
-                    pdf_input,
-                    &page_iter_opts,
-                    job_count,
-                    include_page_breaks,
-                    engine,
-                )
-                .await
+                ocr_file(pdf_input, engine).await
             }
             .boxed()
         })
@@ -258,23 +272,13 @@ pub async fn ocr_files(
 #[instrument(level = "debug", skip_all, fields(id = %ocr_input.id))]
 pub async fn ocr_file(
     ocr_input: WorkInput<OcrInput>,
-    page_iter_opts: &PageIterOptions,
-    concurrency_limit: usize,
-    include_page_breaks: bool,
-    engine: Arc<dyn engines::OcrEngine>,
+    engine: Arc<dyn OcrFileEngine>,
 ) -> Result<WorkOutput<OcrOutput>> {
     let id = ocr_input.id.clone();
     let path = ocr_input.data.path.clone();
 
     // Perform the actual work.
-    let result = ocr_file_inner(
-        ocr_input,
-        page_iter_opts,
-        concurrency_limit,
-        include_page_breaks,
-        engine,
-    )
-    .await;
+    let result = engine.ocr_file(ocr_input).await;
 
     // If we have an error, output an appropriate record and continue.
     // This is necessary to avoid aborting an entire batch of work if one
@@ -283,148 +287,11 @@ pub async fn ocr_file(
         Ok(output) => Ok(output),
         Err(err) => {
             let errors = vec![format!("{:?}", err)];
-            Ok(WorkOutput {
+            Ok(WorkOutput::new_failed(
                 id,
-                status: WorkStatus::Failed,
                 errors,
-                estimated_cost: None,
-                token_usage: None,
-                data: OcrOutput {
-                    path,
-                    text: None,
-                    page_count: None,
-                    analysis: None,
-                },
-            })
+                OcrOutput::empty_for_error(path),
+            ))
         }
     }
-}
-
-/// Perform actual work for `ocr_file`.
-#[instrument(level = "debug", skip_all, fields(id = %ocr_input.id))]
-async fn ocr_file_inner(
-    ocr_input: WorkInput<OcrInput>,
-    page_iter_opts: &PageIterOptions,
-    concurrency_limit: usize,
-    include_page_breaks: bool,
-    engine: Arc<dyn engines::OcrEngine>,
-) -> Result<WorkOutput<OcrOutput>> {
-    let id = ocr_input.id.clone();
-
-    // Create a page stream, using BlockingIterStream to avoid blocking the
-    // async executor with slow PDF processing.
-    let page_iter = PageIter::from_path(
-        &ocr_input.data.path,
-        page_iter_opts,
-        ocr_input.data.password.as_deref(),
-    )
-    .await
-    .with_context(|| {
-        format!("Failed to separate {:?} into pages", ocr_input.data.path)
-    })?;
-    let check_complete_result = page_iter.check_complete();
-    let warnings = page_iter.warnings().to_owned();
-    let page_stream = BlockingIterStream::new(page_iter);
-
-    let page_outputs = page_stream
-        .enumerate()
-        .map(move |(page_idx, page)| {
-            let id = ocr_input.id.clone();
-            let engine = engine.clone();
-            async move {
-                let page = page?;
-                engine.ocr_page(OcrPageInput { id, page_idx, page }).await
-            }
-        })
-        // Process all the pages concurrently, up to the concurrency limit.
-        .buffered(concurrency_limit)
-        // Collect all the results (including fatal errors) into a single vector.
-        .collect::<Vec<_>>()
-        .await
-        // Convert from `Vec<Result<ChatOutput>>` to `Result<Vec<ChatOutput>>`,
-        // and exit early if we have any fatal errors.
-        .into_iter()
-        .collect::<Result<Vec<_>>>()?;
-
-    // Turn our `ChatResponse`s into a `PdfOutput` record.
-    let mut errors = vec![];
-    errors.extend(warnings);
-    let mut pages = vec![];
-    let mut analysis = OcrAnalysis::default();
-    let mut analysis_present = false;
-    let mut estimated_cost = 0.0;
-    let mut token_usage = TokenUsage::default();
-    for page_output in page_outputs {
-        errors.extend(page_output.errors);
-        if let Some(text) = page_output.text {
-            pages.push(Some(text));
-            if let Some(a) = page_output.analysis {
-                analysis = analysis.merge(&a);
-                analysis_present = true;
-            }
-            if let Some(cost) = page_output.estimated_cost {
-                estimated_cost += cost;
-            }
-            if let Some(usage) = page_output.token_usage {
-                token_usage += usage;
-            }
-        } else {
-            // No LLM response.
-            pages.push(None);
-        }
-    }
-    if let Err(err) = &check_complete_result {
-        errors.push(err.to_string());
-    }
-
-    // Decide how to represent page breaks.
-    let page_break = if include_page_breaks {
-        "\n\x0C\n"
-    } else {
-        "\n\n"
-    };
-
-    let good_page_count = pages.iter().filter(|p| p.is_some()).count();
-    let total_page_count = pages.len();
-    let text = pages
-        .into_iter()
-        .map(|p| p.unwrap_or_else(|| "**COULD_NOT_OCR_PAGE**".to_owned()))
-        .collect::<Vec<String>>()
-        .join(page_break);
-    Ok(WorkOutput {
-        id,
-        status: if check_complete_result.is_ok() && good_page_count == total_page_count {
-            WorkStatus::Ok
-        } else if good_page_count > 0 {
-            WorkStatus::Incomplete
-        } else {
-            WorkStatus::Failed
-        },
-        errors,
-        estimated_cost: if estimated_cost > 0.0 {
-            Some(estimated_cost)
-        } else {
-            None
-        },
-        token_usage: if token_usage.is_zero() {
-            None
-        } else {
-            Some(token_usage)
-        },
-        data: OcrOutput {
-            path: ocr_input.data.path,
-            text: if good_page_count > 0 {
-                Some(text)
-            } else {
-                None
-            },
-            page_count: Some(total_page_count),
-            analysis: if analysis_present && env::var("EXPERIMENTAL_OCR_ANALYSIS").is_ok()
-            {
-                Some(analysis)
-            } else {
-                None
-            },
-        },
-    })
 }

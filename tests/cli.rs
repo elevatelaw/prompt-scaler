@@ -9,9 +9,12 @@
 //! 2. It's convenient to be able to run LiteLLM tests using real credentials
 //!    on CI runners and other machines that can't reasonably host Ollama.
 
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use assert_cmd::prelude::*;
+use csv::{ReaderBuilder, WriterBuilder};
+use serde::{Deserialize, Serialize};
+use tempfile::NamedTempFile;
 
 /// Fake API key for local LiteLLM instance.
 static LITELLM_API_KEY: &str = "sk-1234";
@@ -38,6 +41,9 @@ static NATIVE_CHEAP_MODELS: &[&str] = &[
     // Works fine in native mode!
     "gemini-2.0-flash",
 ];
+
+/// Some cheap models for use with `--driver=vertex`.
+static VERTEX_CHEAP_MODELS: &[&str] = &["gemini-2.0-flash"];
 
 /// Fake API key for local Ollama instance.
 static OLLAMA_API_KEY: &str = "sk-1234";
@@ -182,6 +188,25 @@ fn test_chat_image_csv_input_native() {
             .arg(model)
             .arg("--prompt")
             .arg("tests/fixtures/images/prompt.toml")
+            .assert()
+            .success();
+    }
+}
+
+#[test]
+#[ignore = "Needs Vertex AI access and credentials"]
+fn test_chat_image_csv_input_vertex() {
+    for &model in VERTEX_CHEAP_MODELS {
+        println!("Testing model: {model}");
+        cmd()
+            .arg("chat")
+            .arg("tests/fixtures/images/input.csv")
+            .args(["--driver", "vertex"])
+            .arg("--model")
+            .arg(model)
+            .arg("--prompt")
+            .arg("tests/fixtures/images/prompt.toml")
+            .stderr(Stdio::inherit())
             .assert()
             .success();
     }
@@ -346,5 +371,61 @@ fn test_ocr_textract() {
         .arg("--model")
         .arg("textract")
         .assert()
+        .success();
+}
+
+#[test]
+#[ignore = "Slightly expensive and needs AWS credentials + files in bucket"]
+fn test_ocr_textract_async() {
+    dotenvy::dotenv().ok();
+
+    // Prepare to make a temp copy of input.csv. NamedTempFile can theoretically
+    // be insecure on Linux and Unix-like systems if a temporary file cleaner is
+    // active and deletes the file before we're done with it. Since this a short
+    // test, written in a fairly secure programming language, that OCRs things
+    // in S3 buckets, the risks are extremely minimal.
+    let mut reader = ReaderBuilder::new()
+        .from_path("tests/fixtures/ocr/input.csv")
+        .expect("Failed to read input.csv");
+    let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+    let mut writer = WriterBuilder::new()
+        .from_path(temp_file.path())
+        .expect("Failed to create temp file writer");
+
+    // Row format.
+    #[derive(Deserialize, Serialize)]
+    struct Row {
+        id: String,
+        path: String,
+    }
+
+    // Prepend paths with our S3 locations.
+    let mut s3_location = std::env::var("S3_TEST_FIXTURE_LOCATION")
+        .expect("S3_TEST_FIXTURE_LOCATION environment variable not set");
+    if !s3_location.ends_with('/') {
+        s3_location.push('/');
+    }
+    for row in reader.deserialize::<Row>() {
+        let mut row = row.expect("Failed to read record");
+        row.path = format!("{}{}", s3_location, row.path);
+        writer.serialize(&row).expect("Failed to write record");
+    }
+
+    // Flush our writer.
+    writer.flush().expect("Failed to flush writer");
+    drop(writer);
+
+    cmd()
+        .arg("ocr")
+        .arg(temp_file.path())
+        .arg("--jobs")
+        .arg("2")
+        .arg("--model")
+        .arg("textract-async")
+        .arg("--include-page-breaks")
+        .assert()
+        // The actual line-feed will be escaped in the JSON output using JSON
+        // escape sequences, not Rust ones.
+        .stdout(predicates::str::contains("\\fOCR TEST DOCUMENT"))
         .success();
 }

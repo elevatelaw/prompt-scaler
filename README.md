@@ -223,6 +223,15 @@ The output format is still being refined, but it currently contains the followin
 
 More output fields will be added, possibly including such things as quality indicators or text bounding boxes, if available. And some field names may change. We may also add a "direct to CSV" output mode. But for now, see the scripts in [`scripts/`](./scripts/) for examples of how to convert the JSONL output to other formats.
 
+## A note on coding agents and PRs
+
+Coding agents are unlikely to be of much help writing major `prompt-scaler` patches, because it's a bit too large, and it's doing some moderately complicated things with async Rust streams. But agents may be useful for explaining the code that's already there. There is some concise, agent-friendly documentation in [.clinerules/](./.clinerules/).
+
+However, if you submit any PRs:
+
+- Please **fully disclose** all use of coding agents.
+- You are expected to have read and understood every line of code you submit.
+
 ## License
 
 Copyright 2025 Elevate. Some earlier code copyright 2024 Eric Kidd, and used with permission.

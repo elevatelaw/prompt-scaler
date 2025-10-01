@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OcrInput",
+  "description": "Input record for a [`WorkItemProcessor`].",
+  "type": "object",
+  "required": [
+    "id",
+    "path"
+  ],
+  "properties": {
+    "id": {
+      "description": "The unique ID of the work item."
+    },
+    "password": {
+      "description": "The password to decrypt the PDF file, if any.",
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "path": {
+      "description": "The path to the PDF file.",
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ChatInput",
+  "description": "Input record for a [`WorkItemProcessor`].",
+  "type": "object",
+  "required": [
+    "id"
+  ],
+  "properties": {
+    "id": {
+      "description": "The unique ID of the work item."
+    }
+  },
+  "additionalProperties": true
+}

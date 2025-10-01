@@ -16,8 +16,8 @@ use toml_span::{
 };
 
 use crate::{
-    async_utils::io::JsonObject, data_url::data_url, prelude::*, schema::Schema,
-    toml_utils::JsonValue,
+    async_utils::io::JsonObject, data_url::data_url, page_iter::get_mime_type,
+    prelude::*, schema::Schema, toml_utils::JsonValue,
 };
 
 /// Super-type of allowable prompt states. This is using the popular "type
@@ -27,19 +27,19 @@ use crate::{
 pub trait PromptState: fmt::Debug + DeserializeOwned + JsonSchema + 'static {}
 
 /// The state for a prompt that is still a template, which needs to be rendered.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct Template;
 
 impl PromptState for Template {}
 
 /// The state for a prompt that has been rendered.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct Rendered;
 
 impl PromptState for Rendered {}
 
 /// A chat completion prompt.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct ChatPrompt<State: PromptState = Template> {
     /// The developer (aka "system") message, if any.
@@ -69,6 +69,7 @@ impl ChatPrompt<Template> {
                 Message::User { text: None, images } if images.is_empty() => {
                     return Err(anyhow!("User message must have either text or images"));
                 }
+                // TODO: Warn or optionally fail on empty user text?
                 Message::User { .. } if expect_user_message => true,
                 Message::Assistant { .. } if !expect_user_message => true,
                 _ => false,
@@ -124,7 +125,7 @@ impl<'de> toml_span::Deserialize<'de> for ChatPrompt<Template> {
 /// We would also have a `State: PromptState` field here, but that interacts badly
 /// with the [`Deserialize`] trait from [`serde`]. So just pretend that this
 /// type exists in two versions: one [`Template`] and one [`Rendered`].
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Message {
     /// A user message.
@@ -211,21 +212,14 @@ fn image_data_url_helper(
         .ok_or_else(|| RenderErrorReason::InvalidParamType("string"))?;
 
     // Get the MIME type using `infer`.
-    let mime = infer::get_from_path(path)
-        .map_err(|err| {
-            RenderErrorReason::Other(format!(
-                "error inferring MIME type for {path}: {err}"
-            ))
-        })?
-        .ok_or_else(|| {
-            RenderErrorReason::Other(format!("unknown MIME type for {path}"))
-        })?;
+    let mime = get_mime_type(Path::new(path))
+        .map_err(|err| RenderErrorReason::Other(err.to_string()))?;
 
     // Base64 encode the file.
     let bytes = fs::read(path).map_err(|err| {
         RenderErrorReason::Other(format!("error reading {path}: {err}"))
     })?;
-    let data_url = data_url(mime.mime_type(), &bytes);
+    let data_url = data_url(&mime, &bytes);
     out.write(&data_url)?;
     Ok(())
 }

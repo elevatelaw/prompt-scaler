@@ -1,9 +1,6 @@
 //! Concurrent chat requests implemented as an async stream.
 
-use std::{
-    iter,
-    sync::{Arc, Mutex},
-};
+use std::{iter, sync::Arc};
 
 use futures::FutureExt as _;
 use keen_retry::{ExponentialJitter, ResolvedResult};
@@ -18,7 +15,7 @@ use crate::{
     litellm::{LiteLlmModel, litellm_model_info},
     prelude::*,
     prompt::{ChatPrompt, Rendered},
-    retry::{retry_result_ok, try_retry_result, try_transient},
+    retry::{retry_result_ok, retry_with_backoff, try_retry_result, try_transient},
 };
 
 /// An input record.
@@ -37,6 +34,13 @@ pub struct ChatOutput {
     /// The response from the LLM. If this is present, the request succeeded.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response: Option<Value>,
+}
+
+impl ChatOutput {
+    /// Create an empty chat output record for use when an error occurs.
+    pub fn empty_for_error() -> Self {
+        Self { response: None }
+    }
 }
 
 impl WorkOutput<ChatOutput> {
@@ -67,14 +71,11 @@ impl WorkOutput<ChatOutput> {
                     response: Some(response),
                 },
             },
-            ResolvedResult::Fatal { error, .. } => WorkOutput {
+            ResolvedResult::Fatal { error, .. } => WorkOutput::new_failed(
                 id,
-                status: WorkStatus::Failed,
-                errors: vec![full_err(error)],
-                estimated_cost: None,
-                token_usage: None,
-                data: ChatOutput { response: None },
-            },
+                vec![full_err(error)],
+                ChatOutput::empty_for_error(),
+            ),
             ResolvedResult::Recovered {
                 output:
                     ChatCompletionResponse {
@@ -102,18 +103,15 @@ impl WorkOutput<ChatOutput> {
                 retry_errors,
                 fatal_error,
                 ..
-            } => WorkOutput {
+            } => WorkOutput::new_failed(
                 id,
-                status: WorkStatus::Failed,
-                errors: retry_errors
+                retry_errors
                     .into_iter()
                     .map(full_err)
                     .chain(iter::once(full_err(fatal_error)))
                     .collect(),
-                estimated_cost: None,
-                token_usage: None,
-                data: ChatOutput { response: None },
-            },
+                ChatOutput::empty_for_error(),
+            ),
         }
     }
 }
@@ -251,33 +249,11 @@ async fn run_chat(
     };
 
     // Do our real work, retrying as specified.
-    let attempt_number = Mutex::new(0);
-    let result = run_chat_inner(&attempt_number, state.as_ref(), &prompt)
-        .await
-        .retry_with_async(|_| async {
-            run_chat_inner(&attempt_number, state.as_ref(), &prompt).await
-        })
-        .with_exponential_jitter(|| jitter)
-        .await
-        .inspect_fatal(|_, fatal_error| {
-            error!(
-                "FAILED with error {fatal_error:?}"
-            )
-        })
-        .inspect_recovered(|_, _, retry_errors_list| {
-            warn!(
-                "suceeded after retrying {} times (failed attempts: [{}])",
-                retry_errors_list.len(),
-                keen_retry::loggable_retry_errors(retry_errors_list)
-            )
-        })
-        .inspect_given_up(|_, retry_errors_list, fatal_error| {
-            error!(
-                "FAILED after exhausting all {} retrying attempts with error {fatal_error:?}. Previous transient failures: [{}]",
-                retry_errors_list.len(),
-                keen_retry::loggable_retry_errors(retry_errors_list)
-            )
-        });
+    let result = retry_with_backoff(jitter, || {
+        let prompt = prompt.clone();
+        run_chat_inner(state.clone(), prompt)
+    })
+    .await;
 
     Ok(WorkOutput::<ChatOutput>::from_resolved_result(
         id,
@@ -287,24 +263,15 @@ async fn run_chat(
 }
 
 /// Process the data portion of a record.
-#[instrument(level = "debug", skip_all, fields(attempt_number = %*attempt_number.lock().expect("lock poisoned")))]
+#[instrument(level = "debug", skip_all)]
 async fn run_chat_inner(
-    attempt_number: &Mutex<u64>,
-    state: &ProcessorState,
-    prompt: &ChatPrompt<Rendered>,
+    state: Arc<ProcessorState>,
+    prompt: ChatPrompt<Rendered>,
 ) -> LlmRetryResult<ChatCompletionResponse> {
     // If we have a rate limiter, acquire a permit for one request.
     if let Some(rate_limiter) = state.rate_limiter.as_ref() {
         rate_limiter.acquire(1).await;
     }
-
-    // Increment our attempt number.
-    let _current_attempt = {
-        let mut attempt_number = attempt_number.lock().expect("lock poisoned");
-        let current_attempt = *attempt_number;
-        *attempt_number += 1;
-        current_attempt
-    };
 
     // Call OpenAI.
     let completion_response = try_retry_result!(
@@ -313,7 +280,7 @@ async fn run_chat_inner(
             .chat_completion(
                 &state.model,
                 state.model_info,
-                prompt,
+                &prompt,
                 state.schema.clone(),
                 &state.llm_opts,
             )
