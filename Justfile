@@ -6,6 +6,11 @@
 #
 # Run `just --list` to see all the tasks in this file.
 
+# Set up git hooks using lefthook
+setup-hooks:
+    lefthook install
+
+# Run standard code quality checks.
 check:
     cargo fmt -- --check
     cargo deny check

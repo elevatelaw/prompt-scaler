@@ -1,0 +1,8 @@
+# Lefthook configuration for git hooks
+# See https://github.com/evilmartians/lefthook for documentation
+
+pre-commit:
+  commands:
+    check:
+      run: just check
+      description: Run pre-commit checks (fmt, deny, clippy, test)

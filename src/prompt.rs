@@ -82,7 +82,7 @@ impl ChatPrompt<Template> {
             }
             expect_user_message = !expect_user_message;
         }
-        if self.messages.len() % 2 == 0 {
+        if self.messages.len().is_multiple_of(2) {
             return Err(anyhow!("Prompt must end with a user message"));
         }
         Ok(())

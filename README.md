@@ -223,9 +223,27 @@ The output format is still being refined, but it currently contains the followin
 
 More output fields will be added, possibly including such things as quality indicators or text bounding boxes, if available. And some field names may change. We may also add a "direct to CSV" output mode. But for now, see the scripts in [`scripts/`](./scripts/) for examples of how to convert the JSONL output to other formats.
 
+## Developer setup
+
+### Setting up git hooks
+
+This repository uses [lefthook](https://github.com/evilmartians/lefthook) to manage git hooks.
+
+To install the pre-commit hook:
+
+```sh
+# Mac.
+brew install lefthook
+
+# Linux: Download from https://github.com/evilmartians/lefthook/releases
+
+# Install.
+just setup-hooks
+```
+
 ## A note on coding agents and PRs
 
-Coding agents are unlikely to be of much help writing major `prompt-scaler` patches, because it's a bit too large, and it's doing some moderately complicated things with async Rust streams. But agents may be useful for explaining the code that's already there. There is some concise, agent-friendly documentation in [.clinerules/](./.clinerules/).
+Coding agents are unlikely to be of much help writing major `prompt-scaler` patches, because it's a bit too large, and it's doing some moderately complicated things with async Rust streams. But agents may be useful for explaining the code that's already there. There is some concise, agent-friendly documentation in [AGENT.md](./AGENT.md).
 
 However, if you submit any PRs:
 

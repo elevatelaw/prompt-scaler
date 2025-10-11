@@ -103,9 +103,7 @@ impl OcrPageEngine for LlmOcrPageEngine {
             ]),
             skip_processing: None,
             passthrough_data: None,
-            data: ChatInput {
-                template_bindings,
-            },
+            data: ChatInput { template_bindings },
         };
         let chat_output = chat_handle.process_blocking(input).await?;
         let errors = chat_output.errors;

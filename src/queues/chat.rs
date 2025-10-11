@@ -39,9 +39,7 @@ pub struct ChatOutput {
 impl ChatOutput {
     /// Create an empty chat output record for use when an error occurs.
     pub fn empty_for_error() -> Self {
-        Self {
-            response: None,
-        }
+        Self { response: None }
     }
 }
 
@@ -249,9 +247,7 @@ async fn run_chat(
             estimated_cost: None,
             token_usage: None,
             passthrough_data,
-            data: ChatOutput {
-                response: None,
-            },
+            data: ChatOutput { response: None },
         });
     }
 
