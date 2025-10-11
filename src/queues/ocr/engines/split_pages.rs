@@ -156,6 +156,7 @@ impl OcrFileEngine for SplitPagesOcrEngine {
             } else {
                 Some(token_usage)
             },
+            passthrough_data: ocr_input.passthrough_data,
             data: OcrOutput {
                 path: ocr_input.data.path,
                 text: if good_page_count > 0 {

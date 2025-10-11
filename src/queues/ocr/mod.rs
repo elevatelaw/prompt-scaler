@@ -276,6 +276,21 @@ pub async fn ocr_file(
 ) -> Result<WorkOutput<OcrOutput>> {
     let id = ocr_input.id.clone();
     let path = ocr_input.data.path.clone();
+    let skip_processing = ocr_input.skip_processing.unwrap_or(false);
+    let passthrough_data = ocr_input.passthrough_data.clone();
+
+    // Early return if skip_processing is true.
+    if skip_processing {
+        return Ok(WorkOutput {
+            id,
+            status: WorkStatus::Skipped,
+            errors: vec![],
+            estimated_cost: None,
+            token_usage: None,
+            passthrough_data,
+            data: OcrOutput::empty_for_error(path),
+        });
+    }
 
     // Perform the actual work.
     let result = engine.ocr_file(ocr_input).await;
@@ -291,6 +306,7 @@ pub async fn ocr_file(
                 id,
                 errors,
                 OcrOutput::empty_for_error(path),
+                passthrough_data,
             ))
         }
     }

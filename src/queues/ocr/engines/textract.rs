@@ -317,6 +317,7 @@ impl OcrFileEngine for TextractOcrFileEngine {
             errors: vec![],
             estimated_cost: Some(estimated_cost),
             token_usage: None,
+            passthrough_data: ocr_input.passthrough_data,
             data: OcrOutput {
                 path: ocr_input.data.path,
                 text: Some(text),

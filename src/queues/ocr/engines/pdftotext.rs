@@ -59,6 +59,7 @@ impl OcrFileEngine for PdfToTextOcrFileEngine {
                 ocr_input.id,
                 vec!["pdftotext only works with PDFs".to_string()],
                 OcrOutput::empty_for_error(ocr_input.data.path.clone()),
+                ocr_input.passthrough_data,
             ));
         }
 
@@ -100,6 +101,7 @@ impl OcrFileEngine for PdfToTextOcrFileEngine {
             estimated_cost: None,
             token_usage: None,
             errors,
+            passthrough_data: ocr_input.passthrough_data,
             data: OcrOutput {
                 path: ocr_input.data.path.clone(),
                 text: Some(text),

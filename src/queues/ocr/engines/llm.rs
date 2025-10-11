@@ -101,9 +101,9 @@ impl OcrPageEngine for LlmOcrPageEngine {
                 input.id.clone(),
                 Value::Number(input.page_idx.into()),
             ]),
+            skip_processing: None,
+            passthrough_data: None,
             data: ChatInput {
-                skip_processing: None,
-                passthrough_data: None,
                 template_bindings,
             },
         };

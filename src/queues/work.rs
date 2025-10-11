@@ -31,7 +31,7 @@ use serde::de::DeserializeOwned;
 use crate::{
     async_utils::{
         BoxedFuture, BoxedStream, JoinWorker,
-        io::{read_jsonl_or_csv, write_output},
+        io::{JsonObject, read_jsonl_or_csv, write_output},
     },
     cmd::StreamOpts,
     drivers::TokenUsage,
@@ -47,6 +47,14 @@ where
 {
     /// The unique ID of the work item.
     pub id: Value,
+
+    /// Skip LLM processing and return status: "skipped"
+    #[serde(default)]
+    pub skip_processing: Option<bool>,
+
+    /// Arbitrary data to pass through to output
+    #[serde(default)]
+    pub passthrough_data: Option<JsonObject>,
 
     /// The input data for the work item.
     #[serde(flatten)]
@@ -121,6 +129,10 @@ where
     /// Any errors that occurred during processing.
     pub errors: Vec<String>,
 
+    /// Passthrough data from input
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub passthrough_data: Option<JsonObject>,
+
     /// The output data for the work item.
     #[serde(flatten)]
     pub data: T,
@@ -132,13 +144,19 @@ where
     T: Clone + Serialize + Send + 'static,
 {
     /// Create a new failed output record.
-    pub fn new_failed(id: Value, errors: Vec<String>, data: T) -> Self {
+    pub fn new_failed(
+        id: Value,
+        errors: Vec<String>,
+        data: T,
+        passthrough_data: Option<JsonObject>,
+    ) -> Self {
         Self {
             id,
             status: WorkStatus::Failed,
             estimated_cost: None,
             token_usage: None,
             errors,
+            passthrough_data,
             data,
         }
     }
