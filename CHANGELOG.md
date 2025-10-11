@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.17] - 2025-10-11
+
+### Added
+
+- Inputs may contain `"skip_processing": true` to skip a specific input record. This is useful for records which will have empty input strings (which cannot be processed by some LLMs). These records will be marked as `"status": "skipped"` in the output.
+- Inputs may also contain `"passthrough_data"`, which may contain JSON data that will be copied to the output record as-is. This is useful for associating metadata with input records when the input and output processes are not strictly synchronized.
+- Add a `to-string` helper for prompts.
+
+### Fixed
+
+- Pass Vertex system message as system message, not user message.
+
 ## [0.2.16] - 2025-09-08
 
 ### Added
