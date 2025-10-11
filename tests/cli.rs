@@ -429,3 +429,54 @@ fn test_ocr_textract_async() {
         .stdout(predicates::str::contains("\\fOCR TEST DOCUMENT"))
         .success();
 }
+
+#[test]
+#[ignore = "Needs LiteLLM running"]
+fn test_chat_skip_processing_and_passthrough_litellm() {
+    use serde_json::Value;
+
+    let output = cmd()
+        .env("OPENAI_API_KEY", LITELLM_API_KEY)
+        .env("OPENAI_API_BASE", LITELLM_API_BASE)
+        .arg("chat")
+        .arg("tests/fixtures/skip_and_passthrough/input.csv")
+        .arg("--prompt")
+        .arg("tests/fixtures/skip_and_passthrough/prompt.toml")
+        .arg("--model")
+        .arg(LITELLM_CHEAP_MODELS[0])
+        .stdout(Stdio::piped())
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).expect("Invalid UTF-8");
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 3, "Should have 3 output records");
+
+    // Parse each line as JSON
+    let records: Vec<Value> = lines
+        .iter()
+        .map(|line| serde_json::from_str(line).expect("Failed to parse JSON"))
+        .collect();
+
+    // Check first record (skip1)
+    assert_eq!(records[0]["id"], "skip1");
+    assert_eq!(records[0]["status"], "skipped");
+    assert!(records[0]["response"].is_null());
+    assert_eq!(records[0]["passthrough_data"]["custom"], "data");
+    assert_eq!(records[0]["passthrough_data"]["count"], 42);
+
+    // Check second record (normal)
+    assert_eq!(records[1]["id"], "normal");
+    assert_eq!(records[1]["status"], "ok");
+    assert!(records[1]["response"].is_object());
+    assert!(records[1]["response"]["punchline"].is_string());
+    assert_eq!(records[1]["passthrough_data"]["tag"], "test");
+
+    // Check third record (skip2)
+    assert_eq!(records[2]["id"], "skip2");
+    assert_eq!(records[2]["status"], "skipped");
+    assert!(records[2]["response"].is_null());
+    assert_eq!(records[2]["passthrough_data"]["another"], "value");
+}

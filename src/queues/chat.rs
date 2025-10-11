@@ -21,6 +21,14 @@ use crate::{
 /// An input record.
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct ChatInput {
+    /// Skip LLM processing and return status: "skipped"
+    #[serde(default)]
+    pub skip_processing: Option<bool>,
+
+    /// Arbitrary data to pass through to output
+    #[serde(default)]
+    pub passthrough_data: Option<JsonObject>,
+
     /// Other fields. We keep these "flattened" in the record because they're
     /// under the control of the caller, and because our input format may be a
     /// CSV file, which is inherently "flat".
@@ -34,12 +42,19 @@ pub struct ChatOutput {
     /// The response from the LLM. If this is present, the request succeeded.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response: Option<Value>,
+
+    /// Passthrough data from input
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub passthrough_data: Option<JsonObject>,
 }
 
 impl ChatOutput {
     /// Create an empty chat output record for use when an error occurs.
-    pub fn empty_for_error() -> Self {
-        Self { response: None }
+    pub fn empty_for_error(passthrough_data: Option<JsonObject>) -> Self {
+        Self {
+            response: None,
+            passthrough_data,
+        }
     }
 }
 
@@ -49,6 +64,7 @@ impl WorkOutput<ChatOutput> {
         id: Value,
         model: Option<&LiteLlmModel>,
         result: ResolvedResult<(), (), ChatCompletionResponse, anyhow::Error>,
+        passthrough_data: Option<JsonObject>,
     ) -> Self {
         let estimate_cost =
             |usage: Option<&TokenUsage>| usage.and_then(|u| u.estimate_cost(model));
@@ -69,12 +85,13 @@ impl WorkOutput<ChatOutput> {
                 token_usage,
                 data: ChatOutput {
                     response: Some(response),
+                    passthrough_data,
                 },
             },
             ResolvedResult::Fatal { error, .. } => WorkOutput::new_failed(
                 id,
                 vec![full_err(error)],
-                ChatOutput::empty_for_error(),
+                ChatOutput::empty_for_error(passthrough_data),
             ),
             ResolvedResult::Recovered {
                 output:
@@ -92,6 +109,7 @@ impl WorkOutput<ChatOutput> {
                 token_usage,
                 data: ChatOutput {
                     response: Some(response),
+                    passthrough_data,
                 },
             },
             ResolvedResult::GivenUp {
@@ -110,7 +128,7 @@ impl WorkOutput<ChatOutput> {
                     .map(full_err)
                     .chain(iter::once(full_err(fatal_error)))
                     .collect(),
-                ChatOutput::empty_for_error(),
+                ChatOutput::empty_for_error(passthrough_data),
             ),
         }
     }
@@ -230,6 +248,23 @@ async fn run_chat(
     mut input_record: WorkInput<ChatInput>,
 ) -> Result<WorkOutput<ChatOutput>> {
     let id = input_record.id.clone();
+    let skip_processing = input_record.data.skip_processing.unwrap_or(false);
+    let passthrough_data = input_record.data.passthrough_data.take();
+
+    // Early return if skip_processing is true (before prompt rendering)
+    if skip_processing {
+        return Ok(WorkOutput {
+            id,
+            status: WorkStatus::Skipped,
+            errors: vec![],
+            estimated_cost: None,
+            token_usage: None,
+            data: ChatOutput {
+                response: None,
+                passthrough_data,
+            },
+        });
+    }
 
     // Render our prompt.
     trace!(
@@ -259,6 +294,7 @@ async fn run_chat(
         id,
         state.model_info,
         result,
+        passthrough_data,
     ))
 }
 

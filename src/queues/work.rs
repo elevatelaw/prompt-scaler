@@ -81,11 +81,21 @@ pub enum WorkStatus {
     // The work item was successful.
     Ok,
 
+    // The work item was skipped.
+    Skipped,
+
     // Partial data.
     Incomplete,
 
     // The work item failed.
     Failed,
+}
+
+impl WorkStatus {
+    /// Returns true if this status represents a successful outcome.
+    pub fn is_success(self) -> bool {
+        matches!(self, WorkStatus::Ok | WorkStatus::Skipped)
+    }
 }
 
 /// Output record from a [`WorkItemProcessor`].
@@ -214,7 +224,7 @@ impl WorkItemCounterExt for Mutex<WorkOutputCounters> {
         // Hold a sync lock, but just for an instant to update counters.
         let mut counters = self.lock().expect("lock poisoned");
         counters.total_record_count += 1;
-        if item.status != WorkStatus::Ok {
+        if !item.status.is_success() {
             counters.failure_count += 1;
         } else if !item.errors.is_empty() {
             counters.non_fatal_error_count += item.errors.len();

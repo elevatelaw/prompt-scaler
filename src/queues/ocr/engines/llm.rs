@@ -101,7 +101,11 @@ impl OcrPageEngine for LlmOcrPageEngine {
                 input.id.clone(),
                 Value::Number(input.page_idx.into()),
             ]),
-            data: ChatInput { template_bindings },
+            data: ChatInput {
+                skip_processing: None,
+                passthrough_data: None,
+                template_bindings,
+            },
         };
         let chat_output = chat_handle.process_blocking(input).await?;
         let errors = chat_output.errors;

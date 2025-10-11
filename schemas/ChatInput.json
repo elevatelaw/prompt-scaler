@@ -9,6 +9,23 @@
   "properties": {
     "id": {
       "description": "The unique ID of the work item."
+    },
+    "passthrough_data": {
+      "description": "Arbitrary data to pass through to output",
+      "default": null,
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": true
+    },
+    "skip_processing": {
+      "description": "Skip LLM processing and return status: \"skipped\"",
+      "default": null,
+      "type": [
+        "boolean",
+        "null"
+      ]
     }
   },
   "additionalProperties": true

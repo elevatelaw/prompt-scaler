@@ -27,6 +27,14 @@
     "id": {
       "description": "The unique ID of the work item."
     },
+    "passthrough_data": {
+      "description": "Passthrough data from input",
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": true
+    },
     "response": {
       "description": "The response from the LLM. If this is present, the request succeeded."
     },
@@ -78,6 +86,7 @@
       "type": "string",
       "enum": [
         "ok",
+        "skipped",
         "incomplete",
         "failed"
       ]

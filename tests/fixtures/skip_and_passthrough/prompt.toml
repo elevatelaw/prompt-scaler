@@ -1,0 +1,12 @@
+developer = """
+Answer the joke with a short, appropriate punchline.
+"""
+
+[response_schema]
+description = "The response to a joke."
+
+[response_schema.properties.punchline]
+description = "The punchline of the joke."
+
+[[messages]]
+user.text = "{{joke}}"
