@@ -103,3 +103,16 @@ We use `tracing`. You may use `debug!` and `trace!`. Use `#[instrument(level = .
 We strongly encourage correctness.
 
 Avoid using `as` when there's a better alternative. Always use `TYPE::from` or `TYPE::try_from` to convert numeric types.
+
+## Release process
+
+The release process involves the following steps:
+
+1. Make sure all code changes are properly committed. If not, abort and ask the user what to do. **Release commits never contain code changes!**
+2. Run `just check` to ensure that the codebase is in a good state.
+2. Look at the version number in `Cargo.toml` and `CHANGELOG.md`, and list the commits since the last release.
+3. Run `cargo check` to make sure `Cargo.lock` is up to date.
+3. Summarize the user-visible changes in `CHANGELOG.md`, using [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format. Only user-visible changes should be listed!
+4. Decide on a new version number, following [Semantic Versioning](https://semver.org/) (for user-visible changes only). We use the Rust convention of `0.MAJOR.MINOR` for pre-1.0.0 releases. For pre-1.0 `PATCH` releases, we increment `MINOR`.
+5. Show your proposed CHANGELOG.md changes to the user, and ask for permission to execute the plan.
+6. ONLY AFTER APPROVAL: Run `git tag vX.Y.Z && git push && git push --tags`, where `X.Y.Z` is the new version number.
