@@ -1,0 +1,3 @@
+{ "id": "skip1", "skip_processing": true, "passthrough_data": {"custom": "data", "count": 42}, "joke": "This won't be processed" }
+{ "id": "normal", "skip_processing": false, "passthrough_data": {"tag": "test"}, "joke": "Why did the chicken cross the road?" }
+{ "id": "skip2", "skip_processing": true, "passthrough_data": {"another": "value"}, "joke": "Also skipped" }

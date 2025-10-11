@@ -49,7 +49,7 @@ impl WorkOutput<ChatOutput> {
         id: Value,
         model: Option<&LiteLlmModel>,
         result: ResolvedResult<(), (), ChatCompletionResponse, anyhow::Error>,
-        passthrough_data: Option<JsonObject>,
+        passthrough_data: Option<Value>,
     ) -> Self {
         let estimate_cost =
             |usage: Option<&TokenUsage>| usage.and_then(|u| u.estimate_cost(model));

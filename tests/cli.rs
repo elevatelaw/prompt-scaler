@@ -439,7 +439,7 @@ fn test_chat_skip_processing_and_passthrough_litellm() {
         .env("OPENAI_API_KEY", LITELLM_API_KEY)
         .env("OPENAI_API_BASE", LITELLM_API_BASE)
         .arg("chat")
-        .arg("tests/fixtures/skip_and_passthrough/input.csv")
+        .arg("tests/fixtures/skip_and_passthrough/input.jsonl")
         .arg("--prompt")
         .arg("tests/fixtures/skip_and_passthrough/prompt.toml")
         .arg("--model")
@@ -447,7 +447,9 @@ fn test_chat_skip_processing_and_passthrough_litellm() {
         .stdout(Stdio::piped())
         .output()
         .expect("Failed to execute command");
-
+    if !output.status.success() {
+        eprintln!("STDERR:\n{}", String::from_utf8_lossy(&output.stderr));
+    }
     assert!(output.status.success());
 
     let stdout = String::from_utf8(output.stdout).expect("Invalid UTF-8");

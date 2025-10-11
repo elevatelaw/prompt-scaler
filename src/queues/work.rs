@@ -31,7 +31,7 @@ use serde::de::DeserializeOwned;
 use crate::{
     async_utils::{
         BoxedFuture, BoxedStream, JoinWorker,
-        io::{JsonObject, read_jsonl_or_csv, write_output},
+        io::{read_jsonl_or_csv, write_output},
     },
     cmd::StreamOpts,
     drivers::TokenUsage,
@@ -54,7 +54,7 @@ where
 
     /// Arbitrary data to pass through to output
     #[serde(default)]
-    pub passthrough_data: Option<JsonObject>,
+    pub passthrough_data: Option<Value>,
 
     /// The input data for the work item.
     #[serde(flatten)]
@@ -131,7 +131,7 @@ where
 
     /// Passthrough data from input
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub passthrough_data: Option<JsonObject>,
+    pub passthrough_data: Option<Value>,
 
     /// The output data for the work item.
     #[serde(flatten)]
@@ -148,7 +148,7 @@ where
         id: Value,
         errors: Vec<String>,
         data: T,
-        passthrough_data: Option<JsonObject>,
+        passthrough_data: Option<Value>,
     ) -> Self {
         Self {
             id,

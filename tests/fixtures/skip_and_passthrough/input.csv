@@ -1,4 +1,0 @@
-id,skip_processing,passthrough_data,joke
-skip1,true,"{""custom"":""data"",""count"":42}",This won't be processed
-normal,false,"{""tag"":""test""}",Why did the chicken cross the road?
-skip2,true,"{""another"":""value""}",Also skipped
