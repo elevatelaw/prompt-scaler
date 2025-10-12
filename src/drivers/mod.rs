@@ -23,6 +23,7 @@ use crate::{
 };
 
 pub mod bedrock;
+pub mod echo;
 pub mod native;
 pub mod openai;
 pub mod vertex;
@@ -39,6 +40,9 @@ pub enum DriverType {
     /// AWS Bedrock driver.
     Bedrock,
 
+    /// Echo driver (for testing).
+    Echo,
+
     /// Attempt to use a native driver for each specific AI.
     Native,
 
@@ -52,6 +56,7 @@ impl DriverType {
         match self {
             DriverType::OpenAI => Ok(Box::new(openai::OpenAiDriver::new().await?)),
             DriverType::Bedrock => Ok(Box::new(bedrock::BedrockDriver::new().await?)),
+            DriverType::Echo => Ok(Box::new(echo::EchoDriver::new())),
             DriverType::Native => Ok(Box::new(native::NativeDriver::new().await?)),
             DriverType::Vertex => Ok(Box::new(vertex::VertexDriver::new().await?)),
         }

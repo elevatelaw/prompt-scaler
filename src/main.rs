@@ -1,3 +1,14 @@
+//! Main entry point for `prompt-scaler``.
+
+// MANDATORY: Forbid all `unsafe` code in this crate. This should never be
+// removed. Based on the overall architecture of this project and years of Rust
+// experience, we should never need `unsafe` code.
+//
+// The only imaginable exception would be implementing low-level `tokio`
+// primitives (which we don't intend to do), or FFI bindings (which we would put
+// in a separate crate).
+#![forbid(unsafe_code)]
+
 use std::{process::exit, str::FromStr};
 
 use clap::{Parser, Subcommand};

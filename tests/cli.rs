@@ -482,3 +482,37 @@ fn test_chat_skip_processing_and_passthrough_litellm() {
     assert!(records[2]["response"].is_null());
     assert_eq!(records[2]["passthrough_data"]["another"], "value");
 }
+
+#[test]
+fn test_chat_echo_driver() {
+    use serde_json::Value;
+
+    let output = cmd()
+        .arg("chat")
+        .arg("tests/fixtures/echo/input.csv")
+        .arg("--prompt")
+        .arg("tests/fixtures/echo/prompt.toml")
+        .arg("--driver")
+        .arg("echo")
+        .arg("--model")
+        .arg("test-model")
+        .stdout(Stdio::piped())
+        .output()
+        .expect("Failed to execute command");
+    if !output.status.success() {
+        eprintln!("STDERR:\n{}", String::from_utf8_lossy(&output.stderr));
+    }
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).expect("Invalid UTF-8");
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 1, "Should have 1 output record");
+
+    // Parse the line as JSON
+    let record: Value = serde_json::from_str(lines[0]).expect("Failed to parse JSON");
+
+    // Check the record
+    assert_eq!(record["id"], "1");
+    assert_eq!(record["status"], "ok");
+    assert_eq!(record["response"]["echo"], "Hello world");
+}

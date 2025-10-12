@@ -1,0 +1,16 @@
+# Echo test prompt
+developer = """
+This is a test prompt for the echo driver.
+"""
+
+# Define the schema for the response - must be an object with single "echo" string property
+[response_schema]
+description = "Echo response containing the user's message."
+
+[response_schema.properties.echo]
+description = "The echoed text from the user's message."
+type = "string"
+
+# Provide the actual input message
+[[messages]]
+user.text = "{{message}}"
