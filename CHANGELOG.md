@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.18] - 2025-10-12
+
+### Added
+
+- `echo` driver: New driver for testing programs that wrap prompt-scaler without needing real LLM API access. The driver echoes back the last user message in a structured format.
+
 ## [0.2.17] - 2025-10-11
 
 ### Added
