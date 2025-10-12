@@ -73,6 +73,12 @@ To get more debug information, you can set the following before running `prompt-
 
 - `RUST_LOG`: Set to `prompt_scaler=debug,warn` or `prompt_scaler=trace,warn` for detailed logging
 
+## Special tasks
+
+The user may ask you to help with special tasks. If so, look up the relevant documentation and follow it carefully.
+
+- Releasing a new version: Read `docs/tasks/release.md`.
+
 ## Environment Configuration
 
 You should **never** need to set up or directly access any of the LLM or other API credentials. These will **always** be provided in a way that `prompt-scaler` detects automatically. If you encounter credential-related errors, immediately stop and ask the user to help.
