@@ -8,6 +8,13 @@ ignore = [
     # We may be able to replace `async-openai` or send a PR upstream.
     "RUSTSEC-2025-0012",
     "RUSTSEC-2024-0384",
+
+    # Unmaintained: number_prefix (via indicatif). No security issue.
+    "RUSTSEC-2025-0119",
+
+    # Unmaintained: rustls-pemfile (via aws-smithy, google-cloud-auth).
+    # No security issue; migrate to rustls-pki-types when deps update.
+    "RUSTSEC-2025-0134",
 ]
 
 [graph]
