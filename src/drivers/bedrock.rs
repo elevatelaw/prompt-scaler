@@ -243,9 +243,8 @@ impl ToBedrockRequest for Message {
                 }
                 for image in images {
                     if let Some((mime_type, data)) = parse_data_url(image) {
-                        let format = mime_type
-                            .strip_prefix("image/")
-                            .unwrap_or(&mime_type);
+                        let format =
+                            mime_type.strip_prefix("image/").unwrap_or(&mime_type);
                         let image_block = ImageBlock::builder()
                             .format(ImageFormat::try_parse(format)?)
                             .source(ImageSource::Bytes(Blob::new(data)))
