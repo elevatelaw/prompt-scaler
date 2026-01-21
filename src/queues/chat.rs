@@ -6,7 +6,6 @@ use futures::FutureExt as _;
 use keen_retry::{ExponentialJitter, ResolvedResult};
 use leaky_bucket::RateLimiter;
 use schemars::JsonSchema;
-use serde_json::Map;
 
 use super::work::{WorkInput, WorkOutput, WorkQueue, WorkStatus};
 use crate::{
@@ -259,7 +258,7 @@ async fn run_chat(
     let prompt = state.prompt.render(&input_record.data.template_bindings)?;
 
     // Release the input data, because it adds up, especially for images.
-    input_record.data.template_bindings = Map::default();
+    drop(std::mem::take(&mut input_record.data.template_bindings));
 
     // If we have a transient failure, back off exponentially.
     let jitter = ExponentialJitter::FromBackoffRange {
