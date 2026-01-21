@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.19] - 2026-01-21
+
+### Fixed
+
+- bedrock: Fix image uploads failing with "unknown enum variant: 'image/jpeg'" error. The AWS SDK's ImageFormat parser expects format names like "jpeg", not full MIME types.
+
 ## [0.2.18] - 2025-10-12
 
 ### Added
