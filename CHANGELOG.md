@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.20] - 2026-01-22
+
+### Fixed
+
+- bedrock: Fix image uploads failing with "Could not process image" error. The Bedrock API expects decoded bytes, but the driver was passing base64-encoded strings directly.
+
 ## [0.2.19] - 2026-01-21
 
 ### Fixed
