@@ -14,6 +14,7 @@ use aws_sdk_bedrockruntime::{
     },
 };
 use aws_smithy_types::{Document, Number};
+use base64::{Engine as _, prelude::BASE64_STANDARD};
 use uuid::Uuid;
 
 use crate::{
@@ -245,9 +246,12 @@ impl ToBedrockRequest for Message {
                     if let Some((mime_type, data)) = parse_data_url(image) {
                         let format =
                             mime_type.strip_prefix("image/").unwrap_or(&mime_type);
+                        let decoded_bytes = BASE64_STANDARD
+                            .decode(data)
+                            .context("Cannot decode base64 image data")?;
                         let image_block = ImageBlock::builder()
                             .format(ImageFormat::try_parse(format)?)
-                            .source(ImageSource::Bytes(Blob::new(data)))
+                            .source(ImageSource::Bytes(Blob::new(decoded_bytes)))
                             .build()
                             .context("Cannot build Bedrock image block")?;
                         builder = builder.content(ContentBlock::Image(image_block));
