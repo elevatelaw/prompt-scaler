@@ -1,20 +1,41 @@
 //! Iterate over "pages" in an image.
 
-use std::{collections::BTreeMap, process::Output, sync::LazyLock, vec};
+use std::{
+    collections::BTreeMap,
+    fs,
+    io::{BufReader, Cursor},
+    process::Output,
+    sync::LazyLock,
+    vec,
+};
 
 use anyhow::anyhow;
 use clap::Args;
+use image::{DynamicImage, GrayImage, ImageFormat, RgbImage, RgbaImage};
 use regex::Regex;
+use tiff::{
+    ColorType,
+    decoder::{Decoder, DecodingResult, ifd::Value},
+    tags::{IfdPointer, Tag},
+};
 use tokio::process::Command;
 
 use crate::{
-    async_utils::check_for_command_failure, cpu_limit::with_cpu_semaphore,
-    data_url::data_url, prelude::*,
+    async_utils::{
+        blocking_iter_streams::spawn_blocking_propagating_panics,
+        check_for_command_failure,
+    },
+    cpu_limit::with_cpu_semaphore,
+    data_url::data_url,
+    prelude::*,
 };
 
 /// Image types supported as-is.
 const SUPPORTED_IMAGE_TYPES: &[&str] =
     &["image/png", "image/jpeg", "image/webp", "image/gif"];
+
+/// TIFF MIME type, handled separately due to multipage complexity.
+const TIFF_MIME_TYPE: &str = "image/tiff";
 
 /// A default error regex for checking command output.
 static ERROR_REGEX: LazyLock<Regex> =
@@ -109,6 +130,9 @@ impl PageIter {
                 max_pages: options.max_pages,
                 warnings: vec![],
             })
+        } else if mime_type == TIFF_MIME_TYPE {
+            // We have a TIFF file. Handle multipage TIFFs specially.
+            Self::from_tiff(path, options).await
         } else if mime_type == "application/pdf" {
             // We have a PDF file. If we need to rasterize, do that.
             if options.rasterize {
@@ -118,7 +142,7 @@ impl PageIter {
             }
         } else {
             Err(anyhow!(
-                "unsupported image or PDF MIME type {} for {:?}",
+                "unsupported MIME type {} for {:?} (supported: PNG, JPEG, WebP, GIF, TIFF, PDF)",
                 mime_type,
                 path.display()
             ))
@@ -290,6 +314,57 @@ impl PageIter {
         })
     }
 
+    /// Create a new [`PageIter`] from a multipage TIFF file.
+    ///
+    /// This method:
+    /// 1. Iterates the main IFD chain to extract document pages
+    /// 2. Validates any SubIFDs to ensure no document content is hidden
+    /// 3. Converts each page to PNG for LLM consumption
+    #[instrument(level = "debug", skip_all, fields(path = %path.display()))]
+    async fn from_tiff(path: &Path, options: &PageIterOptions) -> Result<Self> {
+        let path_owned = path.to_owned();
+        let max_pages = options.max_pages;
+
+        // Run TIFF processing on blocking thread pool (CPU-intensive).
+        let (tmpdir, total_pages, warnings) =
+            spawn_blocking_propagating_panics(move || {
+                process_tiff_sync(&path_owned, max_pages)
+            })
+            .await?;
+
+        // Get the list of PNG files in the temporary directory.
+        let tmpdir_path = tmpdir.path();
+        let mut dir_paths = tmpdir_path
+            .read_dir()
+            .with_context(|| {
+                format!(
+                    "failed to read temporary directory {:?}",
+                    tmpdir_path.display()
+                )
+            })?
+            .map(|entry| {
+                let entry = entry.with_context(|| {
+                    format!(
+                        "failed to read entry in temporary directory {:?}",
+                        tmpdir_path.display()
+                    )
+                })?;
+                Ok(entry.path())
+            })
+            .collect::<Result<Vec<_>>>()?;
+        dir_paths.sort();
+        let dir_iter = dir_paths.into_iter();
+
+        Ok(Self {
+            tmpdir: Some(tmpdir),
+            mime_type: "image/png".to_string(),
+            dir_iter,
+            total_pages,
+            max_pages: options.max_pages,
+            warnings,
+        })
+    }
+
     /// Get any warnings that occurred while processing the document.
     pub fn warnings(&self) -> &[String] {
         &self.warnings
@@ -429,6 +504,349 @@ pub fn get_mime_type(path: &Path) -> Result<String> {
         .to_string())
 }
 
+// ============================================================================
+// TIFF processing helpers
+// ============================================================================
+
+/// NewSubfileType bit definitions per TIFF 6.0 specification.
+mod tiff_subfile_type {
+    /// Bit 0: Reduced resolution image (thumbnail/preview).
+    pub const REDUCED_RESOLUTION: u32 = 0x1;
+    /// Bit 1: Single page of a multi-page document.
+    pub const SINGLE_PAGE: u32 = 0x2;
+    /// Bit 2: Transparency mask for another image.
+    pub const TRANSPARENCY_MASK: u32 = 0x4;
+    /// DNG extensions (bits 3, 4, 16): depth map, enhanced image, semantic mask.
+    pub const DNG_BITS: u32 = 0x8 | 0x10 | 0x10000;
+}
+
+/// Process a TIFF file synchronously, returning a tempdir with PNG pages.
+///
+/// We do this the hard way, because we want to be sure to get multiple pages.
+/// And unfortunately, multiple pages can be represented in many different ways,
+/// depending on source. We attempt to error aggressively on things that we do
+/// not understand, in order to prevent accidentally missing data.
+///
+/// For scanned documents, the most important case by far is pages represented
+/// as IFDs, which [`tiff`] handles out of the box. There's another rare SubIFD
+/// representation. If we see _that_, we error. Some other cases like thumbnails
+/// should not be treated as separate pages, because that will cause a wide
+/// range of LLM-based processing to fail.
+fn process_tiff_sync(
+    path: &Path,
+    max_pages: Option<usize>,
+) -> Result<(tempfile::TempDir, usize, Vec<String>)> {
+    let file = fs::File::open(path)
+        .with_context(|| format!("failed to open TIFF file {:?}", path.display()))?;
+    let mut decoder = Decoder::new(BufReader::new(file)).with_context(|| {
+        format!("failed to create TIFF decoder for {:?}", path.display())
+    })?;
+
+    let tmpdir = tempfile::TempDir::with_prefix("tiff-pages")?;
+    let mut warnings = Vec::new();
+    let mut page_count = 0;
+    let mut ifd_index = 0;
+
+    loop {
+        // Check max_pages limit before processing.
+        if let Some(max) = max_pages
+            && page_count >= max
+        {
+            break;
+        }
+
+        // Seek to this IFD (skip for first IFD, which is already loaded).
+        if ifd_index > 0 {
+            if !decoder.more_images() {
+                break;
+            }
+            decoder.next_image().with_context(|| {
+                format!(
+                    "failed to advance to IFD {} in {:?}",
+                    ifd_index,
+                    path.display()
+                )
+            })?;
+        }
+
+        // Validate SubIFDs for this IFD.
+        validate_subifds(&mut decoder, path, ifd_index, &mut warnings)?;
+
+        // Decode the image.
+        let (width, height) = decoder.dimensions().with_context(|| {
+            format!(
+                "failed to get dimensions for IFD {} in {:?}",
+                ifd_index,
+                path.display()
+            )
+        })?;
+
+        let image = decode_tiff_image(&mut decoder, width, height, path, ifd_index)?;
+
+        // Write as PNG to tempdir.
+        let png_path = tmpdir.path().join(format!("page-{:05}.png", page_count));
+        let mut png_bytes = Vec::new();
+        image
+            .write_to(&mut Cursor::new(&mut png_bytes), ImageFormat::Png)
+            .with_context(|| {
+                format!(
+                    "failed to encode PNG for IFD {} in {:?}",
+                    ifd_index,
+                    path.display()
+                )
+            })?;
+        fs::write(&png_path, png_bytes)
+            .with_context(|| format!("failed to write PNG {:?}", png_path.display()))?;
+
+        page_count += 1;
+        ifd_index += 1;
+    }
+
+    // Count total pages (continue iterating without decoding).
+    let mut total_pages = page_count;
+    while decoder.more_images() {
+        decoder.next_image().ok(); // Ignore errors for counting
+        total_pages += 1;
+    }
+
+    debug!(
+        path = %path.display(),
+        page_count = page_count,
+        total_pages = total_pages,
+        "Processed multipage TIFF"
+    );
+
+    Ok((tmpdir, total_pages, warnings))
+}
+
+/// Validate SubIFDs for an IFD, ensuring no document content is hidden.
+///
+/// Returns Ok(()) if SubIFDs are safe to skip (thumbnails/masks/DNG metadata).
+/// Returns Err if SubIFDs have ambiguous NewSubfileType that might contain
+/// document content.
+///
+/// We are pretty conservative here, preferring to error on things we do not
+/// understand.
+fn validate_subifds<R: std::io::Read + std::io::Seek>(
+    decoder: &mut tiff::decoder::Decoder<R>,
+    path: &Path,
+    ifd_index: usize,
+    warnings: &mut Vec<String>,
+) -> Result<()> {
+    // Check if this IFD has SubIFDs.
+    let subifd_value = match decoder.find_tag(Tag::SubIfd) {
+        Ok(Some(value)) => value,
+        Ok(None) | Err(_) => return Ok(()), // No SubIFD tag present
+    };
+
+    // Try to extract IFD pointers from the SubIFD value.
+    let subifd_offsets: Vec<u64> = match subifd_value {
+        Value::Ifd(offset) => vec![u64::from(offset)],
+        Value::List(list) => list
+            .iter()
+            .filter_map(|v| match v {
+                Value::Ifd(offset) => Some(u64::from(*offset)),
+                _ => None,
+            })
+            .collect(),
+        _ => return Ok(()), // Not IFD pointers
+    };
+
+    for (sub_idx, &offset) in subifd_offsets.iter().enumerate() {
+        // Read the SubIFD directory.
+        let subdir = match decoder.read_directory(IfdPointer(offset)) {
+            Ok(dir) => dir,
+            Err(e) => {
+                warnings.push(format!(
+                    "Could not read SubIFD {} of IFD {}: {}",
+                    sub_idx, ifd_index, e
+                ));
+                continue;
+            }
+        };
+
+        // Get NewSubfileType from the SubIFD.
+        let subfile_type = get_new_subfile_type(decoder, &subdir);
+
+        // Check if this SubIFD is safe to skip.
+        if (subfile_type & tiff_subfile_type::REDUCED_RESOLUTION) != 0 {
+            // Bit 0: Reduced resolution (thumbnail) - safe to skip.
+            debug!(
+                path = %path.display(),
+                ifd_index = ifd_index,
+                sub_idx = sub_idx,
+                subfile_type = subfile_type,
+                "Skipping SubIFD: reduced resolution image (thumbnail)"
+            );
+            continue;
+        }
+
+        if (subfile_type & tiff_subfile_type::TRANSPARENCY_MASK) != 0 {
+            // Bit 2: Transparency mask - safe to skip.
+            debug!(
+                path = %path.display(),
+                ifd_index = ifd_index,
+                sub_idx = sub_idx,
+                subfile_type = subfile_type,
+                "Skipping SubIFD: transparency mask"
+            );
+            continue;
+        }
+
+        if (subfile_type & tiff_subfile_type::DNG_BITS) != 0 {
+            // DNG-specific bits - safe to skip.
+            debug!(
+                path = %path.display(),
+                ifd_index = ifd_index,
+                sub_idx = sub_idx,
+                subfile_type = subfile_type,
+                "Skipping SubIFD: DNG camera metadata"
+            );
+            continue;
+        }
+
+        // Ambiguous SubIFD - error to prevent silent data loss.
+        if subfile_type == 0 || (subfile_type & tiff_subfile_type::SINGLE_PAGE) != 0 {
+            return Err(anyhow!(
+                "TIFF file {:?} has ambiguous SubIFD content in IFD {} (SubIFD {}, \
+                 NewSubfileType={}). This SubIFD may contain document pages that \
+                 would be silently dropped. To avoid missing data, please convert \
+                 this TIFF to PDF or individual images using an appropriate tool \
+                 before processing.",
+                path.display(),
+                ifd_index,
+                sub_idx,
+                subfile_type
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Get the NewSubfileType value from a SubIFD directory.
+fn get_new_subfile_type<R: std::io::Read + std::io::Seek>(
+    decoder: &mut tiff::decoder::Decoder<R>,
+    subdir: &tiff::Directory,
+) -> u32 {
+    let mut ifd_decoder = decoder.read_directory_tags(subdir);
+    match ifd_decoder.find_tag(Tag::NewSubfileType) {
+        Ok(Some(value)) => value.into_u32().unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// Decode a TIFF image from the current IFD to a DynamicImage.
+fn decode_tiff_image<R: std::io::Read + std::io::Seek>(
+    decoder: &mut tiff::decoder::Decoder<R>,
+    width: u32,
+    height: u32,
+    path: &Path,
+    ifd_index: usize,
+) -> Result<image::DynamicImage> {
+    let color_type = decoder.colortype().with_context(|| {
+        format!(
+            "failed to get color type for IFD {} in {:?}",
+            ifd_index,
+            path.display()
+        )
+    })?;
+
+    let result = decoder.read_image().with_context(|| {
+        format!("failed to decode IFD {} in {:?}", ifd_index, path.display())
+    })?;
+
+    // Apparently we need to do this the hard way
+    let image = match result {
+        DecodingResult::U8(data) => match color_type {
+            ColorType::Gray(_) => {
+                let gray = GrayImage::from_raw(width, height, data).ok_or_else(|| {
+                    anyhow!(
+                        "failed to create grayscale image for IFD {} in {:?}",
+                        ifd_index,
+                        path.display()
+                    )
+                })?;
+                DynamicImage::ImageLuma8(gray)
+            }
+            ColorType::RGB(_) => {
+                let rgb = RgbImage::from_raw(width, height, data).ok_or_else(|| {
+                    anyhow!(
+                        "failed to create RGB image for IFD {} in {:?}",
+                        ifd_index,
+                        path.display()
+                    )
+                })?;
+                DynamicImage::ImageRgb8(rgb)
+            }
+            ColorType::RGBA(_) => {
+                let rgba = RgbaImage::from_raw(width, height, data).ok_or_else(|| {
+                    anyhow!(
+                        "failed to create RGBA image for IFD {} in {:?}",
+                        ifd_index,
+                        path.display()
+                    )
+                })?;
+                DynamicImage::ImageRgba8(rgba)
+            }
+            other => {
+                return Err(anyhow!(
+                    "unsupported TIFF color type {:?} in IFD {} of {:?}",
+                    other,
+                    ifd_index,
+                    path.display()
+                ));
+            }
+        },
+        DecodingResult::U16(data) => {
+            // Convert 16-bit to 8-bit by scaling.
+            let data_u8: Vec<u8> = data.iter().map(|&v| (v >> 8) as u8).collect();
+            match color_type {
+                ColorType::Gray(_) => {
+                    let gray =
+                        GrayImage::from_raw(width, height, data_u8).ok_or_else(|| {
+                            anyhow!(
+                                "failed to create 16-bit grayscale image for IFD {} in {:?}",
+                                ifd_index,
+                                path.display()
+                            )
+                        })?;
+                    DynamicImage::ImageLuma8(gray)
+                }
+                ColorType::RGB(_) => {
+                    let rgb =
+                        RgbImage::from_raw(width, height, data_u8).ok_or_else(|| {
+                            anyhow!(
+                                "failed to create 16-bit RGB image for IFD {} in {:?}",
+                                ifd_index,
+                                path.display()
+                            )
+                        })?;
+                    DynamicImage::ImageRgb8(rgb)
+                }
+                other => {
+                    return Err(anyhow!(
+                        "unsupported 16-bit TIFF color type {:?} in IFD {} of {:?}",
+                        other,
+                        ifd_index,
+                        path.display()
+                    ));
+                }
+            }
+        }
+        other => {
+            return Err(anyhow!(
+                "unsupported TIFF sample format in IFD {} of {:?}: {:?}",
+                ifd_index,
+                path.display(),
+                std::any::type_name_of_val(&other)
+            ));
+        }
+    };
+
+    Ok(image)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,6 +894,49 @@ mod tests {
     async fn page_iter_obeys_max_pages() -> Result<()> {
         let page_iter = PageIter::from_path(
             Path::new(TEST_PDF_PATH),
+            &PageIterOptions {
+                rasterize: false,
+                rasterize_dpi: 300,
+                max_pages: Some(1),
+            },
+            None,
+        )
+        .await?;
+        assert!(page_iter.is_incomplete());
+        assert!(page_iter.check_complete().is_err());
+        let pages = page_iter.collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(pages.len(), 1);
+        Ok(())
+    }
+
+    static TEST_TIFF_PATH: &str = "tests/fixtures/ocr/two_pages.tiff";
+
+    #[tokio::test]
+    async fn tiff_page_iter_returns_correct_number_of_pages() -> Result<()> {
+        let page_iter = PageIter::from_path(
+            Path::new(TEST_TIFF_PATH),
+            &PageIterOptions {
+                rasterize: false,
+                rasterize_dpi: 300,
+                max_pages: None,
+            },
+            None,
+        )
+        .await?;
+        let pages = page_iter.collect::<Result<Vec<_>, _>>()?;
+        // The TIFF has 2 pages (converted from 2-page PDF).
+        assert_eq!(pages.len(), 2);
+        // Each page should be PNG.
+        for page in &pages {
+            assert_eq!(page.mime_type, "image/png");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn tiff_page_iter_obeys_max_pages() -> Result<()> {
+        let page_iter = PageIter::from_path(
+            Path::new(TEST_TIFF_PATH),
             &PageIterOptions {
                 rasterize: false,
                 rasterize_dpi: 300,

@@ -39,6 +39,7 @@ google-cloud-aiplatform-v1 = "0.5.0"
 google-cloud-gax = "0.25.0"
 handlebars = "6.3.2"
 handlebars-concat = "0.3.0"
+image = { version = "0.25", default-features = false, features = ["png"] }
 infer = "0.19.0"
 indicatif = { version = "0.17.11", features = ["futures"] }
 jsonschema = { version = "0.30.0", default-features = false }
@@ -53,6 +54,7 @@ schemars = "0.8.22"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 tempfile = "3.19.1"
+tiff = "0.11"
 tokio = { version = "1.44.1", features = [
     "macros",
     "tracing",

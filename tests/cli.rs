@@ -361,6 +361,20 @@ fn test_ocr_tesseract() {
 }
 
 #[test]
+fn test_ocr_tiff_tesseract() {
+    cmd()
+        .arg("ocr")
+        .arg("tests/fixtures/ocr/tiff_input.csv")
+        .arg("--jobs")
+        .arg("3")
+        .arg("--model")
+        .arg("tesseract")
+        .arg("--rasterize") // Required by tesseract engine (no-op for TIFF since already PNG)
+        .assert()
+        .success();
+}
+
+#[test]
 #[ignore = "Slightly expensive and needs AWS credentials"]
 fn test_ocr_textract() {
     cmd()
