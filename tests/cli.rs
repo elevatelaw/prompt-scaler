@@ -369,7 +369,7 @@ fn test_ocr_tiff_tesseract() {
         .arg("3")
         .arg("--model")
         .arg("tesseract")
-        .arg("--rasterize") // Required by tesseract engine (no-op for TIFF since already PNG)
+        .arg("--rasterize") // Required by tesseract engine
         .assert()
         .success();
 }

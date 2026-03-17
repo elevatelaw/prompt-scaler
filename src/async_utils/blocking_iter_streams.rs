@@ -119,6 +119,9 @@ where
 
 /// Wrapper around [`tokio::task::spawn_blocking`] that propagates panics from
 /// the background task.
+///
+/// If you're doing something particularly expensive or highly parallel, you may
+/// also want to use [`crate::cpu_limit::with_cpu_semaphore`].
 pub async fn spawn_blocking_propagating_panics<F, T>(f: F) -> T
 where
     F: FnOnce() -> T + Send + 'static,
