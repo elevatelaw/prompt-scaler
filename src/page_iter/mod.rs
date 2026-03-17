@@ -7,14 +7,25 @@ use clap::Args;
 use regex::Regex;
 use tokio::process::Command;
 
+use self::tiff::process_tiff_sync;
 use crate::{
-    async_utils::check_for_command_failure, cpu_limit::with_cpu_semaphore,
-    data_url::data_url, prelude::*,
+    async_utils::{
+        blocking_iter_streams::spawn_blocking_propagating_panics,
+        check_for_command_failure,
+    },
+    cpu_limit::with_cpu_semaphore,
+    data_url::data_url,
+    prelude::*,
 };
+
+mod tiff;
 
 /// Image types supported as-is.
 const SUPPORTED_IMAGE_TYPES: &[&str] =
     &["image/png", "image/jpeg", "image/webp", "image/gif"];
+
+/// TIFF MIME type, handled separately due to multipage complexity.
+const TIFF_MIME_TYPE: &str = "image/tiff";
 
 /// A default error regex for checking command output.
 static ERROR_REGEX: LazyLock<Regex> =
@@ -109,6 +120,9 @@ impl PageIter {
                 max_pages: options.max_pages,
                 warnings: vec![],
             })
+        } else if mime_type == TIFF_MIME_TYPE {
+            // We have a TIFF file. Handle multipage TIFFs specially.
+            Self::from_tiff(path, options).await
         } else if mime_type == "application/pdf" {
             // We have a PDF file. If we need to rasterize, do that.
             if options.rasterize {
@@ -118,7 +132,7 @@ impl PageIter {
             }
         } else {
             Err(anyhow!(
-                "unsupported image or PDF MIME type {} for {:?}",
+                "unsupported MIME type {} for {:?} (supported: PNG, JPEG, WebP, GIF, TIFF, PDF)",
                 mime_type,
                 path.display()
             ))
@@ -246,27 +260,7 @@ impl PageIter {
         let tmpdir_path = tmpdir.path();
 
         // Get the list of PNG files in the temporary directory.
-        let mut dir_paths = tmpdir_path
-            .read_dir()
-            .with_context(|| {
-                format!(
-                    "failed to read temporary directory {:?}",
-                    tmpdir_path.display()
-                )
-            })?
-            .map(|entry| {
-                let entry = entry.with_context(|| {
-                    format!(
-                        "failed to read entry in temporary directory {:?}",
-                        tmpdir_path.display()
-                    )
-                })?;
-                let path = entry.path();
-                Ok(path)
-            })
-            .collect::<Result<Vec<_>>>()?;
-        dir_paths.sort();
-        let dir_iter = dir_paths.into_iter();
+        let dir_iter = tmpdir_sorted_iter(tmpdir_path)?;
 
         // Get the output of the command, and save as warnings.
         let mut warnings = vec![];
@@ -287,6 +281,39 @@ impl PageIter {
             total_pages,
             max_pages: options.max_pages,
             warnings,
+        })
+    }
+
+    /// Create a new [`PageIter`] from a multipage TIFF file.
+    ///
+    /// This method:
+    /// 1. Iterates the main IFD chain to extract document pages
+    /// 2. Validates any SubIFDs to ensure no document content is hidden
+    /// 3. Converts each page to PNG for LLM consumption
+    #[instrument(level = "debug", skip_all, fields(path = %path.display()))]
+    async fn from_tiff(path: &Path, options: &PageIterOptions) -> Result<Self> {
+        let path_owned = path.to_owned();
+        let max_pages = options.max_pages;
+
+        // Run TIFF processing on blocking thread pool (CPU-intensive).
+        let processed_tiff_result = with_cpu_semaphore(|| {
+            spawn_blocking_propagating_panics(move || {
+                process_tiff_sync(&path_owned, max_pages)
+            })
+        })
+        .await?;
+
+        // Get the list of PNG files in the temporary directory.
+        let tmpdir_path = processed_tiff_result.tmpdir.path();
+        let dir_iter = tmpdir_sorted_iter(tmpdir_path)?;
+
+        Ok(Self {
+            tmpdir: Some(processed_tiff_result.tmpdir),
+            mime_type: "image/png".to_string(),
+            dir_iter,
+            total_pages: processed_tiff_result.total_pages,
+            max_pages: options.max_pages,
+            warnings: processed_tiff_result.warnings,
         })
     }
 
@@ -366,6 +393,33 @@ impl Iterator for PageIter {
             None
         }
     }
+}
+
+/// Get a sorted iterator over the files in a temporary directory.
+fn tmpdir_sorted_iter(
+    tmpdir_path: &Path,
+) -> Result<vec::IntoIter<PathBuf>, anyhow::Error> {
+    let mut dir_paths = tmpdir_path
+        .read_dir()
+        .with_context(|| {
+            format!(
+                "failed to read temporary directory {:?}",
+                tmpdir_path.display()
+            )
+        })?
+        .map(|entry| {
+            let entry = entry.with_context(|| {
+                format!(
+                    "failed to read entry in temporary directory {:?}",
+                    tmpdir_path.display()
+                )
+            })?;
+            let path = entry.path();
+            Ok(path)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    dir_paths.sort();
+    Ok(dir_paths.into_iter())
 }
 
 /// Get the number of pages in a PDF file.
@@ -476,6 +530,49 @@ mod tests {
     async fn page_iter_obeys_max_pages() -> Result<()> {
         let page_iter = PageIter::from_path(
             Path::new(TEST_PDF_PATH),
+            &PageIterOptions {
+                rasterize: false,
+                rasterize_dpi: 300,
+                max_pages: Some(1),
+            },
+            None,
+        )
+        .await?;
+        assert!(page_iter.is_incomplete());
+        assert!(page_iter.check_complete().is_err());
+        let pages = page_iter.collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(pages.len(), 1);
+        Ok(())
+    }
+
+    static TEST_TIFF_PATH: &str = "tests/fixtures/ocr/two_pages.tiff";
+
+    #[tokio::test]
+    async fn tiff_page_iter_returns_correct_number_of_pages() -> Result<()> {
+        let page_iter = PageIter::from_path(
+            Path::new(TEST_TIFF_PATH),
+            &PageIterOptions {
+                rasterize: false,
+                rasterize_dpi: 300,
+                max_pages: None,
+            },
+            None,
+        )
+        .await?;
+        let pages = page_iter.collect::<Result<Vec<_>, _>>()?;
+        // The TIFF has 2 pages (converted from 2-page PDF).
+        assert_eq!(pages.len(), 2);
+        // Each page should be PNG.
+        for page in &pages {
+            assert_eq!(page.mime_type, "image/png");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn tiff_page_iter_obeys_max_pages() -> Result<()> {
+        let page_iter = PageIter::from_path(
+            Path::new(TEST_TIFF_PATH),
             &PageIterOptions {
                 rasterize: false,
                 rasterize_dpi: 300,
