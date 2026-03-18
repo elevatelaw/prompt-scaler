@@ -18,6 +18,28 @@ The following variables can be specified in the environment, or using a `.env` f
     - When using `GEMINI_API_KEY`, you will probably also want to pass something like `--rate-limit=1800/m` to stay mostly below the Tier 1 rate limit of 2000 requests per minute. Rate limit enforcement on Google's does not appear to be 100% predictable, so this may require experimentation.
 - `RUST_LOG` (optional): Set to `prompt_scaler=debug,warn` or `prompt_scaler=trace,warn` to produce detailed logs. This uses the [`env-logger` syntax](https://docs.rs/env_logger/latest/env_logger/).
 
+### Tokio console
+
+We also have support for `tokio-console`, which provides a way to debug complex asynchronous Rust applications. You can control it using the following environment variables:
+
+- `TOKIO_CONSOLE_BIND` (required): The host and port on which to listen (e.g., localhost:6669)
+- `TOKIO_CONSOLE_PUBLISH_INTERVAL`: Update interval in milliseconds (default: 1000)
+- `TOKIO_CONSOLE_RETENTION`: Number of seconds to retain tracing data (default: 3600)
+- `TOKIO_CONSOLE_RECORD_PATH`: Where to save a recording. (I'm not quite sure how this works, so check the `tokio-console` docs.)
+
+So for debugging purposes on a large job, you might run:
+
+```sh
+env RUST_LOG=prompt_scaler=info,warn TOKIO_CONSOLE_BIND=localhost:6669 prompt-scaler ...
+```
+
+You could replace `prompt_scaler=info` with `prompt_scaler=debug` or `prompt_scaler=trace` for more detailed logs. To connect to the console, run:
+
+```sh
+cargo install --locked tokio-console
+tokio-console
+```
+
 ## Tested models
 
 We have automated regression tests showing that we can talk to the following models:

@@ -87,20 +87,25 @@ impl Cmd {
 async fn main() -> Result<()> {
     let ui = Ui::init();
 
-    // Initialize tracing.
+    // Initialize tokio-console debugging.
+    let tokio_console_layer = console_subscriber::spawn();
+
+    // Initialize stderr tracing.
     let directive =
         Directive::from_str("info").expect("built-in directive should be valid");
     let env_filter = EnvFilter::builder()
         .with_default_directive(directive)
         .from_env_lossy();
-
-    let subscriber = tracing_subscriber::fmt::layer()
+    let stderr_layer = tracing_subscriber::fmt::layer()
         .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
         .with_writer(ui.get_stderr_writer())
         .with_filter(env_filter);
 
     // We can stack multiple layers here if we need to.
-    tracing_subscriber::registry().with(subscriber).init();
+    tracing_subscriber::registry()
+        .with(tokio_console_layer)
+        .with(stderr_layer)
+        .init();
 
     // Call our real `main` function now that logging is set up.
     let result = real_main(&ui).await;

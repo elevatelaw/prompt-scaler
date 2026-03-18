@@ -72,6 +72,7 @@ toml-span = { version = "0.5.2", features = ["reporting"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 uuid = { version = "1.17.0", features = ["v4"] }
+console-subscriber = "0.5.0"
 
 [dev-dependencies]
 assert_cmd = "2.0.16"
