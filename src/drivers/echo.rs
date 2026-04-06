@@ -11,11 +11,10 @@ use crate::{
     litellm::LiteLlmModel,
     prelude::*,
     prompt::{ChatPrompt, Message, Rendered},
-    retry::retry_result_ok,
     schema::{InternalSchema, InternalSchemaDetails, ScalarType, Schema},
 };
 
-use super::{ChatCompletionResponse, Driver, LlmOpts, LlmRetryResult, TokenUsage};
+use super::{ChatCompletionResponse, Driver, DriverError, LlmOpts, TokenUsage};
 
 /// Echo driver for testing.
 #[derive(Debug)]
@@ -91,31 +90,19 @@ impl Driver for EchoDriver {
         prompt: &ChatPrompt<Rendered>,
         _schema: Value,
         _llm_opts: &LlmOpts,
-    ) -> LlmRetryResult<ChatCompletionResponse> {
+    ) -> Result<ChatCompletionResponse, DriverError> {
         // Validate the schema
-        if let Err(e) = validate_schema(&prompt.response_schema) {
-            return keen_retry::RetryResult::Fatal {
-                input: (),
-                error: e,
-            };
-        }
+        validate_schema(&prompt.response_schema).map_err(DriverError::invalid_input)?;
 
         // Extract the last user message
-        let text = match extract_last_user_message(&prompt.messages) {
-            Ok(text) => text,
-            Err(e) => {
-                return keen_retry::RetryResult::Fatal {
-                    input: (),
-                    error: e,
-                };
-            }
-        };
+        let text = extract_last_user_message(&prompt.messages)
+            .map_err(DriverError::invalid_input)?;
 
         // Build the response JSON
         let mut response = Map::new();
         response.insert("echo".to_string(), Value::String(text));
 
-        retry_result_ok(ChatCompletionResponse {
+        Ok(ChatCompletionResponse {
             response: Value::Object(response),
             token_usage: Some(TokenUsage {
                 prompt_tokens: 0,

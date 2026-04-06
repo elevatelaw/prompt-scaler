@@ -20,14 +20,11 @@ use crate::{
     litellm::LiteLlmModel,
     prelude::*,
     prompt::{ChatPrompt, Message, Rendered},
-    retry::{
-        IsKnownTransient, retry_result_ok, try_fatal, try_potentially_transient,
-        try_transient,
-    },
+    retry::IsKnownTransient,
     schema::get_schema_title,
 };
 
-use super::{ChatCompletionResponse, Driver, LlmOpts, LlmRetryResult, TokenUsage};
+use super::{ChatCompletionResponse, Driver, DriverError, LlmOpts, TokenUsage};
 
 /// Our OpenAI driver, which we also use for LiteLLM, Ollama and other
 /// compatible gateways.
@@ -56,7 +53,7 @@ impl Driver for NativeDriver {
         prompt: &ChatPrompt<Rendered>,
         mut schema: Value,
         llm_opts: &LlmOpts,
-    ) -> LlmRetryResult<ChatCompletionResponse> {
+    ) -> Result<ChatCompletionResponse, DriverError> {
         // Report what native driver we're using under the hood.
         if let Ok(service_target) = self.client.resolve_service_target(model).await {
             debug!(
@@ -68,16 +65,17 @@ impl Driver for NativeDriver {
 
         // Fix our schema for compatibility.
         {
-            let schema = try_fatal!(
-                schema
-                    .as_object_mut()
-                    .ok_or_else(|| { anyhow!("Expected schema to be an object") })
-            );
+            let schema = schema
+                .as_object_mut()
+                .ok_or_else(|| anyhow!("Expected schema to be an object"))
+                .map_err(DriverError::invalid_input)?;
             schema.remove("$schema");
         }
 
         // Convert our prompt to a genai request and build our options.
-        let req = try_fatal!(prompt.to_genai_request());
+        let req = prompt
+            .to_genai_request()
+            .map_err(DriverError::invalid_input)?;
         let opts = ChatOptions {
             temperature: llm_opts.temperature.map(f64::from),
             max_tokens: llm_opts.max_completion_tokens,
@@ -90,31 +88,32 @@ impl Driver for NativeDriver {
             ..ChatOptions::default()
         };
 
-        // Run our LLM request with a timeout.
-        let future =
-            llm_opts.apply_timeout(self.client.exec_chat(model, req, Some(&opts)));
-        let chat_res = try_potentially_transient!(future.await);
+        // Run our LLM request.
+        let chat_res = self
+            .client
+            .exec_chat(model, req, Some(&opts))
+            .await
+            .map_err(DriverError::api)?;
 
         // Extract our response content.
-        let content = try_fatal!(
-            chat_res
-                .content
-                .as_ref()
-                .ok_or_else(|| anyhow!("No content in response: {:?}", chat_res))
-        );
-        let content_str = try_fatal!(content.text_as_str().ok_or_else(|| anyhow!(
-            "Expected text content in response, found: {:?}",
-            content
-        )));
+        let content = chat_res
+            .content
+            .as_ref()
+            .ok_or_else(|| anyhow!("No content in response: {:?}", chat_res))
+            .map_err(DriverError::invalid_output)?;
+        let content_str = content
+            .text_as_str()
+            .ok_or_else(|| {
+                anyhow!("Expected text content in response, found: {:?}", content)
+            })
+            .map_err(DriverError::invalid_output)?;
 
         // Extract JSON from our content.
-        let response = try_transient!(
-            // If we didn't get JSON here, it's because the model didn't
-            // generate JSON. So give it another chance with `try_transient!`.
-            serde_json::from_str::<Value>(content_str).with_context(|| format!(
-                "Error parsing OpenAI response content: {content:?}"
-            ))
-        );
+        let response = serde_json::from_str::<Value>(content_str)
+            .with_context(|| {
+                format!("Error parsing OpenAI response content: {content:?}")
+            })
+            .map_err(DriverError::invalid_output_transient)?;
         debug!(%response, "Response");
 
         // Compute our token usage.
@@ -132,7 +131,7 @@ impl Driver for NativeDriver {
             None
         };
 
-        retry_result_ok(ChatCompletionResponse {
+        Ok(ChatCompletionResponse {
             response,
             token_usage,
         })

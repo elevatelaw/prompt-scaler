@@ -4,15 +4,13 @@
 //! gateways, but when we're aiming for extremely high throughput,
 //! sometimes it's better to keep everything in native Rust.
 
-use std::{error, fmt, ops::AddAssign, pin::Pin, time::Duration};
+use std::{fmt, ops::AddAssign, time::Duration};
 
 use async_trait::async_trait;
 use clap::{Args, ValueEnum};
-use futures::{FutureExt as _, TryFutureExt as _};
 use keen_retry::RetryResult;
 use schemars::JsonSchema;
 use serde::Serialize;
-use tokio::time;
 
 use crate::{
     litellm::LiteLlmModel,
@@ -102,44 +100,9 @@ pub struct LlmOpts {
 }
 
 impl LlmOpts {
-    /// Apply a timeout to a future.
-    ///
-    /// Yes, this type signature is a bit complicated. It's possible that
-    /// `future` holds references to data that it doesn't own. So we declare
-    /// `'fut` to represent the lifetime of any data held by `future`, and
-    /// carefully preserve it.
-    ///
-    /// The `Pin<Box<dyn Future<...>>>` is just our friend [`BoxedFuture`],
-    /// written out the long way so we can include `'fut`. We're making a pretty
-    /// elaborate promise to the Rust compiler here about data ownership and
-    /// lifetimes.
-    ///
-    /// We box our output future because it may have different implementations,
-    /// depending on which branch we took, and so Rust needs to allocate the future
-    /// on the heap and only provide an abstract [`Future`] interface.
-    ///
-    /// Honestly we try to minimize this stuff, but timeouts are _hard_.
-    pub fn apply_timeout<'fut, T, E>(
-        &self,
-        future: impl Future<Output = Result<T, E>> + Send + 'fut,
-    ) -> Pin<Box<dyn Future<Output = Result<T, LlmError<E>>> + Send + 'fut>>
-    where
-        T: Send + 'static,
-        E: Send + 'static,
-    {
-        let future = future.map_err(LlmError::Native);
-        if let Some(timeout) = self.timeout {
-            time::timeout(Duration::from_secs(timeout), future)
-                // We have a `Result<Result<T, LlmError<E>>, Elapsed>` here, and
-                // we want to convert it to a `Result<T, LlmError<E>>`.
-                .map(|result| match result {
-                    Ok(inner) => inner,
-                    Err(_) => Err(LlmError::Timeout),
-                })
-                .boxed()
-        } else {
-            future.boxed()
-        }
+    /// Get the timeout as a [`Duration`], if set.
+    pub fn timeout_duration(&self) -> Option<Duration> {
+        self.timeout.map(Duration::from_secs)
     }
 }
 
@@ -147,6 +110,115 @@ impl LlmOpts {
 /// distinguish between errors that may be transient, and errors that are
 /// definitely fatal.
 pub type LlmRetryResult<T> = RetryResult<(), (), T, anyhow::Error>;
+
+/// Semantic classification of driver failures.
+#[derive(Debug, Clone, Copy)]
+pub enum DriverErrorKind {
+    /// Input preparation failed (prompt conversion, schema issues,
+    /// request building). Never retryable.
+    InvalidInput,
+    /// The API call itself failed (network, HTTP, SDK errors).
+    /// Retryability depends on the specific error.
+    Api,
+    /// The API refused the request on policy grounds (content filter,
+    /// recitation). Retryable — filters are nondeterministic.
+    PolicyRejection,
+    /// The output was invalid — either the API response didn't match its
+    /// expected structure (not retryable), or the model generated bad
+    /// text like non-JSON (retryable, models are nondeterministic).
+    InvalidOutput,
+}
+
+/// An error from a [`Driver`] implementation.
+#[derive(Debug)]
+pub struct DriverError {
+    /// What kind of failure occurred.
+    pub kind: DriverErrorKind,
+    /// The underlying error, if any.
+    pub source: Option<anyhow::Error>,
+    /// Whether this error is likely transient and worth retrying.
+    pub is_transient: bool,
+}
+
+impl fmt::Display for DriverError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let kind_str = match self.kind {
+            DriverErrorKind::InvalidInput => "invalid input",
+            DriverErrorKind::Api => "API error",
+            DriverErrorKind::PolicyRejection => "policy rejection",
+            DriverErrorKind::InvalidOutput => "invalid output",
+        };
+        if let Some(source) = &self.source {
+            write!(f, "{kind_str}: {source}")
+        } else {
+            write!(f, "{kind_str}")
+        }
+    }
+}
+
+impl std::error::Error for DriverError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source.as_ref().map(|e| e.as_ref())
+    }
+}
+
+impl IsKnownTransient for DriverError {
+    fn is_known_transient(&self) -> bool {
+        self.is_transient
+    }
+}
+
+impl DriverError {
+    /// Input preparation failed. Always fatal.
+    pub fn invalid_input(source: impl Into<anyhow::Error>) -> Self {
+        Self {
+            kind: DriverErrorKind::InvalidInput,
+            source: Some(source.into()),
+            is_transient: false,
+        }
+    }
+
+    /// API call failed. Transience classified by [`IsKnownTransient`] on the
+    /// concrete error type.
+    pub fn api(error: impl IsKnownTransient + Into<anyhow::Error>) -> Self {
+        let is_transient = error.is_known_transient();
+        Self {
+            kind: DriverErrorKind::Api,
+            source: Some(error.into()),
+            is_transient,
+        }
+    }
+
+    /// Policy rejection (content filter, recitation).
+    /// Transient — filters are nondeterministic.
+    pub fn policy_rejection(source: impl Into<anyhow::Error>) -> Self {
+        Self {
+            kind: DriverErrorKind::PolicyRejection,
+            source: Some(source.into()),
+            is_transient: true,
+        }
+    }
+
+    /// API response didn't match expected structure. Fatal — retrying sends
+    /// the same request to the same broken endpoint.
+    pub fn invalid_output(source: impl Into<anyhow::Error>) -> Self {
+        Self {
+            kind: DriverErrorKind::InvalidOutput,
+            source: Some(source.into()),
+            is_transient: false,
+        }
+    }
+
+    /// Model generated bad output (non-JSON, wrong tool, etc.).
+    /// Transient — models are nondeterministic.
+    pub fn invalid_output_transient(source: impl Into<anyhow::Error>) -> Self {
+        Self {
+            kind: DriverErrorKind::InvalidOutput,
+            source: Some(source.into()),
+            is_transient: true,
+        }
+    }
+}
 
 /// Interface trait for LLM drivers.
 #[async_trait]
@@ -163,7 +235,7 @@ pub trait Driver: fmt::Debug + Send + Sync + 'static {
         prompt: &ChatPrompt<Rendered>,
         schema: Value,
         llm_opts: &LlmOpts,
-    ) -> LlmRetryResult<ChatCompletionResponse>;
+    ) -> Result<ChatCompletionResponse, DriverError>;
 }
 
 /// A chat completion response.
@@ -211,56 +283,5 @@ impl AddAssign for TokenUsage {
     fn add_assign(&mut self, other: Self) {
         self.prompt_tokens += other.prompt_tokens;
         self.completion_tokens += other.completion_tokens;
-    }
-}
-
-/// An error which occurred while calling an LLM.
-///
-/// Used internally by drivers to handle timeouts.
-#[derive(Debug)]
-pub enum LlmError<E> {
-    /// A native error.
-    Native(E),
-
-    /// A timeout error.
-    Timeout,
-}
-
-impl<E> IsKnownTransient for LlmError<E>
-where
-    E: IsKnownTransient,
-{
-    /// Is this a known transient error?
-    fn is_known_transient(&self) -> bool {
-        match self {
-            LlmError::Native(err) => err.is_known_transient(),
-            // Runaway LLM responses and some kinds of network timeouts can be retried
-            // with hope of a better result.
-            LlmError::Timeout => true,
-        }
-    }
-}
-
-impl<E> fmt::Display for LlmError<E>
-where
-    E: fmt::Display,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            LlmError::Native(err) => write!(f, "LLM error: {err}"),
-            LlmError::Timeout => write!(f, "LLM request timed out"),
-        }
-    }
-}
-
-impl<E> error::Error for LlmError<E>
-where
-    E: error::Error + 'static,
-{
-    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        match self {
-            LlmError::Native(err) => Some(err),
-            LlmError::Timeout => None,
-        }
     }
 }

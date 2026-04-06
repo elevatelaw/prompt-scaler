@@ -14,7 +14,10 @@ use crate::{
     litellm::{LiteLlmModel, litellm_model_info},
     prelude::*,
     prompt::{ChatPrompt, Rendered},
-    retry::{retry_result_ok, retry_with_backoff, try_retry_result, try_transient},
+    retry::{
+        retry_result_ok, retry_with_backoff, try_potentially_transient, try_transient,
+    },
+    timeouts::WithTimeout,
 };
 
 /// An input record.
@@ -294,7 +297,7 @@ async fn run_chat_inner(
     }
 
     // Call OpenAI.
-    let completion_response = try_retry_result!(
+    let completion_response = try_potentially_transient!(
         state
             .driver
             .chat_completion(
@@ -304,6 +307,7 @@ async fn run_chat_inner(
                 state.schema.clone(),
                 &state.llm_opts,
             )
+            .with_timeout(state.llm_opts.timeout_duration())
             .await
     );
 
