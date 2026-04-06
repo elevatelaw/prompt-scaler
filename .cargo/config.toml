@@ -1,0 +1,4 @@
+[build]
+# This is needed to enable the `tokio_unstable` feature for using with `tokio-console`. If it breaks,
+# you can disable tokio-console.
+rustflags = ["--cfg", "tokio_unstable"]
