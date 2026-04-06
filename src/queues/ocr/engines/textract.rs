@@ -17,8 +17,8 @@ use tokio::time::{Duration, sleep};
 use uuid::Uuid;
 
 use crate::aws::load_aws_config;
+use crate::cmd::ocr::OcrOpts;
 use crate::drivers::LlmOpts;
-use crate::page_iter::PageIterOptions;
 use crate::prelude::*;
 
 use crate::async_utils::JoinWorker;
@@ -72,10 +72,10 @@ impl TextractOcrPageEngine {
     #[allow(clippy::new_ret_no_self)]
     pub async fn new(
         concurrency_limit: usize,
-        llm_opts: &LlmOpts,
+        ocr_opts: Arc<OcrOpts>,
     ) -> Result<(Arc<dyn OcrPageEngine>, JoinWorker)> {
         let client = create_textract_client().await?;
-        let rate_limiter = create_rate_limiter(concurrency_limit, llm_opts);
+        let rate_limiter = create_rate_limiter(concurrency_limit, &ocr_opts.llm_opts);
 
         Ok((
             Arc::new(Self {
@@ -145,8 +145,8 @@ impl OcrPageEngine for TextractOcrPageEngine {
 /// For now, this can only operate on files stored in S3. All passed-in file
 /// paths must be valid S3 URIs.
 pub struct TextractOcrFileEngine {
-    /// Should we include page breaks between pages using a form-feed character?
-    include_page_breaks: bool,
+    /// OCR options.
+    ocr_opts: Arc<OcrOpts>,
 
     /// AWS Textract client.
     client: aws_sdk_textract::Client,
@@ -159,15 +159,15 @@ impl TextractOcrFileEngine {
     /// Create a new `textract` engine.
     #[allow(clippy::new_ret_no_self)]
     pub async fn new(
-        page_iter_opts: &PageIterOptions,
         concurrency_limit: usize,
-        include_page_breaks: bool,
-        llm_opts: &LlmOpts,
+        ocr_opts: Arc<OcrOpts>,
     ) -> Result<(Arc<dyn OcrFileEngine>, JoinWorker)> {
         let client = create_textract_client().await?;
-        let rate_limiter = create_rate_limiter(concurrency_limit, llm_opts);
+        let rate_limiter = create_rate_limiter(concurrency_limit, &ocr_opts.llm_opts);
 
-        if page_iter_opts.max_pages.is_some() || page_iter_opts.rasterize {
+        if ocr_opts.page_iter_opts.max_pages.is_some()
+            || ocr_opts.page_iter_opts.rasterize
+        {
             return Err(anyhow!(
                 "textract-async does not work with --max-pages or --rasterize"
             ));
@@ -175,7 +175,7 @@ impl TextractOcrFileEngine {
 
         Ok((
             Arc::new(Self {
-                include_page_breaks,
+                ocr_opts,
                 client,
                 rate_limiter,
             }) as Arc<dyn OcrFileEngine>,
@@ -292,7 +292,8 @@ impl OcrFileEngine for TextractOcrFileEngine {
         trace!("Document analysis response: {:#?}", response);
 
         // Create our output state and get our text.
-        let mut output = OutputState::new(response.blocks(), self.include_page_breaks);
+        let mut output =
+            OutputState::new(response.blocks(), self.ocr_opts.include_page_breaks);
         output.write_analyzed_document()?;
         let text = output.output;
         debug!(%text, "Extracted text");

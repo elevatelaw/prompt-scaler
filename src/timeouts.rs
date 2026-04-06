@@ -55,6 +55,34 @@ where
     }
 }
 
+/// Extension methods for `Result<T, TimeoutError<E>>`.
+pub trait TimeoutResultExt<T, E> {
+    /// Collapse `TimeoutError<E>` back into `E`, using the closure
+    /// to produce the error for the `Timeout` case.
+    fn flatten_timeout_err(self, f: impl FnOnce() -> E) -> Result<T, E>;
+
+    /// Convert a timeout into an `Ok` value; propagate native errors.
+    fn recover_timeout(self, f: impl FnOnce() -> T) -> Result<T, E>;
+}
+
+impl<T, E> TimeoutResultExt<T, E> for Result<T, TimeoutError<E>> {
+    fn flatten_timeout_err(self, f: impl FnOnce() -> E) -> Result<T, E> {
+        match self {
+            Ok(v) => Ok(v),
+            Err(TimeoutError::Timeout) => Err(f()),
+            Err(TimeoutError::Native(e)) => Err(e),
+        }
+    }
+
+    fn recover_timeout(self, f: impl FnOnce() -> T) -> Result<T, E> {
+        match self {
+            Ok(v) => Ok(v),
+            Err(TimeoutError::Timeout) => Ok(f()),
+            Err(TimeoutError::Native(e)) => Err(e),
+        }
+    }
+}
+
 /// Extension trait that adds `.with_timeout(duration)` to any fallible future.
 pub trait WithTimeout<'fut, T, E>: Future<Output = Result<T, E>> + Send + 'fut
 where

@@ -7,39 +7,38 @@ use futures::StreamExt as _;
 use super::{
     super::{OcrInput, OcrOutput},
     file::OcrFileEngine,
-    page::{OcrPageEngine, OcrPageInput},
+    page::{OcrPageEngine, OcrPageInput, OcrPageOutput},
 };
 use crate::{
     async_utils::blocking_iter_streams::BlockingIterStream,
+    cmd::ocr::OcrOpts,
     drivers::TokenUsage,
-    page_iter::{PageIter, PageIterOptions},
+    page_iter::PageIter,
     prelude::*,
     queues::{
         ocr::OcrAnalysis,
         work::{WorkInput, WorkOutput, WorkStatus},
     },
+    timeouts::{TimeoutResultExt as _, WithTimeout as _},
 };
 
 /// An OCR engine that splits a document into pages, and OCRs each page.
 pub struct SplitPagesOcrEngine {
-    page_iter_opts: PageIterOptions,
+    ocr_opts: Arc<OcrOpts>,
     concurrency_limit: usize,
-    include_page_breaks: bool,
     engine: Arc<dyn OcrPageEngine>,
 }
 
 impl SplitPagesOcrEngine {
     /// Create a new `SplitPagesOcrEngine`.
     pub fn new(
-        page_iter_opts: PageIterOptions,
         concurrency_limit: usize,
-        include_page_breaks: bool,
         engine: Arc<dyn OcrPageEngine>,
+        ocr_opts: Arc<OcrOpts>,
     ) -> Self {
         Self {
-            page_iter_opts,
+            ocr_opts,
             concurrency_limit,
-            include_page_breaks,
             engine,
         }
     }
@@ -58,7 +57,7 @@ impl OcrFileEngine for SplitPagesOcrEngine {
         // async executor with slow PDF processing.
         let page_iter = PageIter::from_path(
             ocr_input.data.path(),
-            &self.page_iter_opts,
+            &self.ocr_opts.page_iter_opts,
             ocr_input.data.password.as_deref(),
         )
         .await
@@ -69,6 +68,7 @@ impl OcrFileEngine for SplitPagesOcrEngine {
         let warnings = page_iter.warnings().to_owned();
         let page_stream = BlockingIterStream::new(page_iter);
 
+        let page_timeout = self.ocr_opts.page_timeout_duration();
         let page_outputs = page_stream
             .enumerate()
             .map(move |(page_idx, page)| {
@@ -76,7 +76,21 @@ impl OcrFileEngine for SplitPagesOcrEngine {
                 let engine = self.engine.clone();
                 async move {
                     let page = page?;
-                    engine.ocr_page(OcrPageInput { id, page_idx, page }).await
+                    engine
+                        .ocr_page(OcrPageInput { id, page_idx, page })
+                        .with_timeout(page_timeout)
+                        .await
+                        .recover_timeout(|| OcrPageOutput {
+                            text: None,
+                            errors: vec![format!(
+                                "Page {} timed out after {}s",
+                                page_idx + 1,
+                                page_timeout.map(|d| d.as_secs()).unwrap_or(0),
+                            )],
+                            analysis: None,
+                            estimated_cost: None,
+                            token_usage: None,
+                        })
                 }
             })
             // Process all the pages concurrently, up to the concurrency limit.
@@ -121,7 +135,7 @@ impl OcrFileEngine for SplitPagesOcrEngine {
         }
 
         // Decide how to represent page breaks.
-        let page_break = if self.include_page_breaks {
+        let page_break = if self.ocr_opts.include_page_breaks {
             "\n\x0C\n"
         } else {
             "\n\n"
