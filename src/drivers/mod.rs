@@ -90,8 +90,8 @@ pub struct LlmOpts {
     /// A timeout, in seconds, for the LLM to return a complete response.
     /// Note that even if a request times out, you'll probably still be charged.
     /// Useful dealing with runaway responses and overloaded servers.
-    #[clap(long)]
-    pub timeout: Option<u64>,
+    #[clap(long, alias = "timeout")]
+    pub llm_timeout: Option<u64>,
 
     /// A rate limit for LLM API requests, of the form "10/s" or "2000/m". This is
     /// applied separately from `--jobs`.
@@ -101,8 +101,8 @@ pub struct LlmOpts {
 
 impl LlmOpts {
     /// Get the timeout as a [`Duration`], if set.
-    pub fn timeout_duration(&self) -> Option<Duration> {
-        self.timeout.map(Duration::from_secs)
+    pub fn llm_timeout_duration(&self) -> Option<Duration> {
+        self.llm_timeout.map(Duration::from_secs)
     }
 }
 

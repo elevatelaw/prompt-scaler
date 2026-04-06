@@ -288,7 +288,7 @@ fn test_ocr_pdf_with_options() {
         .args(["--max-completion-tokens", "1000"])
         .args(["--temperature", "0.5"])
         .args(["--top-p", "0.1"])
-        .args(["--timeout", "60"])
+        .args(["--llm-timeout", "60"])
         .args(["--rate-limit", "10/s"])
         .assert()
         .success();

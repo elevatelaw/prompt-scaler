@@ -307,7 +307,7 @@ async fn run_chat_inner(
                 state.schema.clone(),
                 &state.llm_opts,
             )
-            .with_timeout(state.llm_opts.timeout_duration())
+            .with_timeout(state.llm_opts.llm_timeout_duration())
             .await
     );
 
