@@ -23,14 +23,11 @@ use crate::{
     litellm::LiteLlmModel,
     prelude::*,
     prompt::{ChatPrompt, Message, Rendered},
-    retry::{
-        IsKnownTransient, retry_result_fatal, retry_result_ok, try_fatal,
-        try_potentially_transient, try_transient,
-    },
+    retry::IsKnownTransient,
     schema::get_schema_title,
 };
 
-use super::{ChatCompletionResponse, Driver, LlmOpts, LlmRetryResult};
+use super::{ChatCompletionResponse, Driver, DriverError, LlmOpts};
 
 /// Get OpenAI-compatible client configuration.
 pub fn get_openai_client_config() -> OpenAIConfig {
@@ -77,8 +74,10 @@ impl Driver for OpenAiDriver {
         prompt: &ChatPrompt<Rendered>,
         schema: Value,
         llm_opts: &LlmOpts,
-    ) -> LlmRetryResult<ChatCompletionResponse> {
-        let messages = try_fatal!(prompt.to_openai_prompt());
+    ) -> Result<ChatCompletionResponse, DriverError> {
+        let messages = prompt
+            .to_openai_prompt()
+            .map_err(DriverError::invalid_input)?;
 
         // Build our JSON Schema options.
         let json_schema = ResponseFormatJsonSchema {
@@ -121,18 +120,20 @@ impl Driver for OpenAiDriver {
         if let Some(top_p) = llm_opts.top_p {
             req.top_p(top_p);
         }
-        let req = try_fatal!(req.build().context("Error building request"));
+        let req = req
+            .build()
+            .context("Error building request")
+            .map_err(DriverError::invalid_input)?;
         trace!(?req, "Request");
 
         // Call OpenAI.
         let chat = self.client.chat();
-        let chat_future = llm_opts.apply_timeout(chat.create_byot(req));
-        let chat_result: Value = try_potentially_transient!(chat_future.await);
+        let chat_result: Value = chat.create_byot(req).await.map_err(DriverError::api)?;
         debug!(%chat_result, "OpenAI response");
-        let response = try_fatal!(
+        let response =
             serde_json::from_value::<CreateChatCompletionResponse>(chat_result)
                 .context("Error parsing OpenAI response")
-        );
+                .map_err(DriverError::invalid_output)?;
 
         // How many tokens did we use?
         let token_usage = response.usage.map(|usage| TokenUsage {
@@ -144,25 +145,25 @@ impl Driver for OpenAiDriver {
         let choice = match response.choices.first() {
             Some(choice) => choice,
             None => {
-                return retry_result_fatal(anyhow!("No choices in OpenAI response"));
+                return Err(DriverError::invalid_output(anyhow!(
+                    "No choices in OpenAI response"
+                )));
             }
         };
         if choice.finish_reason == Some(async_openai::types::FinishReason::ContentFilter)
         {
-            return retry_result_fatal(anyhow!(
+            return Err(DriverError::policy_rejection(anyhow!(
                 "Content filter triggered (may also be a RECITATION error for Gemini models)"
-            ));
+            )));
         }
         let content = choice.message.content.as_deref().unwrap_or_default();
-        let response = try_transient!(
-            // If we didn't get JSON here, it's because the model didn't
-            // generate JSON. So give it another chance with `try_transient!`.
-            serde_json::from_str::<Value>(content).with_context(|| format!(
-                "Error parsing OpenAI response content: {content:?}"
-            ))
-        );
+        let response = serde_json::from_str::<Value>(content)
+            .with_context(|| {
+                format!("Error parsing OpenAI response content: {content:?}")
+            })
+            .map_err(DriverError::invalid_output_transient)?;
         debug!(%response, "Response");
-        retry_result_ok(ChatCompletionResponse {
+        Ok(ChatCompletionResponse {
             response,
             token_usage,
         })

@@ -12,7 +12,7 @@ use tokio::process::Command;
 
 use crate::{
     async_utils::{JoinWorker, check_for_command_failure},
-    page_iter::PageIterOptions,
+    cmd::ocr::OcrOpts,
     prelude::*,
 };
 
@@ -25,10 +25,8 @@ pub struct TesseractOcrPageEngine {}
 impl TesseractOcrPageEngine {
     /// Create a new `tesseract` engine.
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(
-        page_iter_opts: &PageIterOptions,
-    ) -> Result<(Arc<dyn OcrPageEngine>, JoinWorker)> {
-        if page_iter_opts.rasterize {
+    pub fn new(ocr_opts: Arc<OcrOpts>) -> Result<(Arc<dyn OcrPageEngine>, JoinWorker)> {
+        if ocr_opts.page_iter_opts.rasterize {
             Ok((Arc::new(Self {}), JoinWorker::noop()))
         } else {
             Err(anyhow!("tesseract requires --rasterize"))

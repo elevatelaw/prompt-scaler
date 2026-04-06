@@ -13,11 +13,10 @@ use super::work::{
 };
 use crate::{
     async_utils::{BoxedFuture, BoxedStream, JoinWorker, io::write_output_csv},
-    cmd::StreamOpts,
-    drivers::LlmOpts,
-    page_iter::PageIterOptions,
+    cmd::{StreamOpts, ocr::OcrOpts},
     prelude::*,
     prompt::ChatPrompt,
+    timeouts::{TimeoutResultExt as _, WithTimeout as _},
     ui::Ui,
 };
 
@@ -235,28 +234,19 @@ pub async fn ocr_files(
     input: BoxedStream<Result<WorkInput<OcrInput>>>,
     job_count: usize,
     prompt: ChatPrompt,
-    model: String,
-    include_page_breaks: bool,
-    page_iter_opts: PageIterOptions,
-    llm_opts: LlmOpts,
+    ocr_opts: Arc<OcrOpts>,
 ) -> Result<OcrStreamInfo> {
     // Create an OCR engine.
-    let (engine, worker) = ocr_engine_for_model(
-        job_count,
-        prompt,
-        model,
-        include_page_breaks,
-        &page_iter_opts,
-        llm_opts,
-    )
-    .await?;
+    let (engine, worker) =
+        ocr_engine_for_model(job_count, prompt, ocr_opts.clone()).await?;
 
     let output = input
         .map(move |pdf_input| {
             let engine = engine.clone();
+            let ocr_opts = ocr_opts.clone();
             async move {
                 let pdf_input = pdf_input?;
-                ocr_file(pdf_input, engine).await
+                ocr_file(pdf_input, engine, &ocr_opts).await
             }
             .boxed()
         })
@@ -273,6 +263,7 @@ pub async fn ocr_files(
 pub async fn ocr_file(
     ocr_input: WorkInput<OcrInput>,
     engine: Arc<dyn OcrFileEngine>,
+    ocr_opts: &OcrOpts,
 ) -> Result<WorkOutput<OcrOutput>> {
     let id = ocr_input.id.clone();
     let path = ocr_input.data.path.clone();
@@ -292,8 +283,18 @@ pub async fn ocr_file(
         });
     }
 
-    // Perform the actual work.
-    let result = engine.ocr_file(ocr_input).await;
+    // Perform the actual work, with an optional document-level timeout.
+    let doc_timeout = ocr_opts.doc_timeout_duration();
+    let result = engine
+        .ocr_file(ocr_input)
+        .with_timeout(doc_timeout)
+        .await
+        .flatten_timeout_err(|| {
+            anyhow!(
+                "Document timed out after {}s",
+                doc_timeout.map(|d| d.as_secs()).unwrap_or(0),
+            )
+        });
 
     // If we have an error, output an appropriate record and continue.
     // This is necessary to avoid aborting an entire batch of work if one

@@ -7,8 +7,8 @@ use serde_json::Map;
 
 use crate::{
     async_utils::JoinWorker,
+    cmd::ocr::OcrOpts,
     data_url::data_url,
-    drivers::LlmOpts,
     prelude::*,
     prompt::ChatPrompt,
     queues::{
@@ -60,15 +60,19 @@ impl LlmOcrPageEngine {
     pub async fn new(
         concurrency_limit: usize,
         mut prompt: ChatPrompt,
-        model: String,
-        llm_opts: LlmOpts,
+        ocr_opts: Arc<OcrOpts>,
     ) -> Result<(Arc<dyn OcrPageEngine>, JoinWorker)> {
         // Add our schema to our prompt.
         prompt.response_schema = Schema::from_type::<PageChatResponse>();
 
         // Create a new chat queue to handle all our LLM requests.
-        let (chat_queue, worker) =
-            create_chat_work_queue(concurrency_limit, prompt, model, llm_opts).await?;
+        let (chat_queue, worker) = create_chat_work_queue(
+            concurrency_limit,
+            prompt,
+            ocr_opts.model.clone(),
+            ocr_opts.llm_opts.clone(),
+        )
+        .await?;
 
         Ok((Arc::new(Self { chat_queue }), worker))
     }

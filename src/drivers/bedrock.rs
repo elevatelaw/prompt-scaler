@@ -20,14 +20,11 @@ use uuid::Uuid;
 use crate::{
     aws::load_aws_config,
     data_url::parse_data_url,
-    drivers::{ChatCompletionResponse, LlmOpts, LlmRetryResult, TokenUsage},
+    drivers::{ChatCompletionResponse, DriverError, LlmOpts, TokenUsage},
     litellm::LiteLlmModel,
     prelude::*,
     prompt::{ChatPrompt, Message, Rendered},
-    retry::{
-        IsKnownTransient, retry_result_ok, retry_result_transient, try_fatal,
-        try_potentially_transient, try_transient,
-    },
+    retry::IsKnownTransient,
 };
 
 use super::Driver;
@@ -64,7 +61,7 @@ impl Driver for BedrockDriver {
         // TODO: Why do we get this separately from the copy in `prompt`?
         _schema: Value,
         llm_opts: &LlmOpts,
-    ) -> LlmRetryResult<ChatCompletionResponse> {
+    ) -> Result<ChatCompletionResponse, DriverError> {
         // Figure out of inference configuration.
         let mut inf_conf_builder = InferenceConfiguration::builder();
         if let Some(max_tokens) = llm_opts.max_completion_tokens {
@@ -79,27 +76,30 @@ impl Driver for BedrockDriver {
         let inf_conf = inf_conf_builder.build();
 
         // Convert our prompt to a Bedrock request.
-        let req = try_fatal!(prompt.to_bedrock_request().await);
+        let req = prompt
+            .to_bedrock_request()
+            .await
+            .map_err(DriverError::invalid_input)?;
 
         // Send the request.
-        let output = try_potentially_transient!(
-            self.client
-                .converse()
-                .model_id(model)
-                .inference_config(inf_conf)
-                .tool_config(req.tool_config)
-                .set_system(req.system.map(|s| vec![s]))
-                .set_messages(Some(req.messages))
-                .send()
-                .await
-        );
+        let output = self
+            .client
+            .converse()
+            .model_id(model)
+            .inference_config(inf_conf)
+            .tool_config(req.tool_config)
+            .set_system(req.system.map(|s| vec![s]))
+            .set_messages(Some(req.messages))
+            .send()
+            .await
+            .map_err(DriverError::api)?;
 
         // Check for odd stop reasons.
         if output.stop_reason() != &StopReason::ToolUse {
-            return LlmRetryResult::Transient {
-                input: (),
-                error: anyhow!("Unexpected stop reason: {}", output.stop_reason()),
-            };
+            return Err(DriverError::invalid_output_transient(anyhow!(
+                "Unexpected stop reason: {}",
+                output.stop_reason()
+            )));
         }
 
         // Get the token usage.
@@ -109,38 +109,37 @@ impl Driver for BedrockDriver {
         });
 
         // Parse our converse output. This is an annoyingly multi-step process.
-        let converse_output = try_transient!(
-            output
-                .output()
-                .ok_or_else(|| anyhow!("Bedrock response did not contain any output"))
-        );
-        let message = try_transient!(
-            converse_output
-                .as_message()
-                .map_err(|_| anyhow!("Bedrock response did not contain a message"))
-        );
+        let converse_output = output
+            .output()
+            .ok_or_else(|| anyhow!("Bedrock response did not contain any output"))
+            .map_err(DriverError::invalid_output_transient)?;
+        let message = converse_output
+            .as_message()
+            .map_err(|_| anyhow!("Bedrock response did not contain a message"))
+            .map_err(DriverError::invalid_output_transient)?;
         let blocks = message.content();
         if blocks.len() != 1 {
-            return retry_result_transient(anyhow!(
+            return Err(DriverError::invalid_output_transient(anyhow!(
                 "Bedrock response contained {} content blocks, expected 1",
                 blocks.len()
-            ));
+            )));
         }
         if let ContentBlock::ToolUse(tool_use) = &blocks[0] {
             if tool_use.name != OUTPUT_TOOL_NAME {
-                return retry_result_transient(anyhow!(
+                return Err(DriverError::invalid_output_transient(anyhow!(
                     "Bedrock response contained unexpected tool name: {}",
                     tool_use.name
-                ));
+                )));
             }
-            let response = try_transient!(aws_document_to_value(&tool_use.input));
+            let response = aws_document_to_value(&tool_use.input)
+                .map_err(DriverError::invalid_output_transient)?;
             debug!(%response, "Response");
-            retry_result_ok(ChatCompletionResponse {
+            Ok(ChatCompletionResponse {
                 response,
                 token_usage,
             })
         } else {
-            try_transient!(Err(anyhow!(
+            Err(DriverError::invalid_output_transient(anyhow!(
                 "Bedrock response contained unexpected content block: {blocks:?}"
             )))
         }

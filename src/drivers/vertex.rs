@@ -13,14 +13,11 @@ use vertexai::{
 
 use crate::{
     data_url::parse_data_url,
-    drivers::{ChatCompletionResponse, Driver, LlmOpts, LlmRetryResult, TokenUsage},
+    drivers::{ChatCompletionResponse, Driver, DriverError, LlmOpts, TokenUsage},
     litellm::LiteLlmModel,
     prelude::*,
     prompt::{ChatPrompt, Message, Rendered},
-    retry::{
-        IsKnownTransient, retry_result_ok, try_fatal, try_potentially_transient,
-        try_transient,
-    },
+    retry::IsKnownTransient,
 };
 
 /// Our Vertex AI driver.
@@ -56,10 +53,12 @@ impl Driver for VertexDriver {
         prompt: &ChatPrompt<Rendered>,
         schema: Value,
         llm_opts: &LlmOpts,
-    ) -> LlmRetryResult<ChatCompletionResponse> {
+    ) -> Result<ChatCompletionResponse, DriverError> {
         // Convert our prompt to Vertex AI format.
-        let (system_instruction, contents) =
-            try_fatal!(prompt.to_vertex_contents().await);
+        let (system_instruction, contents) = prompt
+            .to_vertex_contents()
+            .await
+            .map_err(DriverError::invalid_input)?;
         trace!(?contents, "Vertex request");
 
         // Set up generation config.
@@ -92,30 +91,36 @@ impl Driver for VertexDriver {
             .set_contents(contents)
             .set_generation_config(generation_config);
 
-        let response = try_potentially_transient!(request.send().await);
+        let response = request.send().await.map_err(DriverError::api)?;
         trace!(?response, "Vertex response");
 
         // Extract the response. Some of these fatal errors might in fact be transients, but
         // we'll only find that out by running the code on large numbers of inputs.
-        let candidate = try_fatal!(response.candidates.first().ok_or_else(|| {
-            anyhow!("Vertex AI response did not contain any candidates")
-        }));
-        let response_content =
-            try_fatal!(candidate.content.as_ref().ok_or_else(|| anyhow!(
-                "Vertex AI response did not contain any content"
-            )));
+        let candidate = response
+            .candidates
+            .first()
+            .ok_or_else(|| anyhow!("Vertex AI response did not contain any candidates"))
+            .map_err(DriverError::invalid_output)?;
+        let response_content = candidate
+            .content
+            .as_ref()
+            .ok_or_else(|| anyhow!("Vertex AI response did not contain any content"))
+            .map_err(DriverError::invalid_output)?;
 
         // Find the assistant's text response.
-        let response_text = try_transient!(extract_assistant_text(response_content));
+        let response_text = extract_assistant_text(response_content)
+            .map_err(DriverError::invalid_output_transient)?;
 
         // Parse the response as JSON. If this fails, it means Google didn't
         // follow our schema, which is weird. But we'll retry it.
-        let response_json = try_transient!(
-            serde_json::from_str::<Value>(&response_text).with_context(|| format!(
-                "Failed to parse Vertex AI response as JSON: {}",
-                response_text
-            ))
-        );
+        let response_json = serde_json::from_str::<Value>(&response_text)
+            .with_context(|| {
+                format!(
+                    "Failed to parse Vertex AI response as JSON: {}",
+                    response_text
+                )
+            })
+            .map_err(DriverError::invalid_output_transient)?;
         debug!(json = %response_json, "Vertex response JSON");
 
         // Get token usage if available.
@@ -125,7 +130,7 @@ impl Driver for VertexDriver {
                 + usage.candidates_token_count.try_into().unwrap_or(0),
         });
 
-        retry_result_ok(ChatCompletionResponse {
+        Ok(ChatCompletionResponse {
             response: response_json,
             token_usage,
         })

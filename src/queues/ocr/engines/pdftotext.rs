@@ -6,7 +6,8 @@ use tokio::process::Command;
 
 use crate::{
     async_utils::{JoinWorker, check_for_command_failure},
-    page_iter::{PageIterOptions, get_mime_type},
+    cmd::ocr::OcrOpts,
+    page_iter::get_mime_type,
     prelude::*,
     queues::{
         ocr::{OcrInput, OcrOutput, engines::file::OcrFileEngine},
@@ -20,27 +21,17 @@ use crate::{
 /// want cheap and fast.
 #[non_exhaustive]
 pub struct PdfToTextOcrFileEngine {
-    page_iter_opts: PageIterOptions,
-    include_page_breaks: bool,
+    ocr_opts: Arc<OcrOpts>,
 }
 
 impl PdfToTextOcrFileEngine {
     /// Create a new `pdftotext` engine.
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(
-        page_iter_opts: &PageIterOptions,
-        include_page_breaks: bool,
-    ) -> Result<(Arc<dyn OcrFileEngine>, JoinWorker)> {
-        if page_iter_opts.rasterize {
+    pub fn new(ocr_opts: Arc<OcrOpts>) -> Result<(Arc<dyn OcrFileEngine>, JoinWorker)> {
+        if ocr_opts.page_iter_opts.rasterize {
             Err(anyhow!("pdftotext does not work with --rasterize"))
         } else {
-            Ok((
-                Arc::new(Self {
-                    page_iter_opts: page_iter_opts.clone(),
-                    include_page_breaks,
-                }),
-                JoinWorker::noop(),
-            ))
+            Ok((Arc::new(Self { ocr_opts }), JoinWorker::noop()))
         }
     }
 }
@@ -70,10 +61,10 @@ impl OcrFileEngine for PdfToTextOcrFileEngine {
         cmd.arg("-layout")
             .arg(&ocr_input.data.path)
             .arg(&output_path);
-        if !self.include_page_breaks {
+        if !self.ocr_opts.include_page_breaks {
             cmd.arg("-nopgbrk");
         }
-        if let Some(max_pages) = self.page_iter_opts.max_pages {
+        if let Some(max_pages) = self.ocr_opts.page_iter_opts.max_pages {
             // I verified that `-l` does nothing if it's larger than the total
             // number of pages.
             cmd.arg("-l").arg(max_pages.to_string());
@@ -88,7 +79,7 @@ impl OcrFileEngine for PdfToTextOcrFileEngine {
         // with our other drivers.
         let mut text =
             read_to_string(&output_path).context("cannot read pdftotext output file")?;
-        if self.include_page_breaks && text.ends_with("\u{0c}") {
+        if self.ocr_opts.include_page_breaks && text.ends_with("\u{0c}") {
             // Strip only one, in case of empty pages or whatever. I have verified that
             // the page feed is the very last character.
             text = text[..text.len() - 1].to_string();

@@ -1,6 +1,6 @@
 //! The `ocr` subcommand.
 
-use std::ffi::OsStr;
+use std::{ffi::OsStr, sync::Arc, time::Duration};
 
 use clap::Args;
 use futures::StreamExt;
@@ -22,7 +22,7 @@ use crate::{
 };
 
 /// Command line arguments for the `ocr` subcommand.
-#[derive(Debug, Args)]
+#[derive(Clone, Debug, Args)]
 pub struct OcrOpts {
     /// Input data, in CSV or JSONL format. Defaults to standard input.
     pub input_path: Option<PathBuf>,
@@ -56,6 +56,28 @@ pub struct OcrOpts {
     /// Our LLM options.
     #[clap(flatten)]
     pub llm_opts: LlmOpts,
+
+    /// Per-page timeout in seconds for OCR. If a single page takes longer
+    /// than this, the page is marked as failed and the document continues.
+    #[clap(long)]
+    pub page_timeout: Option<u64>,
+
+    /// Per-document timeout in seconds for OCR. If processing an entire
+    /// document takes longer than this, the document is marked as failed.
+    #[clap(long)]
+    pub doc_timeout: Option<u64>,
+}
+
+impl OcrOpts {
+    /// Get the page timeout as a [`Duration`].
+    pub fn page_timeout_duration(&self) -> Option<Duration> {
+        self.page_timeout.map(Duration::from_secs)
+    }
+
+    /// Get the document timeout as a [`Duration`].
+    pub fn doc_timeout_duration(&self) -> Option<Duration> {
+        self.doc_timeout.map(Duration::from_secs)
+    }
 }
 
 /// The `ocr` subcommand.
@@ -84,16 +106,9 @@ pub async fn cmd_ocr(ui: &Ui, opts: &OcrOpts) -> Result<()> {
         input.size_hint(),
     );
 
-    let OcrStreamInfo { stream, worker } = ocr_files(
-        input,
-        opts.stream_opts.job_count,
-        prompt,
-        opts.model.to_owned(),
-        opts.include_page_breaks,
-        opts.page_iter_opts.to_owned(),
-        opts.llm_opts.to_owned(),
-    )
-    .await?;
+    let ocr_opts = Arc::new(opts.clone());
+    let OcrStreamInfo { stream, worker } =
+        ocr_files(input, opts.stream_opts.job_count, prompt, ocr_opts).await?;
     let output = pb
         .wrap_stream(opts.stream_opts.apply_stream_buffering_opts(stream))
         .boxed();

@@ -84,6 +84,7 @@ where
 }
 
 /// Macro which implements `?`-like behavior for [`RetryResult`].
+#[allow(unused_macros)]
 macro_rules! try_retry_result {
     ($result:expr) => {
         match $result {
@@ -121,6 +122,7 @@ macro_rules! try_transient {
 }
 
 /// On error, return a [`RetryResult::Fatal`] value.
+#[allow(unused_macros)]
 macro_rules! try_fatal {
     ($result:expr) => {
         match $result {
@@ -160,6 +162,7 @@ macro_rules! try_potentially_transient {
 
 // Here's a trick to export a macro within a crate as if it were a normal
 // symbol.
+#[allow(unused_imports)]
 pub(crate) use {try_fatal, try_potentially_transient, try_retry_result, try_transient};
 
 /// Build an [`RetryResult::Ok`] value.
@@ -171,11 +174,13 @@ pub(crate) fn retry_result_ok<T, E>(output: T) -> RetryResult<(), (), T, E> {
 }
 
 /// Build an [`RetryResult::Fatal`] value.
+#[allow(unused)]
 pub(crate) fn retry_result_fatal<T, E>(error: E) -> RetryResult<(), (), T, E> {
     RetryResult::Fatal { input: (), error }
 }
 
 /// Build an [`RetryResult::Transient`] value.
+#[allow(unused)]
 pub(crate) fn retry_result_transient<T, E>(error: E) -> RetryResult<(), (), T, E> {
     RetryResult::Transient { input: (), error }
 }
