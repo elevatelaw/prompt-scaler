@@ -19,6 +19,8 @@ use uuid::Uuid;
 use crate::aws::load_aws_config;
 use crate::cmd::ocr::OcrOpts;
 use crate::drivers::LlmOpts;
+use crate::images::ImageEncoding;
+use crate::mem_limit::MemLimiter;
 use crate::prelude::*;
 
 use crate::async_utils::JoinWorker;
@@ -65,6 +67,9 @@ pub struct TextractOcrPageEngine {
 
     /// A rate limiter to avoid hitting API limits.
     rate_limiter: RateLimiter,
+
+    /// A memory limiter for image loading.
+    mem_limiter: MemLimiter,
 }
 
 impl TextractOcrPageEngine {
@@ -76,11 +81,18 @@ impl TextractOcrPageEngine {
     ) -> Result<(Arc<dyn OcrPageEngine>, JoinWorker)> {
         let client = create_textract_client().await?;
         let rate_limiter = create_rate_limiter(concurrency_limit, &ocr_opts.llm_opts);
+        let mem_limiter = ocr_opts
+            .llm_opts
+            .page_memory_limit
+            .as_ref()
+            .map(|ml| ml.to_mem_limiter(ocr_opts.llm_opts.llm_timeout_duration()))
+            .unwrap_or_else(MemLimiter::unlimited);
 
         Ok((
             Arc::new(Self {
                 client,
                 rate_limiter,
+                mem_limiter,
             }),
             JoinWorker::noop(),
         ))
@@ -96,9 +108,15 @@ impl OcrPageEngine for TextractOcrPageEngine {
 
         // TODO: We may need to convert GIF and WEBP to a supported format.
 
+        // Load the image data from disk.
+        let image_data = input
+            .image
+            .load(ImageEncoding::Binary, &self.mem_limiter)
+            .await?;
+
         // Build our document.
         let document = aws_sdk_textract::types::Document::builder()
-            .bytes(Blob::new(input.page.data.clone()))
+            .bytes(Blob::new(image_data.data().to_vec()))
             .build();
 
         // Use the Textract API to process the image.

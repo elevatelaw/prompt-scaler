@@ -14,7 +14,9 @@ use crate::{
     schema::{InternalSchema, InternalSchemaDetails, ScalarType, Schema},
 };
 
-use super::{ChatCompletionResponse, Driver, DriverError, LlmOpts, TokenUsage};
+use super::{
+    ChatCompletionResponse, Driver, DriverError, LlmOpts, MemLimiter, TokenUsage,
+};
 
 /// Echo driver for testing.
 #[derive(Debug)]
@@ -90,6 +92,7 @@ impl Driver for EchoDriver {
         prompt: &ChatPrompt<Rendered>,
         _schema: Value,
         _llm_opts: &LlmOpts,
+        _mem_limiter: &MemLimiter,
     ) -> Result<ChatCompletionResponse, DriverError> {
         // Validate the schema
         validate_schema(&prompt.response_schema).map_err(DriverError::invalid_input)?;

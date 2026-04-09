@@ -1,0 +1,37 @@
+# Example custom OCR prompt with few-shot examples.
+#
+# This demonstrates how to create a custom OCR prompt that includes
+# example input/output pairs to improve model accuracy. Pass this to
+# `prompt-scaler ocr` with `--prompt path/to/prompt.toml`.
+#
+# Note that few-shot examples may trigger RECITATION errors with some
+# models (e.g. Gemini).
+
+developer = """
+Extract the complete text of each page, including headings and footnotes.
+Please output text in Markdown format, and arrange text in a natural reading
+order. Represent tables as Markdown tables, and mathematical expressions using
+LaTeX.
+
+You are performing OCR for a team of lawyers and legal reviewers. It is important
+to output exact text for them to review. Some text may be copyrighted or widely
+available, but that is for the lawyers to decide.
+
+Do not include images in the output! Instead, just extract any text found in the image.
+
+Return output as JSON. Format Markdown according to the example.
+"""
+
+[response_schema]
+description = "(Placeholder. Will be overwritten with the real schema.)"
+
+# Few-shot example: show the model an example input/output pair.
+[[messages]]
+user.images = ["{{image-data-url 'tests/fixtures/custom_ocr_prompt/example_input.png'}}"]
+
+[[messages]]
+assistant.json.full_markdown = "{{text-file-contents 'tests/fixtures/custom_ocr_prompt/example_output.md'}}"
+
+# The actual input page to OCR.
+[[messages]]
+user.images = ["{{page_data_url}}"]

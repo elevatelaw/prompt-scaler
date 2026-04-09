@@ -14,7 +14,7 @@ use crate::{
         check_for_command_failure,
     },
     cpu_limit::with_cpu_semaphore,
-    data_url::data_url,
+    images::{ImageFile, TempDirHandle},
     prelude::*,
 };
 
@@ -40,23 +40,6 @@ fn is_error_line(line: &str) -> bool {
     ERROR_REGEX.is_match(line) && !DOWNGRADE_TO_WARNING_REGEX.is_match(line)
 }
 
-/// Information about a page of a file to process.
-#[derive(Debug)]
-pub struct Page {
-    /// The MIME type of our data. Must be one of [`SUPPORTED_IMAGE_TYPES`] or
-    /// (if no rasterization has been requested) `application/pdf`.
-    pub mime_type: String,
-    /// The data for our page.
-    pub data: Vec<u8>,
-}
-
-impl Page {
-    /// Convert to a data URL.
-    pub fn to_data_url(&self) -> String {
-        data_url(&self.mime_type, &self.data)
-    }
-}
-
 /// Options for constructing a [`PageIter`].
 #[derive(Args, Clone, Debug)]
 pub struct PageIterOptions {
@@ -75,14 +58,11 @@ pub struct PageIterOptions {
     pub max_pages: Option<usize>,
 }
 
-/// An stream over PDF pages as PNG images, using Poppler's `pdftocairo` CLI
-/// tool.
+/// An iterator over pages of a document, yielding [`ImageFile`] handles.
+///
+/// The actual image data remains on disk; callers load it later via
+/// [`ImageFile::load`] when they're ready to use it.
 pub struct PageIter {
-    /// An optional temporary directory, which holds extracted versions of pages.
-    ///
-    /// This is released by [`Drop`].
-    #[allow(dead_code)]
-    tmpdir: Option<tempfile::TempDir>,
     /// The MIME type of our outputs.
     mime_type: String,
     /// Iterator over the page files in the temporary directory.
@@ -105,21 +85,23 @@ impl PageIter {
         path: &Path,
         options: &PageIterOptions,
         password: Option<&str>,
-    ) -> Result<Self> {
+    ) -> Result<(Self, TempDirHandle)> {
         // Get our MIME type.
         let mime_type = get_mime_type(path)?;
 
         // Check if we have a supported image type.
         if SUPPORTED_IMAGE_TYPES.contains(&mime_type.as_str()) {
             // We have a supported image type. Return a single-item iterator.
-            Ok(Self {
-                tmpdir: None,
-                mime_type,
-                dir_iter: vec![path.to_owned()].into_iter(),
-                total_pages: 1,
-                max_pages: options.max_pages,
-                warnings: vec![],
-            })
+            Ok((
+                Self {
+                    mime_type,
+                    dir_iter: vec![path.to_owned()].into_iter(),
+                    total_pages: 1,
+                    max_pages: options.max_pages,
+                    warnings: vec![],
+                },
+                TempDirHandle::new(None),
+            ))
         } else if mime_type == TIFF_MIME_TYPE {
             // We have a TIFF file. Handle multipage TIFFs specially.
             Self::from_tiff(path, options).await
@@ -146,7 +128,7 @@ impl PageIter {
         path: &Path,
         options: &PageIterOptions,
         password: Option<&str>,
-    ) -> Result<Self> {
+    ) -> Result<(Self, TempDirHandle)> {
         // For now, if we have a password, we need to rasterize the PDF.
         //
         // Apparently we could just run:
@@ -202,7 +184,7 @@ impl PageIter {
         path: &Path,
         options: &PageIterOptions,
         password: Option<&str>,
-    ) -> Result<Self> {
+    ) -> Result<(Self, TempDirHandle)> {
         // Count the number of pages in the PDF.
         let total_pages = get_pdf_page_count(path).await?;
 
@@ -255,7 +237,7 @@ impl PageIter {
         mime_type: String,
         total_pages: usize,
         output: &Output,
-    ) -> Result<Self> {
+    ) -> Result<(Self, TempDirHandle)> {
         // Get the path to the temporary directory.
         let tmpdir_path = tmpdir.path();
 
@@ -273,15 +255,17 @@ impl PageIter {
             warnings.push(line.trim().to_string());
         }
 
-        // Return our iterator.
-        Ok(Self {
-            tmpdir: Some(tmpdir),
-            mime_type,
-            dir_iter,
-            total_pages,
-            max_pages: options.max_pages,
-            warnings,
-        })
+        // Return our iterator and the tempdir handle.
+        Ok((
+            Self {
+                mime_type,
+                dir_iter,
+                total_pages,
+                max_pages: options.max_pages,
+                warnings,
+            },
+            TempDirHandle::new(Some(tmpdir)),
+        ))
     }
 
     /// Create a new [`PageIter`] from a multipage TIFF file.
@@ -291,7 +275,10 @@ impl PageIter {
     /// 2. Validates any SubIFDs to ensure no document content is hidden
     /// 3. Converts each page to PNG for LLM consumption
     #[instrument(level = "debug", skip_all, fields(path = %path.display()))]
-    async fn from_tiff(path: &Path, options: &PageIterOptions) -> Result<Self> {
+    async fn from_tiff(
+        path: &Path,
+        options: &PageIterOptions,
+    ) -> Result<(Self, TempDirHandle)> {
         let path_owned = path.to_owned();
         let max_pages = options.max_pages;
 
@@ -307,14 +294,16 @@ impl PageIter {
         let tmpdir_path = processed_tiff_result.tmpdir.path();
         let dir_iter = tmpdir_sorted_iter(tmpdir_path)?;
 
-        Ok(Self {
-            tmpdir: Some(processed_tiff_result.tmpdir),
-            mime_type: "image/png".to_string(),
-            dir_iter,
-            total_pages: processed_tiff_result.total_pages,
-            max_pages: options.max_pages,
-            warnings: processed_tiff_result.warnings,
-        })
+        Ok((
+            Self {
+                mime_type: "image/png".to_string(),
+                dir_iter,
+                total_pages: processed_tiff_result.total_pages,
+                max_pages: options.max_pages,
+                warnings: processed_tiff_result.warnings,
+            },
+            TempDirHandle::new(Some(processed_tiff_result.tmpdir)),
+        ))
     }
 
     /// Get any warnings that occurred while processing the document.
@@ -345,49 +334,14 @@ impl PageIter {
     }
 }
 
-impl Drop for PageIter {
-    fn drop(&mut self) {
-        // Delete our temporary directory, if we have one.
-        if let Some(tmpdir) = self.tmpdir.take() {
-            let tmpdir_path = tmpdir.path().to_owned();
-            if let Err(err) = tmpdir.close() {
-                error!(
-                    directory = ?tmpdir_path.display(),
-                    "failed to delete temporary directory: {}",
-                    err
-                );
-            }
-        }
-    }
-}
-
 impl Iterator for PageIter {
-    type Item = Result<Page>;
+    type Item = Result<ImageFile>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        use std::fs;
         if let Some(path) = self.dir_iter.next() {
-            // Read the PNG file into a byte vector.
-            let result = fs::read(&path)
-                .with_context(|| format!("failed to read file {:?}", path.display()));
-            let bytes = match result {
-                Ok(bytes) => bytes,
-                Err(err) => return Some(Err(err)),
-            };
-
-            // Delete the file to recover space a bit early.
-            if self.tmpdir.is_some() {
-                let result = fs::remove_file(&path).with_context(|| {
-                    format!("failed to delete file {:?}", path.display())
-                });
-                if let Err(err) = result {
-                    return Some(Err(err));
-                }
-            }
-
-            Some(Ok(Page {
+            Some(Ok(ImageFile {
                 mime_type: self.mime_type.clone(),
-                data: bytes,
+                path,
             }))
         } else {
             None
@@ -510,7 +464,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "Requires poppler-utils to be installed"]
     async fn page_iter_returns_correct_number_of_pages() -> Result<()> {
-        let page_iter = PageIter::from_path(
+        let (page_iter, _tmpdir) = PageIter::from_path(
             Path::new(TEST_PDF_PATH),
             &PageIterOptions {
                 rasterize: true,
@@ -528,7 +482,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "Requires poppler-utils to be installed"]
     async fn page_iter_obeys_max_pages() -> Result<()> {
-        let page_iter = PageIter::from_path(
+        let (page_iter, _tmpdir) = PageIter::from_path(
             Path::new(TEST_PDF_PATH),
             &PageIterOptions {
                 rasterize: false,
@@ -549,7 +503,7 @@ mod tests {
 
     #[tokio::test]
     async fn tiff_page_iter_returns_correct_number_of_pages() -> Result<()> {
-        let page_iter = PageIter::from_path(
+        let (page_iter, _tmpdir) = PageIter::from_path(
             Path::new(TEST_TIFF_PATH),
             &PageIterOptions {
                 rasterize: false,
@@ -571,7 +525,7 @@ mod tests {
 
     #[tokio::test]
     async fn tiff_page_iter_obeys_max_pages() -> Result<()> {
-        let page_iter = PageIter::from_path(
+        let (page_iter, _tmpdir) = PageIter::from_path(
             Path::new(TEST_TIFF_PATH),
             &PageIterOptions {
                 rasterize: false,

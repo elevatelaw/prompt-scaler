@@ -12,6 +12,7 @@ use crate::{
     async_utils::{BoxedFuture, BoxedStream, JoinWorker, io::JsonObject},
     drivers::{ChatCompletionResponse, Driver, LlmOpts, LlmRetryResult, TokenUsage},
     litellm::{LiteLlmModel, litellm_model_info},
+    mem_limit::MemLimiter,
     prelude::*,
     prompt::{ChatPrompt, Rendered},
     retry::{
@@ -141,10 +142,12 @@ pub async fn process_chat_stream(
     prompt: ChatPrompt,
     model: String,
     llm_opts: LlmOpts,
+    mem_limiter: MemLimiter,
 ) -> Result<ChatStreamInfo> {
     // Create our work queue.
     let (queue, worker) =
-        create_chat_work_queue(concurrency_limit, prompt, model, llm_opts).await?;
+        create_chat_work_queue(concurrency_limit, prompt, model, llm_opts, mem_limiter)
+            .await?;
     let handle = queue.handle();
     Ok(ChatStreamInfo {
         stream: handle.process_stream(input).await,
@@ -158,6 +161,7 @@ pub async fn create_chat_work_queue(
     prompt: ChatPrompt,
     model: String,
     llm_opts: LlmOpts,
+    mem_limiter: MemLimiter,
 ) -> Result<(WorkQueue<ChatInput, ChatOutput>, JoinWorker)> {
     // Create our OpenAI client.
     let driver = llm_opts.driver.create_driver().await?;
@@ -184,6 +188,7 @@ pub async fn create_chat_work_queue(
     let state = Arc::new(ProcessorState {
         driver,
         rate_limiter,
+        mem_limiter,
         model,
         prompt,
         schema,
@@ -210,6 +215,9 @@ struct ProcessorState {
 
     /// A rate limiter to control API request rate.
     rate_limiter: Option<RateLimiter>,
+
+    /// A memory limiter for image loading.
+    mem_limiter: MemLimiter,
 
     /// The model to use.
     model: String,
@@ -306,6 +314,7 @@ async fn run_chat_inner(
                 &prompt,
                 state.schema.clone(),
                 &state.llm_opts,
+                &state.mem_limiter,
             )
             .with_timeout(state.llm_opts.llm_timeout_duration())
             .await

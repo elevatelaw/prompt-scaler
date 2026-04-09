@@ -8,7 +8,7 @@ use serde_json::Map;
 use crate::{
     async_utils::JoinWorker,
     cmd::ocr::OcrOpts,
-    data_url::data_url,
+    mem_limit::MemLimiter,
     prelude::*,
     prompt::ChatPrompt,
     queues::{
@@ -24,12 +24,6 @@ use super::page::{OcrPageEngine, OcrPageInput, OcrPageOutput};
 
 /// The default OCR prompt, used if no prompt is provided.
 const DEFAULT_OCR_PROMPT: &str = include_str!("llm/default_ocr_prompt.toml");
-
-/// Our example PNG input.
-const EXAMPLE_INPUT: &[u8] = include_bytes!("llm/example_input.png");
-
-/// Our example Markdown output.
-const EXAMPLE_OUTPUT: &str = include_str!("llm/example_output.md");
 
 /// Get our default OCR prompt.
 pub fn default_ocr_prompt() -> ChatPrompt {
@@ -65,12 +59,22 @@ impl LlmOcrPageEngine {
         // Add our schema to our prompt.
         prompt.response_schema = Schema::from_type::<PageChatResponse>();
 
+        // Construct a real MemLimiter for the OCR path. Each page has exactly
+        // one image, so there's no multi-image deadlock risk.
+        let mem_limiter = ocr_opts
+            .llm_opts
+            .page_memory_limit
+            .as_ref()
+            .map(|ml| ml.to_mem_limiter(ocr_opts.llm_opts.llm_timeout_duration()))
+            .unwrap_or_else(MemLimiter::unlimited);
+
         // Create a new chat queue to handle all our LLM requests.
         let (chat_queue, worker) = create_chat_work_queue(
             concurrency_limit,
             prompt,
             ocr_opts.model.clone(),
             ocr_opts.llm_opts.clone(),
+            mem_limiter,
         )
         .await?;
 
@@ -81,25 +85,15 @@ impl LlmOcrPageEngine {
 #[async_trait]
 impl OcrPageEngine for LlmOcrPageEngine {
     #[instrument(level = "debug", skip_all, fields(id = %input.id, page = %input.page_idx))]
-    async fn ocr_page(&self, mut input: OcrPageInput) -> Result<OcrPageOutput> {
+    async fn ocr_page(&self, input: OcrPageInput) -> Result<OcrPageOutput> {
         // Get a chat handle.
         let chat_handle = self.chat_queue.handle();
 
         let mut template_bindings = Map::new();
         template_bindings.insert(
             "page_data_url".to_string(),
-            Value::String(input.page.to_data_url()),
+            Value::String(input.image.to_url()),
         );
-        input.page.data = vec![]; // Release memory, because it adds up.
-        template_bindings.insert(
-            "example_input_data_url".to_string(),
-            Value::String(data_url("image/png", EXAMPLE_INPUT)),
-        );
-        template_bindings.insert(
-            "example_output".to_string(),
-            Value::String(EXAMPLE_OUTPUT.to_string()),
-        );
-
         let input = WorkInput {
             id: Value::Array(vec![
                 input.id.clone(),

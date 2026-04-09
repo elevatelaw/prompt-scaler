@@ -1,6 +1,6 @@
 //! Interface for OCRing a single page.
 
-use crate::{drivers::TokenUsage, page_iter::Page, prelude::*};
+use crate::{drivers::TokenUsage, images::ImageFile, prelude::*};
 
 use super::super::OcrAnalysis;
 
@@ -12,8 +12,8 @@ pub struct OcrPageInput {
     /// The index of the page within the document.
     pub page_idx: usize,
 
-    /// The page to OCR.
-    pub page: Page,
+    /// The image file to OCR.
+    pub image: ImageFile,
 }
 
 /// Output record describing the result of OCRing a page.

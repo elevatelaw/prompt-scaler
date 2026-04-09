@@ -342,6 +342,8 @@ fn test_ocr_pdftotext() {
         .arg("0.5")
         .arg("--model")
         .arg("pdftotext")
+        .arg("--page-memory-limit")
+        .arg("1GiB")
         .assert()
         .success();
 }

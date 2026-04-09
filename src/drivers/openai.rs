@@ -20,7 +20,9 @@ use async_openai::{
 
 use crate::{
     drivers::TokenUsage,
+    images::{ImageEncoding, ImageFile},
     litellm::LiteLlmModel,
+    mem_limit::MemLimiter,
     prelude::*,
     prompt::{ChatPrompt, Message, Rendered},
     retry::IsKnownTransient,
@@ -74,9 +76,11 @@ impl Driver for OpenAiDriver {
         prompt: &ChatPrompt<Rendered>,
         schema: Value,
         llm_opts: &LlmOpts,
+        mem_limiter: &MemLimiter,
     ) -> Result<ChatCompletionResponse, DriverError> {
         let messages = prompt
-            .to_openai_prompt()
+            .to_openai_prompt(mem_limiter)
+            .await
             .map_err(DriverError::invalid_input)?;
 
         // Build our JSON Schema options.
@@ -179,18 +183,13 @@ impl IsKnownTransient for OpenAIError {
     }
 }
 
-/// Convert a [`Rendered`] version of a type to an OpenAI prompt.
-pub trait ToOpenAiPrompt {
-    type Output;
-
-    /// Render the template.
-    fn to_openai_prompt(&self) -> Result<Self::Output>;
-}
-
-impl ToOpenAiPrompt for ChatPrompt<Rendered> {
-    type Output = Vec<ChatCompletionRequestMessage>;
-
-    fn to_openai_prompt(&self) -> Result<Self::Output> {
+/// Convert a [`Rendered`] prompt to OpenAI message format, loading images
+/// from `file:` URLs.
+impl ChatPrompt<Rendered> {
+    async fn to_openai_prompt(
+        &self,
+        mem_limiter: &MemLimiter,
+    ) -> Result<Vec<ChatCompletionRequestMessage>> {
         // Make sure our messages appear in the order ((user, assistant)*, user).
         if self.messages.is_empty() {
             return Err(anyhow!("No messages in prompt"));
@@ -220,16 +219,17 @@ impl ToOpenAiPrompt for ChatPrompt<Rendered> {
             messages.push(system_message(developer.to_owned())?);
         }
         for message in &self.messages {
-            messages.push(message.to_openai_prompt()?);
+            messages.push(message.to_openai_message(mem_limiter).await?);
         }
         Ok(messages)
     }
 }
 
-impl ToOpenAiPrompt for Message {
-    type Output = ChatCompletionRequestMessage;
-
-    fn to_openai_prompt(&self) -> Result<Self::Output> {
+impl Message {
+    async fn to_openai_message(
+        &self,
+        mem_limiter: &MemLimiter,
+    ) -> Result<ChatCompletionRequestMessage> {
         match self {
             // No user content, so we bail.
             Message::User { text: None, images } if images.is_empty() => {
@@ -247,7 +247,12 @@ impl ToOpenAiPrompt for Message {
                     parts.push(user_message_text_part(text.to_owned())?);
                 }
                 for image in images {
-                    parts.push(user_message_image_part(image.to_owned())?);
+                    let image_file = ImageFile::from_url(image)?;
+                    let image_data =
+                        image_file.load(ImageEncoding::DataUrl, mem_limiter).await?;
+                    let data_url = std::str::from_utf8(image_data.data())
+                        .context("image data URL is not valid UTF-8")?;
+                    parts.push(user_message_image_part(data_url.to_owned())?);
                 }
                 user_message_multi_part(parts)
             }
