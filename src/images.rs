@@ -296,7 +296,7 @@ mod tests {
     fn to_url_from_url_round_trip_simple_path() {
         let image = ImageFile {
             mime_type: "image/png".to_string(),
-            path: PathBuf::from("/tmp/pages/page-1.png"),
+            path: std::env::temp_dir().join("pages").join("page-1.png"),
         };
         let url = image.to_url();
         assert!(url.starts_with("file:///"));
@@ -313,7 +313,7 @@ mod tests {
     fn to_url_from_url_round_trip_special_chars() {
         let image = ImageFile {
             mime_type: "image/jpeg".to_string(),
-            path: PathBuf::from("/tmp/my pages/file (1).jpg"),
+            path: std::env::temp_dir().join("my pages").join("file (1).jpg"),
         };
         let url = image.to_url();
         let parsed = ImageFile::from_url(&url).unwrap();
@@ -337,7 +337,10 @@ mod tests {
 
     #[test]
     fn from_url_rejects_missing_mime_type() {
-        let result = ImageFile::from_url("file:///tmp/image.png");
+        // Use a platform-appropriate file: URL so the path parses on Windows too.
+        let url = Url::from_file_path(std::env::temp_dir().join("image.png"))
+            .expect("temp_dir should produce a valid file: URL");
+        let result = ImageFile::from_url(url.as_str());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("mime_type"));
     }
