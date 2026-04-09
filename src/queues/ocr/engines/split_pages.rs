@@ -55,7 +55,7 @@ impl OcrFileEngine for SplitPagesOcrEngine {
 
         // Create a page stream, using BlockingIterStream to avoid blocking the
         // async executor with slow PDF processing.
-        let page_iter = PageIter::from_path(
+        let (page_iter, _tmpdir_handle) = PageIter::from_path(
             ocr_input.data.path(),
             &self.ocr_opts.page_iter_opts,
             ocr_input.data.password.as_deref(),
@@ -75,9 +75,13 @@ impl OcrFileEngine for SplitPagesOcrEngine {
                 let id = ocr_input.id.clone();
                 let engine = self.engine.clone();
                 async move {
-                    let page = page?;
+                    let image = page?;
                     engine
-                        .ocr_page(OcrPageInput { id, page_idx, page })
+                        .ocr_page(OcrPageInput {
+                            id,
+                            page_idx,
+                            image,
+                        })
                         .with_timeout(page_timeout)
                         .await
                         .recover_timeout(|| OcrPageOutput {

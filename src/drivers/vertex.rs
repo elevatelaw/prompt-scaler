@@ -3,7 +3,6 @@
 use std::env;
 
 use async_trait::async_trait;
-use base64::{Engine, prelude::BASE64_STANDARD};
 use google_cloud_aiplatform_v1 as vertexai;
 use google_cloud_gax::error::rpc::Code;
 use vertexai::{
@@ -12,9 +11,10 @@ use vertexai::{
 };
 
 use crate::{
-    data_url::parse_data_url,
     drivers::{ChatCompletionResponse, Driver, DriverError, LlmOpts, TokenUsage},
+    images::{ImageEncoding, ImageFile},
     litellm::LiteLlmModel,
+    mem_limit::MemLimiter,
     prelude::*,
     prompt::{ChatPrompt, Message, Rendered},
     retry::IsKnownTransient,
@@ -53,10 +53,11 @@ impl Driver for VertexDriver {
         prompt: &ChatPrompt<Rendered>,
         schema: Value,
         llm_opts: &LlmOpts,
+        mem_limiter: &MemLimiter,
     ) -> Result<ChatCompletionResponse, DriverError> {
         // Convert our prompt to Vertex AI format.
         let (system_instruction, contents) = prompt
-            .to_vertex_contents()
+            .to_vertex_contents(mem_limiter)
             .await
             .map_err(DriverError::invalid_input)?;
         trace!(?contents, "Vertex request");
@@ -162,19 +163,11 @@ impl IsKnownTransient for Code {
 }
 
 /// Convert a [`ChatPrompt<Rendered>`] to Vertex AI contents.
-#[async_trait]
-trait ToVertexContents {
-    type Output;
-
-    /// Convert to Vertex AI contents.
-    async fn to_vertex_contents(&self) -> Result<Self::Output>;
-}
-
-#[async_trait]
-impl ToVertexContents for ChatPrompt<Rendered> {
-    type Output = (Option<Content>, Vec<Content>);
-
-    async fn to_vertex_contents(&self) -> Result<Self::Output> {
+impl ChatPrompt<Rendered> {
+    async fn to_vertex_contents(
+        &self,
+        mem_limiter: &MemLimiter,
+    ) -> Result<(Option<Content>, Vec<Content>)> {
         let mut contents = vec![];
 
         // Add developer/system message if present
@@ -186,18 +179,15 @@ impl ToVertexContents for ChatPrompt<Rendered> {
 
         // Convert our messages
         for message in &self.messages {
-            contents.extend(message.to_vertex_contents().await?);
+            contents.extend(message.to_vertex_content(mem_limiter).await?);
         }
 
         Ok((system_instruction, contents))
     }
 }
 
-#[async_trait]
-impl ToVertexContents for Message {
-    type Output = Vec<Content>;
-
-    async fn to_vertex_contents(&self) -> Result<Self::Output> {
+impl Message {
+    async fn to_vertex_content(&self, mem_limiter: &MemLimiter) -> Result<Vec<Content>> {
         let mut contents = vec![];
         match self {
             Message::User { text, images } => {
@@ -214,21 +204,16 @@ impl ToVertexContents for Message {
 
                 // Add images if present.
                 for image in images {
-                    if image.starts_with("data:")
-                        && let Some((mime_type, base64_data)) = parse_data_url(image)
-                    {
-                        let bytes = BASE64_STANDARD
-                            .decode(base64_data)
-                            .context("Failed to decode base64 image data")?;
-                        parts.push(Part::new().set_inline_data(
-                            Blob::new().set_mime_type(mime_type).set_data(bytes),
-                        ));
-                    } else {
-                        return Err(anyhow!(
-                            "Only data URLs are supported for images in Vertex driver, got: {}",
-                            image
-                        ));
-                    }
+                    let image_file = ImageFile::from_url(image)?;
+                    let image_data =
+                        image_file.load(ImageEncoding::Binary, mem_limiter).await?;
+                    parts.push(
+                        Part::new().set_inline_data(
+                            Blob::new()
+                                .set_mime_type(image_data.mime_type())
+                                .set_data(image_data.data().to_vec()),
+                        ),
+                    );
                 }
                 assert!(
                     !parts.is_empty(),

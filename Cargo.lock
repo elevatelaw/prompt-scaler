@@ -802,6 +802,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bytesize"
+version = "2.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bd91ee7b2422bcb158d90ef4d14f75ef67f340943fc4149891dcce8f8b972a3"
+
+[[package]]
 name = "cc"
 version = "1.2.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2937,6 +2943,7 @@ dependencies = [
  "aws-smithy-runtime-api",
  "aws-smithy-types",
  "base64 0.22.1",
+ "bytesize",
  "clap",
  "codespan-reporting",
  "console-subscriber",
@@ -2971,6 +2978,7 @@ dependencies = [
  "toml-span",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
 ]
 

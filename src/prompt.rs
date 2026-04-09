@@ -16,8 +16,8 @@ use toml_span::{
 };
 
 use crate::{
-    async_utils::io::JsonObject, data_url::data_url, page_iter::get_mime_type,
-    prelude::*, schema::Schema, toml_utils::JsonValue,
+    async_utils::io::JsonObject, images::ImageFile, prelude::*, schema::Schema,
+    toml_utils::JsonValue,
 };
 
 /// Super-type of allowable prompt states. This is using the popular "type
@@ -195,7 +195,9 @@ impl<'de> toml_span::Deserialize<'de> for Message {
     }
 }
 
-/// Handlebars helper for converting a path to an image data URL.
+/// Handlebars helper for converting a path to a `file:` URL for late image
+/// loading. The image is not loaded during template rendering — it will be
+/// loaded later by the driver with the appropriate encoding.
 fn image_data_url_helper(
     h: &Helper,
     _: &Handlebars,
@@ -211,16 +213,10 @@ fn image_data_url_helper(
         .as_str()
         .ok_or_else(|| RenderErrorReason::InvalidParamType("string"))?;
 
-    // Get the MIME type using `infer`.
-    let mime = get_mime_type(Path::new(path))
+    // Construct an ImageFile and emit a file: URL.
+    let image_file = ImageFile::from_path(Path::new(path))
         .map_err(|err| RenderErrorReason::Other(err.to_string()))?;
-
-    // Base64 encode the file.
-    let bytes = fs::read(path).map_err(|err| {
-        RenderErrorReason::Other(format!("error reading {path}: {err}"))
-    })?;
-    let data_url = data_url(&mime, &bytes);
-    out.write(&data_url)?;
+    out.write(&image_file.to_url())?;
     Ok(())
 }
 

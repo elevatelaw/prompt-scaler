@@ -16,8 +16,9 @@ use genai::{
 };
 
 use crate::{
-    data_url::parse_data_url,
+    images::{ImageEncoding, ImageFile},
     litellm::LiteLlmModel,
+    mem_limit::MemLimiter,
     prelude::*,
     prompt::{ChatPrompt, Message, Rendered},
     retry::IsKnownTransient,
@@ -53,6 +54,7 @@ impl Driver for NativeDriver {
         prompt: &ChatPrompt<Rendered>,
         mut schema: Value,
         llm_opts: &LlmOpts,
+        mem_limiter: &MemLimiter,
     ) -> Result<ChatCompletionResponse, DriverError> {
         // Report what native driver we're using under the hood.
         if let Ok(service_target) = self.client.resolve_service_target(model).await {
@@ -74,7 +76,8 @@ impl Driver for NativeDriver {
 
         // Convert our prompt to a genai request and build our options.
         let req = prompt
-            .to_genai_request()
+            .to_genai_request(mem_limiter)
+            .await
             .map_err(DriverError::invalid_input)?;
         let opts = ChatOptions {
             temperature: llm_opts.temperature.map(f64::from),
@@ -170,23 +173,12 @@ impl IsKnownTransient for webc::Error {
 }
 
 /// Convert a [`ChatPrompt`] to something compatible with [`genai`].
-pub trait ToGenaiRequest {
-    /// The type of the output.
-    type Output;
-
-    /// Convert this value to something compatible with [`genai`].
-    fn to_genai_request(&self) -> Result<Self::Output>;
-}
-
-impl ToGenaiRequest for ChatPrompt<Rendered> {
-    type Output = ChatRequest;
-
-    fn to_genai_request(&self) -> Result<Self::Output> {
-        let messages = self
-            .messages
-            .iter()
-            .map(|m| m.to_genai_request())
-            .collect::<Result<Vec<_>>>()?;
+impl ChatPrompt<Rendered> {
+    async fn to_genai_request(&self, mem_limiter: &MemLimiter) -> Result<ChatRequest> {
+        let mut messages = vec![];
+        for message in &self.messages {
+            messages.push(message.to_genai_message(mem_limiter).await?);
+        }
 
         Ok(ChatRequest {
             system: self.developer.clone(),
@@ -196,10 +188,8 @@ impl ToGenaiRequest for ChatPrompt<Rendered> {
     }
 }
 
-impl ToGenaiRequest for Message {
-    type Output = ChatMessage;
-
-    fn to_genai_request(&self) -> Result<Self::Output> {
+impl Message {
+    async fn to_genai_message(&self, mem_limiter: &MemLimiter) -> Result<ChatMessage> {
         match self {
             // We have images and maybe text.
             Message::User { text, images } if !images.is_empty() => {
@@ -208,19 +198,18 @@ impl ToGenaiRequest for Message {
                     parts.push(ContentPart::Text(text.clone()));
                 }
                 for image in images {
-                    if let Some((mime_type, data)) = parse_data_url(image) {
-                        parts.push(ContentPart::Image {
-                            content_type: mime_type,
-                            // TODO: Avoid this copy by representing file paths
-                            // directly in messages.
-                            source: ImageSource::Base64(Arc::from(data)),
-                        });
-                    } else {
-                        return Err(anyhow!(
-                            "Don't know how to get content type for {:?}",
-                            image
-                        ));
-                    }
+                    let image_file = ImageFile::from_url(image)?;
+                    let image_data =
+                        image_file.load(ImageEncoding::Base64, mem_limiter).await?;
+                    let base64_str = std::str::from_utf8(image_data.data())
+                        .context("base64 image data is not valid UTF-8")?;
+                    parts.push(ContentPart::Image {
+                        content_type: image_data.mime_type().to_owned(),
+                        // TODO: Can we avoid this copy by representing file
+                        // paths directly in messages? This might require reading
+                        // the docs and changing how we handle permits here.
+                        source: ImageSource::Base64(Arc::from(base64_str)),
+                    });
                 }
                 Ok(ChatMessage {
                     role: ChatRole::User,

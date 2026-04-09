@@ -14,14 +14,14 @@ use aws_sdk_bedrockruntime::{
     },
 };
 use aws_smithy_types::{Document, Number};
-use base64::{Engine as _, prelude::BASE64_STANDARD};
 use uuid::Uuid;
 
 use crate::{
     aws::load_aws_config,
-    data_url::parse_data_url,
     drivers::{ChatCompletionResponse, DriverError, LlmOpts, TokenUsage},
+    images::{ImageEncoding, ImageFile},
     litellm::LiteLlmModel,
+    mem_limit::MemLimiter,
     prelude::*,
     prompt::{ChatPrompt, Message, Rendered},
     retry::IsKnownTransient,
@@ -61,6 +61,7 @@ impl Driver for BedrockDriver {
         // TODO: Why do we get this separately from the copy in `prompt`?
         _schema: Value,
         llm_opts: &LlmOpts,
+        mem_limiter: &MemLimiter,
     ) -> Result<ChatCompletionResponse, DriverError> {
         // Figure out of inference configuration.
         let mut inf_conf_builder = InferenceConfiguration::builder();
@@ -77,7 +78,7 @@ impl Driver for BedrockDriver {
 
         // Convert our prompt to a Bedrock request.
         let req = prompt
-            .to_bedrock_request()
+            .to_bedrock_request(mem_limiter)
             .await
             .map_err(DriverError::invalid_input)?;
 
@@ -169,24 +170,15 @@ struct BedrockRequest {
     messages: Vec<BedrockMessage>,
 }
 
-/// Convert a type to a Bedrock request.
-#[async_trait]
-trait ToBedrockRequest {
-    type Output;
-
-    /// Convert to a Bedrock request.
-    async fn to_bedrock_request(&self) -> Result<Self::Output>;
-}
-
-#[async_trait]
-impl ToBedrockRequest for ChatPrompt<Rendered> {
-    type Output = BedrockRequest;
-
-    async fn to_bedrock_request(&self) -> Result<Self::Output> {
+impl ChatPrompt<Rendered> {
+    async fn to_bedrock_request(
+        &self,
+        mem_limiter: &MemLimiter,
+    ) -> Result<BedrockRequest> {
         // Convert our messages.
         let mut messages = vec![];
         for message in &self.messages {
-            messages.extend(message.to_bedrock_request().await?);
+            messages.extend(message.to_bedrock_message(mem_limiter).await?);
         }
 
         // Set up our tool configuration, and for
@@ -221,11 +213,11 @@ impl ToBedrockRequest for ChatPrompt<Rendered> {
     }
 }
 
-#[async_trait]
-impl ToBedrockRequest for Message {
-    type Output = Vec<BedrockMessage>;
-
-    async fn to_bedrock_request(&self) -> Result<Self::Output> {
+impl Message {
+    async fn to_bedrock_message(
+        &self,
+        mem_limiter: &MemLimiter,
+    ) -> Result<Vec<BedrockMessage>> {
         let mut messages = vec![];
         match self {
             Message::User { text, images } => {
@@ -242,24 +234,19 @@ impl ToBedrockRequest for Message {
                     builder = builder.content(ContentBlock::Text(text.clone()));
                 }
                 for image in images {
-                    if let Some((mime_type, data)) = parse_data_url(image) {
-                        let format =
-                            mime_type.strip_prefix("image/").unwrap_or(&mime_type);
-                        let decoded_bytes = BASE64_STANDARD
-                            .decode(data)
-                            .context("Cannot decode base64 image data")?;
-                        let image_block = ImageBlock::builder()
-                            .format(ImageFormat::try_parse(format)?)
-                            .source(ImageSource::Bytes(Blob::new(decoded_bytes)))
-                            .build()
-                            .context("Cannot build Bedrock image block")?;
-                        builder = builder.content(ContentBlock::Image(image_block));
-                    } else {
-                        return Err(anyhow!(
-                            "Don't know how to get content type for {:?}",
-                            image
-                        ));
-                    }
+                    let image_file = ImageFile::from_url(image)?;
+                    let image_data =
+                        image_file.load(ImageEncoding::Binary, mem_limiter).await?;
+                    let format = image_data
+                        .mime_type()
+                        .strip_prefix("image/")
+                        .unwrap_or(image_data.mime_type());
+                    let image_block = ImageBlock::builder()
+                        .format(ImageFormat::try_parse(format)?)
+                        .source(ImageSource::Bytes(Blob::new(image_data.data().to_vec())))
+                        .build()
+                        .context("Cannot build Bedrock image block")?;
+                    builder = builder.content(ContentBlock::Image(image_block));
                 }
                 messages.push(builder.build().context("Cannot build Bedrock message")?);
             }

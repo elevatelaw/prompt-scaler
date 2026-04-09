@@ -1,12 +1,6 @@
 //! Tesseract OCR engine.
 
-//! An "OCR" engine that calls `pdftotext`.
-
-use std::{
-    fs::{File, read_to_string},
-    io::Write as _,
-    sync::Arc,
-};
+use std::{fs::read_to_string, sync::Arc};
 
 use tokio::process::Command;
 
@@ -38,28 +32,13 @@ impl TesseractOcrPageEngine {
 impl OcrPageEngine for TesseractOcrPageEngine {
     #[instrument(level = "debug", skip_all, fields(id = %input.id, page = %input.page_idx))]
     async fn ocr_page(&self, input: OcrPageInput) -> Result<OcrPageOutput> {
-        let extension = mime_guess::get_mime_extensions_str(&input.page.mime_type)
-            .and_then(|o| o.first())
-            .ok_or_else(|| {
-                anyhow!("cannot determine extension for {}", input.page.mime_type)
-            })?;
+        // Use the image file path directly — no need to load into memory.
+        let output_dir = tempfile::TempDir::with_prefix("tesseract")?;
+        let output_path = output_dir.path().join("output.txt");
 
-        // Write our input to a temporary file.
-        let tmpdir = tempfile::TempDir::with_prefix("tesseract")?;
-        let input_path = tmpdir.path().join(format!("input.{extension}"));
-        let output_path = tmpdir.path().join("output.txt");
-        let mut input_file =
-            File::create(&input_path).context("cannot create tesseract input file")?;
-        input_file
-            .write_all(&input.page.data)
-            .context("cannot write tesseract input file")?;
-        input_file
-            .flush()
-            .context("cannot flush tesseract input file")?;
-
-        // Run tesseract on the input file.
+        // Run tesseract on the image file.
         let output = Command::new("tesseract")
-            .arg(input_path)
+            .arg(&input.image.path)
             .arg(output_path.with_extension(""))
             .output()
             .await

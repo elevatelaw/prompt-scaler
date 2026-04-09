@@ -6,6 +6,7 @@ use futures::StreamExt;
 use crate::{
     async_utils::io::read_json_or_toml,
     drivers::LlmOpts,
+    mem_limit::MemLimiter,
     prelude::*,
     prompt::ChatPrompt,
     queues::{
@@ -74,6 +75,13 @@ pub async fn cmd_chat(ui: &Ui, opts: &ChatOpts) -> Result<()> {
         prompt,
         opts.model.to_owned(),
         opts.llm_opts.to_owned(),
+        // For now: Use unlimited memory for the chat path to avoid multi-image
+        // deadlocks. The OCR path uses the real limiter.
+        //
+        // To safely allow the possibility of using multiple images in a single
+        // prompt, we'll need to modify the drivers to pre-request permits all
+        // _all_ images they'll need to load in a single request.
+        MemLimiter::unlimited(),
     )
     .await?;
 

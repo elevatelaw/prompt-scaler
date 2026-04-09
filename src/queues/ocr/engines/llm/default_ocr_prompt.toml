@@ -21,14 +21,5 @@ like:
 [response_schema]
 description = "(Placeholder. Will be overwritten with the real schema.)"
 
-# Example messages have been disabled because they trigger RECITATION errors
-# with Gemini.
-
-#[[messages]]
-#user.images = ["{{example_input_data_url}}"]
-#
-#[[messages]]
-#assistant.json.full_markdown = "{{example_output}}"
-
 [[messages]]
 user.images = ["{{page_data_url}}"]

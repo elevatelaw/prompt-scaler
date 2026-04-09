@@ -14,6 +14,7 @@ use serde::Serialize;
 
 use crate::{
     litellm::LiteLlmModel,
+    mem_limit::{MemLimit, MemLimiter},
     prelude::*,
     prompt::{ChatPrompt, Rendered},
     rate_limit::RateLimit,
@@ -97,6 +98,16 @@ pub struct LlmOpts {
     /// applied separately from `--jobs`.
     #[clap(long)]
     pub rate_limit: Option<RateLimit>,
+
+    /// Limit the total memory used by in-flight page images, e.g. "2GiB",
+    /// "500MB". When this limit is reached, image loading will block until
+    /// other images are released. Useful for high-concurrency OCR workloads
+    /// where hundreds of page images might otherwise overwhelm RAM. Note that
+    /// this is not exact: Some drivers may make multiple copies of a page image
+    /// internally that we don't track. Consider this approximate and advisory
+    /// rather than a hard limit.
+    #[clap(long)]
+    pub page_memory_limit: Option<MemLimit>,
 }
 
 impl LlmOpts {
@@ -235,6 +246,7 @@ pub trait Driver: fmt::Debug + Send + Sync + 'static {
         prompt: &ChatPrompt<Rendered>,
         schema: Value,
         llm_opts: &LlmOpts,
+        mem_limiter: &MemLimiter,
     ) -> Result<ChatCompletionResponse, DriverError>;
 }
 
