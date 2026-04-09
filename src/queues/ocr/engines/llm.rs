@@ -25,10 +25,6 @@ use super::page::{OcrPageEngine, OcrPageInput, OcrPageOutput};
 /// The default OCR prompt, used if no prompt is provided.
 const DEFAULT_OCR_PROMPT: &str = include_str!("llm/default_ocr_prompt.toml");
 
-/// Our example Markdown output, used in the default OCR prompt to show
-/// the expected output format.
-const EXAMPLE_OUTPUT: &str = include_str!("llm/example_output.md");
-
 /// Get our default OCR prompt.
 pub fn default_ocr_prompt() -> ChatPrompt {
     from_toml_str::<ChatPrompt>(DEFAULT_OCR_PROMPT)
@@ -98,11 +94,6 @@ impl OcrPageEngine for LlmOcrPageEngine {
             "page_data_url".to_string(),
             Value::String(input.image.to_url()),
         );
-        template_bindings.insert(
-            "example_output".to_string(),
-            Value::String(EXAMPLE_OUTPUT.to_string()),
-        );
-
         let input = WorkInput {
             id: Value::Array(vec![
                 input.id.clone(),
