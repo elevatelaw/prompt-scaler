@@ -1,7 +1,5 @@
-//! Native LLM driver, for use in cases where LiteLLM isn't available or can't
-//! handle the load.
-//!
-//! For now, we use the [`genai`] crate, which seems reasonably popular.
+//! Native LLM driver using the [`genai`] crate, which provides a unified
+//! interface to multiple LLM providers.
 
 use std::sync::Arc;
 
@@ -17,7 +15,6 @@ use genai::{
 
 use crate::{
     images::{ImageEncoding, ImageFile},
-    litellm::LiteLlmModel,
     mem_limit::MemLimiter,
     prelude::*,
     prompt::{ChatPrompt, Message, Rendered},
@@ -27,11 +24,10 @@ use crate::{
 
 use super::{ChatCompletionResponse, Driver, DriverError, LlmOpts, TokenUsage};
 
-/// Our OpenAI driver, which we also use for LiteLLM, Ollama and other
-/// compatible gateways.
+/// Our native driver, using the `genai` crate.
 #[derive(Debug)]
 pub struct NativeDriver {
-    /// The OpenAI client.
+    /// The genai client.
     pub client: Client,
 }
 
@@ -50,7 +46,6 @@ impl Driver for NativeDriver {
     async fn chat_completion(
         &self,
         model: &str,
-        _model_info: Option<&LiteLlmModel>,
         prompt: &ChatPrompt<Rendered>,
         mut schema: Value,
         llm_opts: &LlmOpts,

@@ -1,5 +1,5 @@
-//! Our OpenAI driver, which we also use for LiteLLM, Ollama and other
-//! compatible gateways.
+//! Our OpenAI driver, which we also use for Ollama and other compatible
+//! gateways.
 
 use async_openai::{
     Client,
@@ -21,7 +21,6 @@ use async_openai::{
 use crate::{
     drivers::TokenUsage,
     images::{ImageEncoding, ImageFile},
-    litellm::LiteLlmModel,
     mem_limit::MemLimiter,
     prelude::*,
     prompt::{ChatPrompt, Message, Rendered},
@@ -50,8 +49,8 @@ fn create_llm_client() -> Result<Client<OpenAIConfig>> {
     Ok(client)
 }
 
-/// Our OpenAI driver, which we also use for LiteLLM, Ollama and other
-/// compatible gateways.
+/// Our OpenAI driver, which we also use for Ollama and other compatible
+/// gateways.
 #[derive(Debug)]
 pub struct OpenAiDriver {
     /// The OpenAI client.
@@ -72,7 +71,6 @@ impl Driver for OpenAiDriver {
     async fn chat_completion(
         &self,
         model: &str,
-        model_info: Option<&LiteLlmModel>,
         prompt: &ChatPrompt<Rendered>,
         schema: Value,
         llm_opts: &LlmOpts,
@@ -96,23 +94,9 @@ impl Driver for OpenAiDriver {
         req.model(model.to_owned())
             .messages(messages)
             .response_format(ResponseFormat::JsonSchema { json_schema });
-        let mut need_to_disable_store = true;
-        if let Some(model_info) = model_info {
-            debug!("Provider: {}", model_info.model_info.litellm_provider);
-            if model_info.model_info.litellm_provider == "anthropic" {
-                // For OpenAI (and possibly other providers with the same API), we
-                // need to set `store` to false to prevent the API from storing
-                // responses for later REST calls. But LiteLLM doesn't know about
-                // this parameter, and doesn't remove it when calling Anthropic
-                // models.
-                need_to_disable_store = false;
-            }
-        } else if model.starts_with("claude-") {
-            // We have no model metadata from LiteLLM. But we know Claude models
-            // don't support `store`, so we shouldn't try to disable it.
-            need_to_disable_store = false;
-        }
-        if need_to_disable_store {
+        // Claude models don't support the `store` parameter (at least in the
+        // past, via LiteLLM), so only disable storage for non-Claude models.
+        if !model.starts_with("claude-") {
             req.store(false);
         }
         if let Some(max_completion_tokens) = llm_opts.max_completion_tokens {

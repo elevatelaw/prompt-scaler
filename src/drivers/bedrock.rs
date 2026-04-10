@@ -20,7 +20,6 @@ use crate::{
     aws::load_aws_config,
     drivers::{ChatCompletionResponse, DriverError, LlmOpts, TokenUsage},
     images::{ImageEncoding, ImageFile},
-    litellm::LiteLlmModel,
     mem_limit::MemLimiter,
     prelude::*,
     prompt::{ChatPrompt, Message, Rendered},
@@ -32,8 +31,7 @@ use super::Driver;
 /// The name of the tool we tell Bedrock to use for reporting results.
 static OUTPUT_TOOL_NAME: &str = "report_result";
 
-/// Our OpenAI driver, which we also use for LiteLLM, Ollama and other
-/// compatible gateways.
+/// Our AWS Bedrock driver.
 #[derive(Debug)]
 pub struct BedrockDriver {
     /// The Bedrock client.
@@ -56,7 +54,6 @@ impl Driver for BedrockDriver {
     async fn chat_completion(
         &self,
         model: &str,
-        _model_info: Option<&LiteLlmModel>,
         prompt: &ChatPrompt<Rendered>,
         // TODO: Why do we get this separately from the copy in `prompt`?
         _schema: Value,

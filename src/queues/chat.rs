@@ -10,8 +10,8 @@ use schemars::JsonSchema;
 use super::work::{WorkInput, WorkOutput, WorkQueue, WorkStatus};
 use crate::{
     async_utils::{BoxedFuture, BoxedStream, JoinWorker, io::JsonObject},
+    costs::{ModelCost, ModelCostDatabase},
     drivers::{ChatCompletionResponse, Driver, LlmOpts, LlmRetryResult, TokenUsage},
-    litellm::{LiteLlmModel, litellm_model_info},
     mem_limit::MemLimiter,
     prelude::*,
     prompt::{ChatPrompt, Rendered},
@@ -50,12 +50,12 @@ impl WorkOutput<ChatOutput> {
     /// Create a new output record from a [`ResolvedResult`].
     fn from_resolved_result(
         id: Value,
-        model: Option<&LiteLlmModel>,
+        model_cost: Option<&ModelCost>,
         result: ResolvedResult<(), (), ChatCompletionResponse, anyhow::Error>,
         passthrough_data: Option<Value>,
     ) -> Self {
         let estimate_cost =
-            |usage: Option<&TokenUsage>| usage.and_then(|u| u.estimate_cost(model));
+            |usage: Option<&TokenUsage>| usage.and_then(|u| u.estimate_cost(model_cost));
         let full_err = |err: anyhow::Error| format!("{err:?}");
         match result {
             ResolvedResult::Ok {
@@ -163,15 +163,16 @@ pub async fn create_chat_work_queue(
     llm_opts: LlmOpts,
     mem_limiter: MemLimiter,
 ) -> Result<(WorkQueue<ChatInput, ChatOutput>, JoinWorker)> {
-    // Create our OpenAI client.
+    // Create our LLM client.
     let driver = llm_opts.driver.create_driver().await?;
 
-    // See if we can get LiteLLM info for this model.
-    let model_info = litellm_model_info(&model).await;
-    if let Some(model_info) = model_info {
-        debug!(model_info = %model_info.to_string(), "Model info");
+    // Look up model cost data.
+    let cost_db = ModelCostDatabase::new(llm_opts.model_costs.as_deref());
+    let cost = cost_db.lookup(llm_opts.driver, &model).cloned();
+    if let Some(ref cost) = cost {
+        debug!(driver = ?llm_opts.driver, %model, ?cost, "Model cost info");
     } else {
-        debug!(model = %model, "Model info not available");
+        debug!(driver = ?llm_opts.driver, %model, "Model cost info not available");
     }
 
     // Read our schema.
@@ -194,7 +195,7 @@ pub async fn create_chat_work_queue(
         schema,
         validator,
         llm_opts,
-        model_info,
+        model_cost: cost,
     });
 
     // Define worker function.
@@ -234,8 +235,8 @@ struct ProcessorState {
     /// The LLM options to use.
     llm_opts: LlmOpts,
 
-    /// Model information, if available.
-    model_info: Option<&'static LiteLlmModel>,
+    /// Model cost information, if available.
+    model_cost: Option<ModelCost>,
 }
 
 /// Process a single JSON Object.
@@ -287,7 +288,7 @@ async fn run_chat(
 
     Ok(WorkOutput::<ChatOutput>::from_resolved_result(
         id,
-        state.model_info,
+        state.model_cost.as_ref(),
         result,
         passthrough_data,
     ))
@@ -304,13 +305,12 @@ async fn run_chat_inner(
         rate_limiter.acquire(1).await;
     }
 
-    // Call OpenAI.
+    // Call LLM.
     let completion_response = try_potentially_transient!(
         state
             .driver
             .chat_completion(
                 &state.model,
-                state.model_info,
                 &prompt,
                 state.schema.clone(),
                 &state.llm_opts,

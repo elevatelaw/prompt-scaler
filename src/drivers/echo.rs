@@ -8,7 +8,6 @@ use async_trait::async_trait;
 use serde_json::Map;
 
 use crate::{
-    litellm::LiteLlmModel,
     prelude::*,
     prompt::{ChatPrompt, Message, Rendered},
     schema::{InternalSchema, InternalSchemaDetails, ScalarType, Schema},
@@ -88,7 +87,6 @@ impl Driver for EchoDriver {
     async fn chat_completion(
         &self,
         _model: &str,
-        _model_info: Option<&LiteLlmModel>,
         prompt: &ChatPrompt<Rendered>,
         _schema: Value,
         _llm_opts: &LlmOpts,

@@ -13,7 +13,6 @@ use vertexai::{
 use crate::{
     drivers::{ChatCompletionResponse, Driver, DriverError, LlmOpts, TokenUsage},
     images::{ImageEncoding, ImageFile},
-    litellm::LiteLlmModel,
     mem_limit::MemLimiter,
     prelude::*,
     prompt::{ChatPrompt, Message, Rendered},
@@ -49,7 +48,6 @@ impl Driver for VertexDriver {
     async fn chat_completion(
         &self,
         model: &str,
-        _model_info: Option<&LiteLlmModel>,
         prompt: &ChatPrompt<Rendered>,
         schema: Value,
         llm_opts: &LlmOpts,

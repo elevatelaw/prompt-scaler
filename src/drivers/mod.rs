@@ -1,10 +1,8 @@
 //! LLM drivers.
 //!
-//! Mostly we prefer to leave LLM compatibility to LiteLLM and similar
-//! gateways, but when we're aiming for extremely high throughput,
-//! sometimes it's better to keep everything in native Rust.
+//! We support multiple LLM providers via native Rust drivers.
 
-use std::{fmt, ops::AddAssign, time::Duration};
+use std::{fmt, ops::AddAssign, path::PathBuf, time::Duration};
 
 use async_trait::async_trait;
 use clap::{Args, ValueEnum};
@@ -13,7 +11,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::{
-    litellm::LiteLlmModel,
+    costs::ModelCost,
     mem_limit::{MemLimit, MemLimiter},
     prelude::*,
     prompt::{ChatPrompt, Rendered},
@@ -28,10 +26,12 @@ pub mod openai;
 pub mod vertex;
 
 /// Our different driver types.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, ValueEnum,
+)]
 #[clap(rename_all = "snake_case")]
 pub enum DriverType {
-    /// OpenAI driver (also for LiteLLM, Ollama, etc).
+    /// OpenAI driver (also for LiteLLM, Ollama, and other compatible APIs).
     #[default]
     #[clap(name = "openai")]
     OpenAI,
@@ -108,6 +108,13 @@ pub struct LlmOpts {
     /// rather than a hard limit.
     #[clap(long)]
     pub page_memory_limit: Option<MemLimit>,
+
+    /// Path to a CSV file with model cost information. Overrides the built-in
+    /// defaults. The CSV should have columns: model, input_cost_per_token,
+    /// output_cost_per_token, pricing_source_url. See
+    /// src/default_model_costs.csv for the expected format.
+    #[clap(long)]
+    pub model_costs: Option<PathBuf>,
 }
 
 impl LlmOpts {
@@ -235,14 +242,9 @@ impl DriverError {
 #[async_trait]
 pub trait Driver: fmt::Debug + Send + Sync + 'static {
     /// Run a "chat completion" request.
-    ///
-    /// This takes a [`LiteLlmModel`] even for non-OpenAI drivers, because it's
-    /// potentially useful to use LiteLLM for model billing info while talking
-    /// directly to the model itself.
     async fn chat_completion(
         &self,
         model: &str,
-        model_info: Option<&LiteLlmModel>,
         prompt: &ChatPrompt<Rendered>,
         schema: Value,
         llm_opts: &LlmOpts,
@@ -278,12 +280,10 @@ impl TokenUsage {
     }
 
     /// Estimate the cost of this token usage.
-    pub fn estimate_cost(&self, model: Option<&LiteLlmModel>) -> Option<f64> {
-        if let Some(model) = model {
-            let input_cost =
-                self.prompt_tokens as f64 * model.model_info.input_cost_per_token;
-            let output_cost =
-                self.completion_tokens as f64 * model.model_info.output_cost_per_token;
+    pub fn estimate_cost(&self, model_cost: Option<&ModelCost>) -> Option<f64> {
+        if let Some(cost) = model_cost {
+            let input_cost = self.prompt_tokens as f64 * cost.input_cost_per_token;
+            let output_cost = self.completion_tokens as f64 * cost.output_cost_per_token;
             Some(input_cost + output_cost)
         } else {
             None
