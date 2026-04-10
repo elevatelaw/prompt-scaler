@@ -8,7 +8,7 @@ use serde_json::Map;
 use crate::{
     async_utils::JoinWorker,
     cmd::ocr::OcrOpts,
-    mem_limit::MemLimiter,
+    mem_limit::{MEM_PERMIT_DEADLOCK_TIMEOUT, MemLimiter},
     prelude::*,
     prompt::ChatPrompt,
     queues::{
@@ -65,7 +65,7 @@ impl LlmOcrPageEngine {
             .llm_opts
             .page_memory_limit
             .as_ref()
-            .map(|ml| ml.to_mem_limiter(ocr_opts.llm_opts.llm_timeout_duration()))
+            .map(|ml| ml.to_mem_limiter(Some(MEM_PERMIT_DEADLOCK_TIMEOUT)))
             .unwrap_or_else(MemLimiter::unlimited);
 
         // Create a new chat queue to handle all our LLM requests.

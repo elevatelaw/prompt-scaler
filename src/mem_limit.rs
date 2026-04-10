@@ -10,6 +10,13 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::{prelude::*, timeouts::WithTimeout};
 
+/// A reasonable deadlock timeout for acquiring memory permits.
+///
+/// Currently, deadlocks _shouldn't_ be able to happen, and it's possible in
+/// some cases that drivers might block for a while waiting for RAM. So we set
+/// this _very_ high, as a last resort.
+pub const MEM_PERMIT_DEADLOCK_TIMEOUT: Duration = Duration::from_mins(15);
+
 /// A memory limit parsed from a CLI string like `"2G"`, `"500M"`, or `"4096k"`.
 ///
 /// This is analogous to [`crate::rate_limit::RateLimit`]: it's a

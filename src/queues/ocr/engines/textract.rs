@@ -20,7 +20,7 @@ use crate::aws::load_aws_config;
 use crate::cmd::ocr::OcrOpts;
 use crate::drivers::LlmOpts;
 use crate::images::ImageEncoding;
-use crate::mem_limit::MemLimiter;
+use crate::mem_limit::{MEM_PERMIT_DEADLOCK_TIMEOUT, MemLimiter};
 use crate::prelude::*;
 
 use crate::async_utils::JoinWorker;
@@ -85,7 +85,7 @@ impl TextractOcrPageEngine {
             .llm_opts
             .page_memory_limit
             .as_ref()
-            .map(|ml| ml.to_mem_limiter(ocr_opts.llm_opts.llm_timeout_duration()))
+            .map(|ml| ml.to_mem_limiter(Some(MEM_PERMIT_DEADLOCK_TIMEOUT)))
             .unwrap_or_else(MemLimiter::unlimited);
 
         Ok((

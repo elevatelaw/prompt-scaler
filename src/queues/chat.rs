@@ -167,7 +167,7 @@ pub async fn create_chat_work_queue(
     let driver = llm_opts.driver.create_driver().await?;
 
     // Look up model cost data.
-    let cost_db = ModelCostDatabase::new(llm_opts.model_costs.as_deref());
+    let cost_db = ModelCostDatabase::new(llm_opts.model_cost_data.as_deref());
     let cost = cost_db.lookup(llm_opts.driver, &model).cloned();
     if let Some(ref cost) = cost {
         debug!(driver = ?llm_opts.driver, %model, ?cost, "Model cost info");

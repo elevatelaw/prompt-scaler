@@ -114,7 +114,7 @@ pub struct LlmOpts {
     /// output_cost_per_token, pricing_source_url. See
     /// src/default_model_costs.csv for the expected format.
     #[clap(long)]
-    pub model_costs: Option<PathBuf>,
+    pub model_cost_data: Option<PathBuf>,
 }
 
 impl LlmOpts {
