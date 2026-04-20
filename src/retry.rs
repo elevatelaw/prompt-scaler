@@ -210,6 +210,18 @@ impl IsKnownTransient for reqwest::Error {
     }
 }
 
+// Delete with `async-openai`: this only exists because that crate still uses
+// reqwest 0.12 while genai and google-cloud-* have moved to 0.13.
+impl IsKnownTransient for reqwest_0_12::Error {
+    fn is_known_transient(&self) -> bool {
+        if let Some(status) = self.status() {
+            status.is_known_transient()
+        } else {
+            true
+        }
+    }
+}
+
 impl IsKnownTransient for StatusCode {
     fn is_known_transient(&self) -> bool {
         let transient_failures = [

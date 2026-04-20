@@ -8,7 +8,7 @@ use genai::{
     Client,
     chat::{
         ChatMessage, ChatOptions, ChatRequest, ChatResponseFormat, ChatRole, ContentPart,
-        ImageSource, JsonSpec, MessageContent, Usage,
+        JsonSpec, MessageContent, Usage,
     },
     webc,
 };
@@ -94,22 +94,15 @@ impl Driver for NativeDriver {
             .map_err(DriverError::api)?;
 
         // Extract our response content.
-        let content = chat_res
-            .content
-            .as_ref()
-            .ok_or_else(|| anyhow!("No content in response: {:?}", chat_res))
-            .map_err(DriverError::invalid_output)?;
-        let content_str = content
-            .text_as_str()
-            .ok_or_else(|| {
-                anyhow!("Expected text content in response, found: {:?}", content)
-            })
+        let content_str = chat_res
+            .first_text()
+            .ok_or_else(|| anyhow!("No text content in response: {:?}", chat_res))
             .map_err(DriverError::invalid_output)?;
 
         // Extract JSON from our content.
         let response = serde_json::from_str::<Value>(content_str)
             .with_context(|| {
-                format!("Error parsing OpenAI response content: {content:?}")
+                format!("Error parsing OpenAI response content: {content_str:?}")
             })
             .map_err(DriverError::invalid_output_transient)?;
         debug!(%response, "Response");
@@ -198,17 +191,18 @@ impl Message {
                         image_file.load(ImageEncoding::Base64, mem_limiter).await?;
                     let base64_str = std::str::from_utf8(image_data.data())
                         .context("base64 image data is not valid UTF-8")?;
-                    parts.push(ContentPart::Image {
-                        content_type: image_data.mime_type().to_owned(),
-                        // TODO: Can we avoid this copy by representing file
-                        // paths directly in messages? This might require reading
-                        // the docs and changing how we handle permits here.
-                        source: ImageSource::Base64(Arc::from(base64_str)),
-                    });
+                    // TODO: Can we avoid this copy by representing file paths
+                    // directly in messages? This might require reading the docs
+                    // and changing how we handle permits here.
+                    parts.push(ContentPart::from_binary_base64(
+                        image_data.mime_type().to_owned(),
+                        Arc::from(base64_str),
+                        None,
+                    ));
                 }
                 Ok(ChatMessage {
                     role: ChatRole::User,
-                    content: MessageContent::Parts(parts),
+                    content: MessageContent::from_parts(parts),
                     options: None,
                 })
             }
