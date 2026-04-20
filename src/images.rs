@@ -37,18 +37,11 @@ impl TempDirHandle {
     }
 }
 
-/// Data URL scheme.
-static DATA_URL_SCHEME: &str = "data:";
-
-/// Data URL encoding string.
-static DATA_URL_ENCODING_STR: &str = ";base64,";
-
 /// Different encodings that can be used to load a file's data into memory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageEncoding {
     Binary,
     Base64,
-    DataUrl,
 }
 
 impl ImageEncoding {
@@ -56,16 +49,10 @@ impl ImageEncoding {
     ///
     /// This is used to estimate how much RAM an image will use when loaded, so that we can provide
     /// backpressure based on total RAM usage.
-    fn max_loaded_size(&self, mime_type: &str, file_size: usize) -> usize {
+    fn max_loaded_size(&self, _mime_type: &str, file_size: usize) -> usize {
         match self {
             ImageEncoding::Binary => file_size,
             ImageEncoding::Base64 => (4 * file_size.div_ceil(3)) + 4,
-            ImageEncoding::DataUrl => {
-                ImageEncoding::Base64.max_loaded_size(mime_type, file_size)
-                    + DATA_URL_SCHEME.len()
-                    + mime_type.len()
-                    + DATA_URL_ENCODING_STR.len()
-            }
         }
     }
 }
@@ -194,12 +181,6 @@ impl ImageFile {
         match encoding {
             ImageEncoding::Binary => self.load_and_append_bytes(&mut data),
             ImageEncoding::Base64 => self.load_and_append_base64(&mut data),
-            ImageEncoding::DataUrl => {
-                data.extend_from_slice(DATA_URL_SCHEME.as_bytes());
-                data.extend_from_slice(self.mime_type.as_bytes());
-                data.extend_from_slice(DATA_URL_ENCODING_STR.as_bytes());
-                self.load_and_append_base64(&mut data)
-            }
         }?;
         Ok(ImageData {
             mime_type: self.mime_type.clone(),
@@ -375,16 +356,6 @@ mod tests {
         assert!(size <= 1340); // ceil(1000/3)*4 + 4
     }
 
-    #[test]
-    fn max_loaded_size_data_url() {
-        let base64_size = ImageEncoding::Base64.max_loaded_size("image/png", 1000);
-        let data_url_size = ImageEncoding::DataUrl.max_loaded_size("image/png", 1000);
-        // DataUrl adds "data:" + mime_type + ";base64," overhead.
-        assert!(data_url_size > base64_size);
-        let overhead = "data:".len() + "image/png".len() + ";base64,".len();
-        assert_eq!(data_url_size, base64_size + overhead);
-    }
-
     // -- ImageFile::load and ImageData tests --
 
     /// Create a temp file with known PNG-like content for load tests.
@@ -427,18 +398,5 @@ mod tests {
             .decode(data.data())
             .unwrap();
         assert_eq!(decoded, b"fake image data for testing");
-    }
-
-    #[tokio::test]
-    async fn load_data_url_encoding() {
-        let (_tmp, image_file) = create_test_image_file();
-        let limiter = MemLimiter::unlimited();
-        let data = image_file
-            .load(ImageEncoding::DataUrl, &limiter)
-            .await
-            .unwrap();
-        assert_eq!(data.encoding(), &ImageEncoding::DataUrl);
-        let data_str = std::str::from_utf8(data.data()).unwrap();
-        assert!(data_str.starts_with("data:image/png;base64,"));
     }
 }

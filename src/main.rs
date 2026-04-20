@@ -46,14 +46,30 @@ mod ui;
     version,
     author,
     after_help = r#"
-Environment Variables:
-  - OPENAI_API_BASE (optional): Override the server URL.
-  - OPENAI_API_KEY: The OpenAI key to use.
+Environment Variables (driver: native, the default):
+  - OPENAI_API_KEY: API key for OpenAI. Also used for any OpenAI-compatible
+    gateway selected via OPENAI_API_BASE (llama-server, Ollama, LiteLLM).
+  - OPENAI_API_BASE (optional): If set, routes every chat request through
+    the OpenAI adapter at this URL. Use this for llama-server, Ollama,
+    LiteLLM, and other OpenAI-compatible gateways.
+  - ANTHROPIC_API_KEY: Direct access to Anthropic (`claude-*` models) when
+    OPENAI_API_BASE is not set.
+  - GEMINI_API_KEY: Direct access to Gemini (`gemini-*` models) when
+    OPENAI_API_BASE is not set.
 
-  Standard AWS environment variables and credential files
-  are used for AWS-based tools like Textract.
+Environment Variables (driver: vertex):
+  - GCP_PROJECT: Google Cloud project ID.
+  - GCP_LOCATION: Google Cloud region.
+  - GOOGLE_APPLICATION_CREDENTIALS: Path to the service account JSON.
 
-  These variables may be set in a standard `.env` file.
+Environment Variables (drivers: bedrock, and textract for OCR):
+  - AWS_DEFAULT_REGION
+  - AWS_ACCESS_KEY_ID
+  - AWS_SECRET_ACCESS_KEY
+
+  (Any other standard AWS credential source also works.)
+
+These variables may be set in a standard `.env` file.
 "#
 )]
 struct Opts {

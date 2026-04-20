@@ -14,10 +14,6 @@ repository = "https://github.com/elevatelaw/prompt-scaler"
 
 [dependencies]
 anyhow = "1.0.97"
-async-openai = { version = "0.28.1", default-features = false, features = [
-    "byot",
-    "rustls",
-] }
 async-trait = "0.1.88"
 aws-config = "1.6.1"
 aws-sdk-bedrockruntime = { version = "1.99.0", default-features = false, features = [
@@ -57,10 +53,6 @@ num_cpus = "1.16.0"
 peekable = { version = "0.3.0", features = ["tokio"] }
 regex = "1.11.1"
 reqwest = { version = "0.13", default-features = false }
-# Aliased 0.12 dep exists only so we can write an `IsKnownTransient` impl for
-# the `reqwest::Error` type that `async-openai` surfaces. Delete with
-# `async-openai`.
-reqwest_0_12 = { package = "reqwest", version = "0.12", default-features = false }
 schemars = "0.8.22"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"

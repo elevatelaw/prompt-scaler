@@ -27,9 +27,10 @@ static LLAMA_SERVER_API_KEY: &str = "sk-1234";
 /// model with at least some very basic OCR abilities.
 static LLAMA_SERVER_MODEL: &str = "unsloth/gemma-4-E2B-it-GGUF:Q4_K_M";
 
-/// Some cheap models for use with `--driver=native`.
+/// Cheap models that route to their provider's native adapter (the default
+/// driver). Each requires the matching API key in `.env`.
 static NATIVE_CHEAP_MODELS: &[&str] = &[
-    // Gemini uses AI Studio in native mode.
+    // Gemini via AI Studio.
     "gemini-2.5-flash",
     // Haiku is cheap enough for testing and finally handles JSON.
     "claude-haiku-4-5-20251001",
@@ -152,7 +153,6 @@ fn test_chat_image_csv_input_native() {
         cmd()
             .arg("chat")
             .arg("tests/fixtures/images/input.csv")
-            .args(["--driver", "native"])
             .arg("--model")
             .arg(model)
             .arg("--prompt")

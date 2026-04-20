@@ -9,13 +9,33 @@
 
 ## Environment
 
-The following variables can be specified in the environment, or using a `.env` file:
+The following variables can be specified in the environment, or using a `.env` file.
 
-- `OPENAI_API_KEY`: API key for OpenAI (or a compatible gateway, like LiteLLM or Ollama).
-- `OPENAI_API_BASE` (optional): Base URL for an alternate implementation of the OpenAI API, for use with tools like LiteLLM or Ollama.
-- `GEMINI_API_KEY`: API key for direct access to the Gemini API, when using `--driver=native`. Using `GEMINI_API_KEY` and `--driver=native` is strongly recommended for large-scale image tasks.
-    - **WARNING:** Gemini offers both **Free** API keys and **Tier 1-3** paid API keys. **If you use a Free API key, Google may retain your data and use it for training.** For paid API keys, see [Google's cloud compliance resource center](https://cloud.google.com/compliance), which explains how to set up appropriate paperwork for sensitive and regulated data, in jurisdictions around the world. 
+### Driver: `native` (the default)
+
+- `OPENAI_API_KEY`: API key for OpenAI. Also used as the key for any OpenAI-compatible gateway selected via `OPENAI_API_BASE` (llama-server, Ollama, LiteLLM).
+- `OPENAI_API_BASE` (optional): If set, routes every chat request through the OpenAI adapter at this URL. Use this for llama-server, Ollama, LiteLLM, and other OpenAI-compatible gateways.
+- `ANTHROPIC_API_KEY`: API key for direct access to Anthropic (`claude-*` models) when `OPENAI_API_BASE` is not set.
+- `GEMINI_API_KEY`: API key for direct access to the Gemini API (`gemini-*` models) when `OPENAI_API_BASE` is not set. Strongly recommended for large-scale image tasks.
+    - **WARNING:** Gemini offers both **Free** API keys and **Tier 1-3** paid API keys. **If you use a Free API key, Google may retain your data and use it for training.** For paid API keys, see [Google's cloud compliance resource center](https://cloud.google.com/compliance), which explains how to set up appropriate paperwork for sensitive and regulated data, in jurisdictions around the world.
     - When using `GEMINI_API_KEY`, you will probably also want to pass something like `--rate-limit=1800/m` to stay mostly below the Tier 1 rate limit of 2000 requests per minute. Rate limit enforcement on Google's does not appear to be 100% predictable, so this may require experimentation.
+
+### Driver: `vertex`
+
+- `GCP_PROJECT`: Google Cloud project ID.
+- `GCP_LOCATION`: Google Cloud region.
+- `GOOGLE_APPLICATION_CREDENTIALS`: Path to the service account JSON file.
+
+### Drivers: `bedrock` (chat) and Textract (OCR)
+
+- `AWS_DEFAULT_REGION`
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+
+(Any other standard AWS credential source also works.)
+
+### Debugging
+
 - `RUST_LOG` (optional): Set to `prompt_scaler=debug,warn` or `prompt_scaler=trace,warn` to produce detailed logs. This uses the [`env-logger` syntax](https://docs.rs/env_logger/latest/env_logger/).
 
 ### Tokio console

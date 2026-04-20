@@ -161,7 +161,7 @@ mod tests {
     fn known_model_has_expected_cost() {
         let db = default_db();
         let cost = db
-            .lookup(DriverType::OpenAI, "gpt-4o-mini")
+            .lookup(DriverType::Native, "gpt-4o-mini")
             .expect("gpt-4o-mini should be in database");
         assert!(
             (cost.input_cost_per_token - 0.00000015).abs() < 1e-12,
@@ -179,7 +179,7 @@ mod tests {
     fn unknown_model_returns_none() {
         let db = default_db();
         assert!(
-            db.lookup(DriverType::OpenAI, "nonexistent-model-xyz")
+            db.lookup(DriverType::Native, "nonexistent-model-xyz")
                 .is_none()
         );
     }

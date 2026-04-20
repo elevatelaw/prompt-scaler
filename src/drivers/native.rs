@@ -5,11 +5,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use genai::{
-    Client,
+    Client, ModelIden, ServiceTarget,
+    adapter::AdapterKind,
     chat::{
         ChatMessage, ChatOptions, ChatRequest, ChatResponseFormat, ChatRole, ContentPart,
         JsonSpec, MessageContent, Usage,
     },
+    resolver::{AuthData, Endpoint, ServiceTargetResolver},
     webc,
 };
 
@@ -34,9 +36,28 @@ pub struct NativeDriver {
 impl NativeDriver {
     /// Create a new native driver.
     pub async fn new() -> Result<Self> {
-        Ok(Self {
-            client: Client::default(),
-        })
+        // Honor `OPENAI_API_BASE`/`OPENAI_API_KEY` for OpenAI-compatible
+        // gateways (llama-server, Ollama, LiteLLM). When the base is set we
+        // force every model through the OpenAI adapter at that endpoint, to
+        // match the behavior the old `openai` driver offered as the default.
+        let target_resolver = ServiceTargetResolver::from_resolver_fn(
+            |target: ServiceTarget| -> Result<ServiceTarget, genai::resolver::Error> {
+                if let Ok(api_base) = std::env::var("OPENAI_API_BASE") {
+                    let ServiceTarget { model, .. } = target;
+                    Ok(ServiceTarget {
+                        endpoint: Endpoint::from_owned(api_base),
+                        auth: AuthData::from_env("OPENAI_API_KEY"),
+                        model: ModelIden::new(AdapterKind::OpenAI, model.model_name),
+                    })
+                } else {
+                    Ok(target)
+                }
+            },
+        );
+        let client = Client::builder()
+            .with_service_target_resolver(target_resolver)
+            .build();
+        Ok(Self { client })
     }
 }
 

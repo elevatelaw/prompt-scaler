@@ -22,7 +22,6 @@ use crate::{
 pub mod bedrock;
 pub mod echo;
 pub mod native;
-pub mod openai;
 pub mod vertex;
 
 /// Our different driver types.
@@ -31,19 +30,20 @@ pub mod vertex;
 )]
 #[clap(rename_all = "snake_case")]
 pub enum DriverType {
-    /// OpenAI driver (also for LiteLLM, Ollama, and other compatible APIs).
+    /// Native per-provider driver. Routes each model to its native adapter
+    /// (OpenAI, Anthropic, Gemini, Ollama, ...). Set `OPENAI_API_BASE` to
+    /// force everything through an OpenAI-compatible gateway (llama-server,
+    /// Ollama, LiteLLM). `openai` is accepted as an alias for backward
+    /// compatibility.
     #[default]
-    #[clap(name = "openai")]
-    OpenAI,
+    #[clap(alias = "openai")]
+    Native,
 
     /// AWS Bedrock driver.
     Bedrock,
 
     /// Echo driver (for testing).
     Echo,
-
-    /// Attempt to use a native driver for each specific AI.
-    Native,
 
     /// Vertex driver.
     Vertex,
@@ -53,7 +53,6 @@ impl DriverType {
     /// Instantiate an appropriate driver.
     pub async fn create_driver(&self) -> Result<Box<dyn Driver>> {
         match self {
-            DriverType::OpenAI => Ok(Box::new(openai::OpenAiDriver::new().await?)),
             DriverType::Bedrock => Ok(Box::new(bedrock::BedrockDriver::new().await?)),
             DriverType::Echo => Ok(Box::new(echo::EchoDriver::new())),
             DriverType::Native => Ok(Box::new(native::NativeDriver::new().await?)),
@@ -65,8 +64,10 @@ impl DriverType {
 /// Our chat-related options.
 #[derive(Args, Clone, Debug)]
 pub struct LlmOpts {
-    /// EXPERIMENTAL: The LLM driver to use. This defaults to `openai`, which
-    /// works with OpenAI, llama-server, LiteLLM and Ollama-based models.
+    /// The LLM driver to use. Defaults to `native`, which routes each model
+    /// to its provider's native adapter. Set `OPENAI_API_BASE` to route all
+    /// requests through an OpenAI-compatible gateway (llama-server, Ollama,
+    /// LiteLLM). `openai` is accepted as an alias for `native`.
     #[clap(long, value_enum, default_value_t = DriverType::default())]
     pub driver: DriverType,
 
@@ -204,9 +205,6 @@ pub enum DriverErrorKind {
     /// The API call itself failed (network, HTTP, SDK errors).
     /// Retryability depends on the specific error.
     Api,
-    /// The API refused the request on policy grounds (content filter,
-    /// recitation). Retryable — filters are nondeterministic.
-    PolicyRejection,
     /// The output was invalid — either the API response didn't match its
     /// expected structure (not retryable), or the model generated bad
     /// text like non-JSON (retryable, models are nondeterministic).
@@ -229,7 +227,6 @@ impl fmt::Display for DriverError {
         let kind_str = match self.kind {
             DriverErrorKind::InvalidInput => "invalid input",
             DriverErrorKind::Api => "API error",
-            DriverErrorKind::PolicyRejection => "policy rejection",
             DriverErrorKind::InvalidOutput => "invalid output",
         };
         if let Some(source) = &self.source {
@@ -270,16 +267,6 @@ impl DriverError {
             kind: DriverErrorKind::Api,
             source: Some(error.into()),
             is_transient,
-        }
-    }
-
-    /// Policy rejection (content filter, recitation).
-    /// Transient — filters are nondeterministic.
-    pub fn policy_rejection(source: impl Into<anyhow::Error>) -> Self {
-        Self {
-            kind: DriverErrorKind::PolicyRejection,
-            source: Some(source.into()),
-            is_transient: true,
         }
     }
 
