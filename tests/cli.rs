@@ -17,31 +17,28 @@ use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 
 /// Endpoint for local `llama-server` instance. This is OpenAI-compatible, it
-/// acts as a strong replacement for tools like Ollama. We use this to test
-/// the things that we can reasonably test locally.
+/// acts as a strong replacement for tools like Ollama. We use this to test the
+/// things that we can reasonably test locally.
 static LLAMA_SERVER_ENDPOINT: &str = "http://localhost:8080/v1";
-/// Our llama-server API key. By default, llama-server ignores this.
+/// Our llama-server API key. By default, llama-server ignores this unless you
+/// configure an API key.
 static LLAMA_SERVER_API_KEY: &str = "sk-1234";
-/// Default model to use for `llama-server` in tests. Should be a small, fast model
-/// with at least some very basic OCR abilities.
-static LLAMA_SERVER_MODEL: &str = "unsloth/gemma-4-E2B-it-GGUF";
+/// Default model to use for `llama-server` in tests. Should be a small, fast
+/// model with at least some very basic OCR abilities.
+static LLAMA_SERVER_MODEL: &str = "unsloth/gemma-4-E2B-it-GGUF:Q4_K_M";
 
 /// Some cheap models for use with `--driver=native`.
 static NATIVE_CHEAP_MODELS: &[&str] = &[
-    // This should work, but we probably want to overhaul how we handle
-    // API keys for to distinguish between LiteLLM and
-    //"gpt-4o-mini",
-
-    // Does not return JSON.
-    //"claude-3-5-haiku-20241022",
-
-    // Works fine in native mode!
+    // Gemini uses AI Studio in native mode.
     "gemini-2.5-flash",
+    // Haiku is cheap enough for testing and finally handles JSON.
+    "claude-haiku-4-5-20251001",
+    // GPT-5.4 Nano is a cheap, current GPT model.
+    "gpt-5.4-nano",
 ];
 
-/// Some cheap models for use with `--driver=vertex`. This is a major production
-/// use case, so we test multiple models.
-static VERTEX_CHEAP_MODELS: &[&str] = &["gemini-2.0-flash", "gemini-2.5-flash"];
+/// Some cheap models for use with `--driver=vertex`.
+static VERTEX_CHEAP_MODELS: &[&str] = &["gemini-2.5-flash"];
 
 /// AWS Bedrock models that are likely to work.
 ///
@@ -355,6 +352,7 @@ fn test_ocr_textract() {
     cmd()
         .arg("ocr")
         .arg("tests/fixtures/ocr/input.csv")
+        .args(["--base-dir", "tests/fixtures/"])
         .arg("--jobs")
         .arg("3")
         .arg("--model")
@@ -396,7 +394,8 @@ fn test_ocr_textract_async() {
     }
     for row in reader.deserialize::<Row>() {
         let mut row = row.expect("Failed to read record");
-        row.path = format!("{}{}", s3_location, row.path);
+        row.path = format!("{}tests/fixtures/{}", s3_location, row.path);
+        eprintln!("Writing record with path: {}", row.path);
         writer.serialize(&row).expect("Failed to write record");
     }
 
