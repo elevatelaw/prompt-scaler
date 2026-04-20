@@ -83,6 +83,12 @@ pub struct ImageFile {
 impl ImageFile {
     /// Create a new `ImageHandle` from a path.
     pub fn from_path(path: &Path) -> Result<Self> {
+        if !path.is_absolute() {
+            return Err(anyhow!(
+                "image file path must be absolute: {}",
+                path.display()
+            ));
+        }
         let mime_type = get_mime_type(Path::new(path))?;
         Ok(Self {
             mime_type,
@@ -100,7 +106,13 @@ impl ImageFile {
     /// `file:///tmp/pages/page-1.png?mime_type=image/png`.
     pub fn to_url(&self) -> String {
         let mut url = Url::from_file_path(&self.path)
-            .expect("ImageFile path should be absolute and produce a valid file: URL");
+            .map_err(|_| {
+                anyhow!(
+                    "failed to convert image file path to URL: {}",
+                    self.path.display()
+                )
+            })
+            .expect("ImageFile path should be absolute and produce a valid file");
         url.query_pairs_mut()
             .append_pair("mime_type", &self.mime_type);
         url.to_string()

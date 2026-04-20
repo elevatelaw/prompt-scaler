@@ -128,7 +128,7 @@ async fn real_main(ui: &Ui) -> Result<()> {
     dotenvy::dotenv().ok();
 
     // Parse command-line arguments.
-    let opts = Opts::parse();
+    let mut opts = Opts::parse();
     debug!("Parsed options: {:?}", opts);
 
     // Hide the progress bar if we're using stdout for output.
@@ -137,7 +137,7 @@ async fn real_main(ui: &Ui) -> Result<()> {
     }
 
     // Run the appropriate subcommand.
-    match &opts.subcmd {
+    match &mut opts.subcmd {
         Cmd::Chat(opts) => {
             cmd::chat::cmd_chat(ui, opts).await?;
         }

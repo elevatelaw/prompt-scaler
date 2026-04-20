@@ -83,7 +83,11 @@ impl OcrOpts {
 /// The `ocr` subcommand.
 #[instrument(level = "debug", skip_all)]
 #[allow(clippy::too_many_arguments)]
-pub async fn cmd_ocr(ui: &Ui, opts: &OcrOpts) -> Result<()> {
+pub async fn cmd_ocr(ui: &Ui, opts: &mut OcrOpts) -> Result<()> {
+    // Compute our canonical base directory for relative paths in input and prompts.
+    opts.llm_opts
+        .compute_canonical_base_dir(opts.input_path.as_deref())?;
+
     // Get our OCR prompt.
     let prompt = match opts.prompt_path.as_deref() {
         Some(path) => read_json_or_toml::<ChatPrompt>(path).await?,

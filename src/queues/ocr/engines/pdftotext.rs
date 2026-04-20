@@ -44,7 +44,9 @@ impl OcrFileEngine for PdfToTextOcrFileEngine {
         ocr_input: WorkInput<OcrInput>,
     ) -> Result<WorkOutput<OcrOutput>> {
         // Fail all non-PDF files immediately.
-        let mime_type = get_mime_type(ocr_input.data.path())?;
+        let base_dir = self.ocr_opts.llm_opts.canonical_base_dir();
+        let resolved = ocr_input.data.resolved_path(base_dir);
+        let mime_type = get_mime_type(&resolved)?;
         if mime_type != "application/pdf" {
             return Ok(WorkOutput::new_failed(
                 ocr_input.id,
@@ -58,9 +60,7 @@ impl OcrFileEngine for PdfToTextOcrFileEngine {
         let tmpdir = tempfile::TempDir::with_prefix("pdftotext")?;
         let output_path = tmpdir.path().join("output.txt");
         let mut cmd = Command::new("pdftotext");
-        cmd.arg("-layout")
-            .arg(&ocr_input.data.path)
-            .arg(&output_path);
+        cmd.arg("-layout").arg(&resolved).arg(&output_path);
         if !self.ocr_opts.include_page_breaks {
             cmd.arg("-nopgbrk");
         }

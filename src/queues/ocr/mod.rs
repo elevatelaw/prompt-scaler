@@ -33,9 +33,11 @@ pub struct OcrInput {
 }
 
 impl OcrInput {
-    /// Get `path` as a `&Path`.
-    pub fn path(&self) -> &Path {
-        Path::new(&self.path)
+    /// Resolve `self.path` against `base_dir` to produce an absolute path
+    /// for local filesystem access. Only used by drivers which assume paths
+    /// represent files on the disk (as opposed to, e.g., S3 URLs).
+    pub fn resolved_path(&self, base_dir: &Path) -> PathBuf {
+        base_dir.join(&self.path)
     }
 }
 

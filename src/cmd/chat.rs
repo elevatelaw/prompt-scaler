@@ -23,7 +23,7 @@ pub struct ChatOpts {
     pub input_path: Option<PathBuf>,
 
     /// Model to use by default.
-    #[clap(short = 'm', long, default_value = "gpt-4o-mini")]
+    #[clap(short = 'm', long)]
     pub model: String,
 
     /// Prompt, in TOML or JSON format.
@@ -45,7 +45,11 @@ pub struct ChatOpts {
 
 /// Run the `chat` subcommand.
 #[instrument(level = "debug", skip_all)]
-pub async fn cmd_chat(ui: &Ui, opts: &ChatOpts) -> Result<()> {
+pub async fn cmd_chat(ui: &Ui, opts: &mut ChatOpts) -> Result<()> {
+    // Compute our canonical base directory for relative paths in input and prompts.
+    opts.llm_opts
+        .compute_canonical_base_dir(opts.input_path.as_deref())?;
+
     // Open up our input stream and convert to records.
     let input =
         WorkInput::<ChatInput>::read_stream(ui.clone(), opts.input_path.as_deref())

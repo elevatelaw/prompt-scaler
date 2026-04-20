@@ -3,7 +3,8 @@
 use std::{fmt, fs, marker::PhantomData};
 
 use handlebars::{
-    Context, Handlebars, Helper, HelperResult, Output, RenderContext, RenderErrorReason,
+    Context, Handlebars, Helper, HelperDef, HelperResult, Output, RenderContext,
+    RenderErrorReason,
 };
 use handlebars_concat::HandlebarsConcat;
 use schemars::JsonSchema;
@@ -90,14 +91,31 @@ impl ChatPrompt<Template> {
 
     /// Render the prompt as a JSON object. This causes a state transition from
     /// [`Template`] to [`Rendered`].
-    pub fn render(&self, bindings: &JsonObject) -> Result<ChatPrompt<Rendered>> {
+    pub fn render(
+        &self,
+        bindings: &JsonObject,
+        base_dir: &Path,
+    ) -> Result<ChatPrompt<Rendered>> {
         self.validate()?;
+        if !base_dir.is_absolute() {
+            return Err(anyhow!(
+                "Base directory must be an absolute path, got: {}",
+                base_dir.display()
+            ));
+        }
+
+        // Set up our Handlebars helpers.
         let mut handlebars = Handlebars::new();
         handlebars.register_escape_fn(|s| s.to_owned());
         handlebars.register_helper("concat", Box::new(HandlebarsConcat));
-        handlebars.register_helper("image-data-url", Box::new(image_data_url_helper));
-        handlebars
-            .register_helper("text-file-contents", Box::new(text_file_contents_helper));
+        handlebars.register_helper(
+            "image-data-url",
+            Box::new(ImageDataUrlHelper::new(base_dir)),
+        );
+        handlebars.register_helper(
+            "text-file-contents",
+            Box::new(TextFileContentsHelper::new(base_dir)),
+        );
         handlebars.register_helper("to-string", Box::new(to_string_helper));
         self.render_template(&handlebars, bindings)
             .context("Could not render prompt")
@@ -198,51 +216,95 @@ impl<'de> toml_span::Deserialize<'de> for Message {
 /// Handlebars helper for converting a path to a `file:` URL for late image
 /// loading. The image is not loaded during template rendering — it will be
 /// loaded later by the driver with the appropriate encoding.
-fn image_data_url_helper(
-    h: &Helper,
-    _: &Handlebars,
-    _: &Context,
-    _: &mut RenderContext,
-    out: &mut dyn Output,
-) -> HelperResult {
-    // Get our path parameter.
-    let path = h
-        .param(0)
-        .ok_or_else(|| RenderErrorReason::ParamNotFoundForIndex("image-data-url", 0))?
-        .value()
-        .as_str()
-        .ok_or_else(|| RenderErrorReason::InvalidParamType("string"))?;
+struct ImageDataUrlHelper {
+    base_dir: PathBuf,
+}
 
-    // Construct an ImageFile and emit a file: URL.
-    let image_file = ImageFile::from_path(Path::new(path))
-        .map_err(|err| RenderErrorReason::Other(err.to_string()))?;
-    out.write(&image_file.to_url())?;
-    Ok(())
+impl ImageDataUrlHelper {
+    fn new(base_dir: &Path) -> Self {
+        let base_dir = base_dir.to_path_buf();
+        Self { base_dir }
+    }
+}
+
+impl HelperDef for ImageDataUrlHelper {
+    fn call<'reg: 'rc, 'rc>(
+        &self,
+        h: &Helper<'rc>,
+        _r: &'reg Handlebars<'reg>,
+        _ctx: &'rc Context,
+        _rc: &mut RenderContext<'reg, 'rc>,
+        out: &mut dyn Output,
+    ) -> HelperResult {
+        // Get our path parameter.
+        let path = h
+            .param(0)
+            .ok_or_else(|| RenderErrorReason::ParamNotFoundForIndex("image-data-url", 0))?
+            .value()
+            .as_str()
+            .ok_or_else(|| RenderErrorReason::InvalidParamType("string"))?;
+
+        // Construct the full path, by joining with our root directory.
+        //
+        // SECURITY: If you are processing untrusted data, you will want to
+        // modify the code to to restrict file reads outside of a specific
+        // directory.
+        let full_path = self.base_dir.join(path);
+
+        // Construct an ImageFile and emit a file: URL.
+        let image_file = ImageFile::from_path(&full_path)
+            .map_err(|err| RenderErrorReason::Other(err.to_string()))?;
+        out.write(&image_file.to_url())?;
+        Ok(())
+    }
 }
 
 /// Handlebars helper for reading the contents of a text file and returning it
 /// as a string.
-fn text_file_contents_helper(
-    h: &Helper,
-    _: &Handlebars,
-    _: &Context,
-    _: &mut RenderContext,
-    out: &mut dyn Output,
-) -> HelperResult {
-    // Get our path parameter.
-    let path = h
-        .param(0)
-        .ok_or_else(|| RenderErrorReason::ParamNotFoundForIndex("text-file-contents", 0))?
-        .value()
-        .as_str()
-        .ok_or_else(|| RenderErrorReason::InvalidParamType("string"))?;
+struct TextFileContentsHelper {
+    base_dir: PathBuf,
+}
 
-    // Read the file.
-    let contents = fs::read_to_string(path).map_err(|err| {
-        RenderErrorReason::Other(format!("error reading {path}: {err}"))
-    })?;
-    out.write(&contents)?;
-    Ok(())
+impl TextFileContentsHelper {
+    fn new(base_dir: &Path) -> Self {
+        let base_dir = base_dir.to_path_buf();
+        Self { base_dir }
+    }
+}
+
+impl HelperDef for TextFileContentsHelper {
+    fn call<'reg: 'rc, 'rc>(
+        &self,
+        h: &Helper<'rc>,
+        _r: &'reg Handlebars<'reg>,
+        _ctx: &'rc Context,
+        _rc: &mut RenderContext<'reg, 'rc>,
+        out: &mut dyn Output,
+    ) -> HelperResult {
+        // Get our path parameter.
+        let path = h
+            .param(0)
+            .ok_or_else(|| {
+                RenderErrorReason::ParamNotFoundForIndex("text-file-contents", 0)
+            })?
+            .value()
+            .as_str()
+            .ok_or_else(|| RenderErrorReason::InvalidParamType("string"))?;
+
+        // Construct the full path, by joining with our root directory.
+        //
+        // SECURITY: If you are processing untrusted data, you will want to
+        // modify the code to to restrict file reads outside of a specific
+        // directory.
+        let full_path = self.base_dir.join(path);
+
+        // Read the file.
+        let contents = fs::read_to_string(&full_path).map_err(|err| {
+            RenderErrorReason::Other(format!("error reading {full_path:?}: {err}"))
+        })?;
+        out.write(&contents)?;
+        Ok(())
+    }
 }
 
 /// Convert a value into a string, using Rust's [`std::fmt::Display`] trait.

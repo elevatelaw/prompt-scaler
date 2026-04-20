@@ -16,18 +16,15 @@ use csv::{ReaderBuilder, WriterBuilder};
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 
-/// Fake API key for local LiteLLM instance.
-static LITELLM_API_KEY: &str = "sk-1234";
-/// API base URL for local LiteLLM instance.
-static LITELLM_API_BASE: &str = "http://localhost:4000/v1";
-
-/// Standard cheap models from multiple providers, available through
-/// our `litellm_config.yml` setup.
-static LITELLM_CHEAP_MODELS: &[&str] = &[
-    "gpt-4o-mini",
-    "claude-3-5-haiku-20241022",
-    "gemini-2.0-flash",
-];
+/// Endpoint for local `llama-server` instance. This is OpenAI-compatible, it
+/// acts as a strong replacement for tools like Ollama. We use this to test
+/// the things that we can reasonably test locally.
+static LLAMA_SERVER_ENDPOINT: &str = "http://localhost:8080/v1";
+/// Our llama-server API key. By default, llama-server ignores this.
+static LLAMA_SERVER_API_KEY: &str = "sk-1234";
+/// Default model to use for `llama-server` in tests. Should be a small, fast model
+/// with at least some very basic OCR abilities.
+static LLAMA_SERVER_MODEL: &str = "unsloth/gemma-4-E2B-it-GGUF";
 
 /// Some cheap models for use with `--driver=native`.
 static NATIVE_CHEAP_MODELS: &[&str] = &[
@@ -39,19 +36,12 @@ static NATIVE_CHEAP_MODELS: &[&str] = &[
     //"claude-3-5-haiku-20241022",
 
     // Works fine in native mode!
-    "gemini-2.0-flash",
+    "gemini-2.5-flash",
 ];
 
-/// Some cheap models for use with `--driver=vertex`.
-static VERTEX_CHEAP_MODELS: &[&str] = &["gemini-2.0-flash"];
-
-/// Fake API key for local Ollama instance.
-static OLLAMA_API_KEY: &str = "sk-1234";
-/// API base URL for local Ollama instance.
-static OLLAMA_API_BASE: &str = "http://localhost:11434/v1";
-
-/// Fast Ollama models to test against.
-static OLLAMA_FAST_MODELS: &[&str] = &["gemma3:4b-it-qat"];
+/// Some cheap models for use with `--driver=vertex`. This is a major production
+/// use case, so we test multiple models.
+static VERTEX_CHEAP_MODELS: &[&str] = &["gemini-2.0-flash", "gemini-2.5-flash"];
 
 /// AWS Bedrock models that are likely to work.
 ///
@@ -70,6 +60,19 @@ fn cmd() -> Command {
     cmd
 }
 
+/// Add `llama-server` environment variables to a command, for testing against a local
+/// `llama-server` instance.
+trait LlamaServerCommandExt {
+    fn with_llama_server_env(&mut self) -> &mut Self;
+}
+
+impl LlamaServerCommandExt for Command {
+    fn with_llama_server_env(&mut self) -> &mut Self {
+        self.env("OPENAI_API_BASE", LLAMA_SERVER_ENDPOINT)
+            .env("OPENAI_API_KEY", LLAMA_SERVER_API_KEY)
+    }
+}
+
 #[test]
 fn test_help() {
     cmd().arg("--help").assert().success();
@@ -81,13 +84,13 @@ fn test_version() {
 }
 
 #[test]
-#[ignore = "Needs LiteLLM running"]
-fn test_chat_text_jsonl_input_litellm() {
+#[ignore = "Needs llama-server running"]
+fn test_chat_text_jsonl_input_llama() {
     cmd()
-        .env("OPENAI_API_KEY", LITELLM_API_KEY)
-        .env("OPENAI_API_BASE", LITELLM_API_BASE)
+        .with_llama_server_env()
         .arg("chat")
         .arg("tests/fixtures/texts/input.jsonl")
+        .args(["--model", LLAMA_SERVER_MODEL])
         .arg("--prompt")
         .arg("tests/fixtures/texts/prompt.toml")
         .assert()
@@ -95,88 +98,57 @@ fn test_chat_text_jsonl_input_litellm() {
 }
 
 #[test]
-#[ignore = "Needs LiteLLM running"]
-fn test_chat_text_csv_input_litellm() {
-    for &model in LITELLM_CHEAP_MODELS {
-        println!("Testing model: {model}");
-        cmd()
-            .env("OPENAI_API_KEY", LITELLM_API_KEY)
-            .env("OPENAI_API_BASE", LITELLM_API_BASE)
-            .arg("chat")
-            .arg("tests/fixtures/texts/input.csv")
-            .arg("--allow-reordering")
-            .arg("--model")
-            .arg(model)
-            .arg("--prompt")
-            .arg("tests/fixtures/texts/prompt.toml")
-            .assert()
-            .success();
-    }
+#[ignore = "Needs llama-server running"]
+fn test_chat_text_csv_input_llama() {
+    cmd()
+        .with_llama_server_env()
+        .arg("chat")
+        .arg("tests/fixtures/texts/input.csv")
+        .args(["--model", LLAMA_SERVER_MODEL])
+        .arg("--allow-reordering")
+        .arg("--prompt")
+        .arg("tests/fixtures/texts/prompt.toml")
+        .assert()
+        .success();
 }
 
 #[test]
-#[ignore = "Needs Ollama running"]
-fn test_chat_text_csv_input_ollama() {
-    for &model in OLLAMA_FAST_MODELS {
-        println!("Testing model: {model}");
-        cmd()
-            .env("OPENAI_API_KEY", OLLAMA_API_KEY)
-            .env("OPENAI_API_BASE", OLLAMA_API_BASE)
-            .arg("chat")
-            .arg("tests/fixtures/texts/input.csv")
-            .args(["--jobs", "1", "--limit", "1"])
-            .arg("--model")
-            .arg(model)
-            .arg("--prompt")
-            .arg("tests/fixtures/texts/prompt.toml")
-            .assert()
-            .success();
-    }
-}
-
-#[test]
-#[ignore = "Needs LiteLLM running"]
-fn test_chat_external_schema_csv_input_litellm() {
+#[ignore = "Needs llama-server running"]
+fn test_chat_external_schema_csv_input_llama() {
     // Prompts using JSON Schemas generated from various languages. See our
     // `Justfile` for how the schemas referred to by these files are generated.
     let prompts = ["prompt_py.toml", "prompt_ts.toml"];
     for prompt in prompts {
         println!("Testing schema prompt: {prompt}");
         cmd()
-            .env("OPENAI_API_KEY", LITELLM_API_KEY)
-            .env("OPENAI_API_BASE", LITELLM_API_BASE)
+            .with_llama_server_env()
             .arg("chat")
             .arg("tests/fixtures/external_schemas/input.csv")
+            .args(["--model", LLAMA_SERVER_MODEL])
             .arg("--prompt")
             .arg(format!("tests/fixtures/external_schemas/{prompt}"))
-            .arg("--model")
-            .arg(LITELLM_CHEAP_MODELS[0])
             .assert()
             .success();
     }
 }
 
 #[test]
-#[ignore = "Slightly expensive & needs LiteLLM running"]
-fn test_chat_image_csv_input_litellm() {
-    for &model in LITELLM_CHEAP_MODELS {
-        println!("Testing model: {model}");
-        cmd()
-            .env("OPENAI_API_KEY", LITELLM_API_KEY)
-            .env("OPENAI_API_BASE", LITELLM_API_BASE)
-            .arg("chat")
-            .arg("tests/fixtures/images/input.csv")
-            .arg("--model")
-            .arg(model)
-            .arg("--prompt")
-            .arg("tests/fixtures/images/prompt.toml")
-            .assert()
-            .success();
-    }
+#[ignore = "Needs llama-server running"]
+fn test_chat_image_csv_input_llama() {
+    cmd()
+        .with_llama_server_env()
+        .arg("chat")
+        .arg("tests/fixtures/images/input.csv")
+        .arg("--model")
+        .arg(LLAMA_SERVER_MODEL)
+        .arg("--prompt")
+        .arg("tests/fixtures/images/prompt.toml")
+        .assert()
+        .success();
 }
 
 #[test]
-#[ignore = "Slightly expensive & needs various API keys in .env"]
+#[ignore = "Needs native API keys in .env and is slightly expensive"]
 fn test_chat_image_csv_input_native() {
     for &model in NATIVE_CHEAP_MODELS {
         println!("Testing model: {model}");
@@ -194,7 +166,7 @@ fn test_chat_image_csv_input_native() {
 }
 
 #[test]
-#[ignore = "Needs Vertex AI access and credentials"]
+#[ignore = "Needs Vertex credentials in .env and is slightly expensive"]
 fn test_chat_image_csv_input_vertex() {
     for &model in VERTEX_CHEAP_MODELS {
         println!("Testing model: {model}");
@@ -213,13 +185,11 @@ fn test_chat_image_csv_input_vertex() {
 }
 
 #[test]
-#[ignore = "Needs Ollama running"]
+#[ignore = "Needs AWS Bedrock credentials in .env and is slightly expensive"]
 fn test_chat_text_csv_input_bedrock() {
     for &model in BEDROCK_MODELS {
         println!("Testing model: {model}");
         cmd()
-            .env("OPENAI_API_KEY", OLLAMA_API_KEY)
-            .env("OPENAI_API_BASE", OLLAMA_API_BASE)
             .arg("chat")
             .arg("tests/fixtures/texts/input.csv")
             .args(["--driver", "bedrock"])
@@ -234,100 +204,101 @@ fn test_chat_text_csv_input_bedrock() {
 }
 
 #[test]
-#[ignore = "Slow & needs Ollama running"]
-fn test_chat_image_csv_input_ollama() {
-    for &model in OLLAMA_FAST_MODELS {
-        println!("Testing model: {model}");
-        cmd()
-            .env("OPENAI_API_KEY", OLLAMA_API_KEY)
-            .env("OPENAI_API_BASE", OLLAMA_API_BASE)
-            .arg("chat")
-            .arg("tests/fixtures/images/input.csv")
-            .args(["--jobs", "1"])
-            .arg("--model")
-            .arg(model)
-            .arg("--prompt")
-            .arg("tests/fixtures/images/prompt.toml")
-            .assert()
-            .success();
-    }
-}
-
-#[test]
-#[ignore = "Needs LiteLLM running"]
-fn test_ocr_pdf() {
+#[ignore = "Needs `llama-server` running"]
+fn test_ocr_llama() {
     cmd()
-        .env("OPENAI_API_KEY", LITELLM_API_KEY)
-        .env("OPENAI_API_BASE", LITELLM_API_BASE)
+        .with_llama_server_env()
         .arg("ocr")
         .arg("tests/fixtures/ocr/input.csv")
-        .arg("--jobs")
-        .arg("3")
-        .arg("--model")
-        .arg("gemini-2.0-flash")
-        .assert()
-        .success();
-}
-
-#[test]
-#[ignore = "Needs LiteLLM running"]
-fn test_ocr_pdf_with_options() {
-    cmd()
-        .env("OPENAI_API_KEY", LITELLM_API_KEY)
-        .env("OPENAI_API_BASE", LITELLM_API_BASE)
-        .arg("ocr")
-        .arg("tests/fixtures/ocr/input.csv")
-        .arg("--jobs")
-        .arg("3")
-        .arg("--model")
-        .arg("gemini-2.0-flash")
-        .args(["--offset", "0"])
-        .args(["--limit", "1"])
-        .args(["--allow-reordering"])
-        .args(["--max-pages", "1"])
-        .args(["--max-completion-tokens", "1000"])
-        .args(["--temperature", "0.5"])
-        .args(["--top-p", "0.1"])
-        .args(["--llm-timeout", "60"])
-        .args(["--rate-limit", "10/s"])
-        .assert()
-        .success();
-}
-
-#[test]
-#[ignore = "Needs LiteLLM running"]
-fn test_ocr_rasterized() {
-    cmd()
-        .env("OPENAI_API_KEY", LITELLM_API_KEY)
-        .env("OPENAI_API_BASE", LITELLM_API_BASE)
-        .arg("ocr")
-        .arg("tests/fixtures/ocr/input.csv")
-        .arg("--jobs")
-        .arg("3")
-        .arg("--model")
-        .arg("gemini-2.0-flash")
+        .args(["--base-dir", "tests/fixtures/"])
+        .args(["--jobs", "3"])
+        .args(["--model", LLAMA_SERVER_MODEL])
+        // Rasterization is needed for PDFs with llama-server.
         .arg("--rasterize")
         .assert()
         .success();
 }
 
 #[test]
-#[ignore = "Needs LiteLLM running"]
-fn test_ocr_custom_prompt() {
-    cmd()
-        .env("OPENAI_API_KEY", LITELLM_API_KEY)
-        .env("OPENAI_API_BASE", LITELLM_API_BASE)
-        .arg("ocr")
-        .arg("tests/fixtures/ocr/input.csv")
-        .arg("--jobs")
-        .arg("3")
-        .arg("--prompt")
-        // Same prompt as usual, but pass it explicitly.
-        .arg("src/queues/ocr/engines/llm/default_ocr_prompt.toml")
-        .arg("--model")
-        .arg("gemini-2.0-flash")
-        .assert()
-        .success();
+#[ignore = "Needs Vertex credentials in .env and is slightly expensive"]
+fn test_ocr_pdf_vertex() {
+    for &model in VERTEX_CHEAP_MODELS {
+        println!("Testing model: {model}");
+        cmd()
+            .arg("ocr")
+            .arg("tests/fixtures/ocr/input.csv")
+            .args(["--base-dir", "tests/fixtures/"])
+            .args(["--jobs", "3"])
+            .args(["--model", model])
+            .args(["--driver", "vertex"])
+            .assert()
+            .success();
+    }
+}
+
+#[test]
+#[ignore = "Needs Vertex credentials in .env and is slightly expensive"]
+fn test_ocr_pdf_with_options_vertex() {
+    for &model in VERTEX_CHEAP_MODELS {
+        println!("Testing model: {model}");
+        cmd()
+            .arg("ocr")
+            .arg("tests/fixtures/ocr/input.csv")
+            .args(["--base-dir", "tests/fixtures/"])
+            .args(["--jobs", "3"])
+            .args(["--model", model])
+            .args(["--driver", "vertex"])
+            .args(["--offset", "0"])
+            .args(["--limit", "1"])
+            .args(["--allow-reordering"])
+            .args(["--max-pages", "1"])
+            .args(["--max-completion-tokens", "1000"])
+            .args(["--temperature", "0.5"])
+            .args(["--top-p", "0.1"])
+            .args(["--llm-timeout", "60"])
+            .args(["--rate-limit", "10/s"])
+            .assert()
+            .success();
+    }
+}
+
+#[test]
+#[ignore = "Needs Vertex credentials in .env and is slightly expensive"]
+fn test_ocr_rasterized_vertex() {
+    for &model in VERTEX_CHEAP_MODELS {
+        println!("Testing model: {model}");
+        cmd()
+            .arg("ocr")
+            .arg("tests/fixtures/ocr/input.csv")
+            .args(["--base-dir", "tests/fixtures/"])
+            .args(["--jobs", "3"])
+            .args(["--model", model])
+            .args(["--driver", "vertex"])
+            .arg("--rasterize")
+            .assert()
+            .success();
+    }
+}
+
+#[test]
+#[ignore = "Needs Vertex credentials in .env and is slightly expensive"]
+fn test_ocr_custom_prompt_vertex() {
+    for &model in VERTEX_CHEAP_MODELS {
+        println!("Testing model: {model}");
+        cmd()
+            .arg("ocr")
+            .arg("tests/fixtures/ocr/input.csv")
+            .arg("--base-dir")
+            .arg("tests/fixtures/")
+            .args(["--jobs", "3"])
+            .arg("--prompt")
+            // Same prompt as usual, but pass it explicitly.
+            .arg("src/queues/ocr/engines/llm/default_ocr_prompt.toml")
+            .args(["--model", model])
+            .args(["--driver", "vertex"])
+            .assert()
+            .success();
+    }
 }
 
 #[test]
@@ -335,6 +306,7 @@ fn test_ocr_pdftotext() {
     cmd()
         .arg("ocr")
         .arg("tests/fixtures/ocr/input.csv")
+        .args(["--base-dir", "tests/fixtures/"])
         .arg("--jobs")
         .arg("3")
         // Our image test case won't work, so allow more failures than usual.
@@ -353,6 +325,7 @@ fn test_ocr_tesseract() {
     cmd()
         .arg("ocr")
         .arg("tests/fixtures/ocr/input.csv")
+        .args(["--base-dir", "tests/fixtures/"])
         .arg("--jobs")
         .arg("3")
         .arg("--model")
@@ -447,19 +420,17 @@ fn test_ocr_textract_async() {
 }
 
 #[test]
-#[ignore = "Needs LiteLLM running"]
-fn test_chat_skip_processing_and_passthrough_litellm() {
+#[ignore = "Needs llama-server running"]
+fn test_chat_skip_processing_and_passthrough_llama() {
     use serde_json::Value;
 
     let output = cmd()
-        .env("OPENAI_API_KEY", LITELLM_API_KEY)
-        .env("OPENAI_API_BASE", LITELLM_API_BASE)
+        .with_llama_server_env()
         .arg("chat")
         .arg("tests/fixtures/skip_and_passthrough/input.jsonl")
         .arg("--prompt")
         .arg("tests/fixtures/skip_and_passthrough/prompt.toml")
-        .arg("--model")
-        .arg(LITELLM_CHEAP_MODELS[0])
+        .args(["--model", LLAMA_SERVER_MODEL])
         .stdout(Stdio::piped())
         .output()
         .expect("Failed to execute command");

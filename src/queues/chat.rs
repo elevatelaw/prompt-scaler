@@ -267,7 +267,10 @@ async fn run_chat(
         template_bindings = ?input_record.data.template_bindings,
         "Template bindings"
     );
-    let prompt = state.prompt.render(&input_record.data.template_bindings)?;
+    let prompt = state.prompt.render(
+        &input_record.data.template_bindings,
+        state.llm_opts.canonical_base_dir(),
+    )?;
 
     // Release the input data, because it adds up, especially for images.
     drop(input_record.data);

@@ -2,7 +2,7 @@
 //!
 //! We support multiple LLM providers via native Rust drivers.
 
-use std::{fmt, ops::AddAssign, path::PathBuf, time::Duration};
+use std::{env::current_dir, fmt, ops::AddAssign, path::PathBuf, time::Duration};
 
 use async_trait::async_trait;
 use clap::{Args, ValueEnum};
@@ -66,7 +66,7 @@ impl DriverType {
 #[derive(Args, Clone, Debug)]
 pub struct LlmOpts {
     /// EXPERIMENTAL: The LLM driver to use. This defaults to `openai`, which
-    /// works with OpenAI, LiteLLM and Ollama-based models.
+    /// works with OpenAI, llama-server, LiteLLM and Ollama-based models.
     #[clap(long, value_enum, default_value_t = DriverType::default())]
     pub driver: DriverType,
 
@@ -115,12 +115,78 @@ pub struct LlmOpts {
     /// src/default_model_costs.csv for the expected format.
     #[clap(long)]
     pub model_cost_data: Option<PathBuf>,
+
+    /// Base directory for resolving file paths. By default, this is the
+    /// directory containing the input CSV/JSONL, or the current working
+    /// directory if the input is from standard input.
+    #[clap(long)]
+    pub base_dir: Option<PathBuf>,
+
+    /// Our canonical base directory.
+    #[clap(skip)]
+    canonical_base_dir: Option<PathBuf>,
 }
 
 impl LlmOpts {
     /// Get the timeout as a [`Duration`], if set.
     pub fn llm_timeout_duration(&self) -> Option<Duration> {
         self.llm_timeout.map(Duration::from_secs)
+    }
+
+    /// Compute and store our canonical base directory for later use.
+    ///
+    /// The order of precedence is:
+    ///
+    /// 1. `--base-dir` if set.
+    /// 2. Directory containing the input CSV/JSONL if input is from a file.
+    /// 3. Current working directory otherwise.
+    pub fn compute_canonical_base_dir(
+        &mut self,
+        input_path: Option<&Path>,
+    ) -> Result<()> {
+        // Figure out what base directory to use.
+        let actual_base_dir = match (self.base_dir.as_deref(), input_path) {
+            (Some(p), _) => p,
+            (None, Some(input_path)) => {
+                // Give a nice error if the input path is bad, before we try to
+                // canonicalize the parent directory, which gives a worse error.
+                if !input_path.exists() {
+                    return Err(anyhow!(
+                        "Input path does not exist: {}",
+                        input_path.display()
+                    ));
+                } else if !input_path.is_file() {
+                    return Err(anyhow!(
+                        "Input path is not a file: {}",
+                        input_path.display()
+                    ));
+                }
+                input_path.parent().unwrap_or(Path::new("."))
+            }
+            (None, None) => Path::new("."),
+        };
+
+        // Make it an absolute path.
+        let absolute_base_dir = current_dir()?.join(actual_base_dir);
+
+        // Canonicalize it.
+        let canonical_base_dir = absolute_base_dir.canonicalize().with_context(|| {
+            format!(
+                "Failed to canonicalize base directory: {}",
+                absolute_base_dir.display()
+            )
+        })?;
+
+        // Store it for later.
+        self.canonical_base_dir = Some(canonical_base_dir);
+        Ok(())
+    }
+
+    /// Get the base directory for resolving file paths.
+    pub fn canonical_base_dir(&self) -> &Path {
+        self.canonical_base_dir.as_ref().expect(
+            "canonical_base_dir not set; compute_canonical_base_dir must be called first",
+        )
     }
 }
 
