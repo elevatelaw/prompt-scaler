@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- OCR: Multipage TIFF support, including CMYK and 8/16-bit color variants. Pages are converted to PNG for LLM consumption; ambiguous SubIFD content is reported as an error rather than silently dropped.
+- OCR: `--page-timeout` and `--doc-timeout` options for per-page and per-document timeouts (complementing the existing per-request LLM timeout).
+- `--page-memory-limit` option (e.g. `2GiB`, `500MB`) providing explicit backpressure on in-flight image loading. Prevents high-concurrency OCR jobs from materializing thousands of page images in RAM at once.
+- `--llm-timeout` as the new name for the previous `--timeout` flag. The old name still works as an alias.
+- `--model-cost-data=PATH` option to override the built-in per-token pricing CSV.
+- `--base-dir` option controlling how relative paths in input files and prompt templates (`image-data-url`, `text-file-contents`) are resolved. Defaults to the directory of the input file, or the current working directory when reading from stdin.
+
+### Changed
+
+- MAJOR: Paths in input files and prompt templates are now resolved relative to `--base-dir` (defaulting to the input file's directory), not relative to the current working directory. Existing inputs that relied on CWD-relative paths need to be updated or passed with an explicit `--base-dir`.
+- The default driver is now `native` instead of `openai`. `--driver=openai` remains accepted as a silent alias for `--driver=native`, so existing scripts keep working.
+- `claude-*` and `gemini-*` models now route to Anthropic and Gemini directly by default. These used to require either setting `--driver=native`, or using the old default `--driver=openai` and setting `OPENAI_API_BASE` to point at a gateway like LiteLLM. Users who relied on the old default (routing Claude/Gemini via LiteLLM) must either continue to set `OPENAI_API_BASE` (which still forces every model through the OpenAI-compatible gateway at that URL) or provide `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` for direct access.
+- `chat --model` no longer defaults to `gpt-4o-mini`; the flag is now required. (OCR keeps its existing default.)
+- Model cost estimation now uses an embedded CSV of per-token pricing (covering OpenAI, Anthropic direct + Bedrock IDs, and Google Gemini for both AI Studio and Vertex) instead of querying LiteLLM's `/model/info` endpoint at runtime.
+- The `page_data_url` variable and `image-data-url` prompt helper now produce `file:` URLs instead of `data:` URLs. This is transparent to normal use — drivers load images with their preferred encoding at the last moment.
+- Content-filter / RECITATION responses from OpenAI-compatible gateways now surface as `invalid_output` errors, matching how the Vertex and Bedrock drivers already handled the same condition (previously they mapped to a dedicated retryable `PolicyRejection` kind).
+
+### Removed
+
+- LiteLLM-based cost estimation has been removed in favor of a built-in cost CSV.
+- We no longer assume a LiteLLM gateway as our default way of talking to models, though setting `OPENAI_API_BASE` will enable this as before. 
+- The `example_input_data_url` and `example_output` variables are no longer exposed in OCR prompts; a new sample custom prompt demonstrates the replacement pattern.
+- Manually constructed `data:` URLs in a prompt's `user.images` field are no longer accepted. Use the `image-data-url` helper or a plain file path instead.
+
+### Security
+
+- Picked up upstream fixes for RUSTSEC-2026-0007 (`bytes`), RUSTSEC-2026-0049 and RUSTSEC-2026-0099 (`rustls-webpki`), and RUSTSEC-2026-0097 (`rand`) via dependency updates.
+
 ## [0.2.20] - 2026-01-22
 
 ### Fixed
