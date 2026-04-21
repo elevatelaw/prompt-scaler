@@ -3,10 +3,6 @@
 ignore = [
     # Unmaintained: number_prefix (via indicatif). No security issue.
     "RUSTSEC-2025-0119",
-
-    # Unmaintained: rustls-pemfile (via aws-smithy, google-cloud-auth).
-    # No security issue; migrate to rustls-pki-types when deps update.
-    "RUSTSEC-2025-0134",
 ]
 
 [graph]
@@ -34,7 +30,6 @@ allow = [
     "BSD-3-Clause",
     "ISC",
     "MIT-0",
-    "CDLA-Permissive-2.0",
     # For `keen-retry`. This is a less well-written attempt at what
     # the Creative Commons "CC0" public domain dedication does.
     "Unlicense",
