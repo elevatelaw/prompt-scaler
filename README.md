@@ -66,12 +66,14 @@ We have automated regression tests showing that we can talk to the following mod
 
 | Vendor | Model | Via | Text Input | Image Input | JSON Output |
 | --|--|--|--|--|--|
-| OpenAI | gpt-4o-mini | Direct, LiteLLM | ✅ | ✅ | ✅ |
-| Google | gemini-2.0-flash | LiteLLM | ✅ | ✅ | ✅ |
-| Anthropic | claude-3-5-haiku-20241022 | LiteLLM | ✅ | ✅ | ✅ |
-| Google (open) | gemma3:4b | Ollama | ✅ | ✅ | ✅ |
+| OpenAI | gpt-5.4-nano | native | ✅ | ✅ | ✅ |
+| Anthropic | claude-haiku-4-5-20251001 | native | ✅ | ✅ | ✅ |
+| Google | gemini-2.5-flash | native (AI Studio) | ✅ | ✅ | ✅ |
+| Google | gemini-2.5-flash | vertex | ✅ | ✅ | ✅ |
+| Anthropic | us.anthropic.claude-sonnet-4-20250514-v1:0 | bedrock | ✅ | — | ✅ |
+| Local | unsloth/gemma-4-E2B-it-GGUF:Q4_K_M | llama-server (OpenAI API) | ✅ | ✅ | ✅ |
 
-We recommend the use [LiteLLM](https://www.litellm.ai/) to talk any API besides OpenAI and Ollama. LiteLLM currently appears to have poor Ollama support, but Ollama's native server endpoint works fine on its own.
+Setting `OPENAI_API_BASE` routes every request through an OpenAI-compatible gateway (llama-server, Ollama, LiteLLM, etc.) — see the `Driver: native` section above.
 
 ## Documentation
 
@@ -91,7 +93,7 @@ prompt-scaler schema --help
 ```sh
 prompt-scaler chat tests/fixtures/texts/input.csv \
     --prompt tests/fixtures/texts/prompt.toml \
-    --model gpt-4o-mini \
+    --model gemini-2.5-flash \
     --out output.json
 ```
 
@@ -208,7 +210,8 @@ Finally, we could analyze our images as follows:
 
 ```sh
 prompt-scaler chat tests/fixtures/images/input.csv \
-    --prompt tests/fixtures/images/prompt.toml
+    --prompt tests/fixtures/images/prompt.toml \
+    --model gemini-2.5-flash
 ```
 
 This will produce the following output:
