@@ -64,14 +64,16 @@ tokio-console
 
 We have automated regression tests showing that we can talk to the following models:
 
-| Vendor | Model | Via | Text Input | Image Input | JSON Output |
+| Vendor | Model | Driver | Text Input | Image Input | JSON Output |
 | --|--|--|--|--|--|
 | OpenAI | gpt-5.4-nano | native | ✅ | ✅ | ✅ |
 | Anthropic | claude-haiku-4-5-20251001 | native | ✅ | ✅ | ✅ |
 | Google | gemini-2.5-flash | native (AI Studio) | ✅ | ✅ | ✅ |
 | Google | gemini-2.5-flash | vertex | ✅ | ✅ | ✅ |
-| Anthropic | us.anthropic.claude-sonnet-4-20250514-v1:0 | bedrock | ✅ | — | ✅ |
-| Local | unsloth/gemma-4-E2B-it-GGUF:Q4_K_M | llama-server (OpenAI API) | ✅ | ✅ | ✅ |
+| Anthropic | us.anthropic.claude-haiku-4-5-20251001-v1:0 | bedrock | ✅ | ✅ | ✅ |
+| Local | unsloth/gemma-4-E2B-it-GGUF:Q4_K_M | native (llama-server) | ✅ | ✅ | ✅ |
+
+The default `native` driver uses the [`genai`](https://github.com/jeremychone/rust-genai) crate, which supports many other providers and models. And even though we generally test only the smallest models of a family, the larger ones should also work.
 
 Setting `OPENAI_API_BASE` routes every request through an OpenAI-compatible gateway (llama-server, Ollama, LiteLLM, etc.) — see the `Driver: native` section above.
 

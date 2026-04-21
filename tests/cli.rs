@@ -48,7 +48,7 @@ static VERTEX_CHEAP_MODELS: &[&str] = &["gemini-2.5-flash"];
 /// For now, since we use a manual JSON schema passed in the system prompt, and not
 /// tool calling, we need to avoid Haiku 3.0. Haiku 3.5 works about 98% of the time,
 /// so it might be reasonable for production use with appropriate retries.
-static BEDROCK_MODELS: &[&str] = &["us.anthropic.claude-sonnet-4-20250514-v1:0"];
+static BEDROCK_MODELS: &[&str] = &["us.anthropic.claude-haiku-4-5-20251001-v1:0"];
 
 /// Create a new `Command` with our binary.
 fn cmd() -> Command {
@@ -195,6 +195,25 @@ fn test_chat_text_csv_input_bedrock() {
             .arg(model)
             .arg("--prompt")
             .arg("tests/fixtures/texts/prompt.toml")
+            .assert()
+            .success();
+    }
+}
+
+#[test]
+#[ignore = "Needs AWS Bedrock credentials in .env and is slightly expensive"]
+fn test_chat_image_csv_input_bedrock() {
+    for &model in BEDROCK_MODELS {
+        println!("Testing model: {model}");
+        cmd()
+            .arg("chat")
+            .arg("tests/fixtures/images/input.csv")
+            .args(["--driver", "bedrock"])
+            .args(["--jobs", "1", "--limit", "1"])
+            .arg("--model")
+            .arg(model)
+            .arg("--prompt")
+            .arg("tests/fixtures/images/prompt.toml")
             .assert()
             .success();
     }
