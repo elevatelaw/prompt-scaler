@@ -505,12 +505,63 @@ fn test_ocr_textract_async() {
         .success();
 }
 
-// TODO: We do not yet have a test confirming that textract-async
-// returns a meaningful error when asked to OCR an encrypted PDF in S3.
-// textract-async never sees the PDF bytes locally (see
-// src/queues/ocr/engines/textract.rs), so the error surfaces only from
-// AWS's response — requires an AWS test environment. No success test is
-// needed: textract-async does not accept a password.
+#[test]
+#[ignore = "Slightly expensive and needs AWS credentials + password-protected PDF in bucket"]
+fn test_ocr_textract_async_password_protected() {
+    dotenvy::dotenv().ok();
+
+    // textract-async does not accept passwords, so OCRing an encrypted PDF
+    // should produce an error from AWS Textract. We follow the same pattern
+    // as test_ocr_textract_async, reading from passwd_input_good.csv and
+    // constructing S3 URIs.
+    let mut reader = ReaderBuilder::new()
+        .from_path("tests/fixtures/ocr/passwd_input_good.csv")
+        .expect("Failed to read passwd_input_good.csv");
+    let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+    let mut writer = WriterBuilder::new()
+        .from_path(temp_file.path())
+        .expect("Failed to create temp file writer");
+
+    // Row format (passwd_input_good.csv uses the same schema).
+    #[derive(Deserialize, Serialize)]
+    struct Row {
+        id: String,
+        path: String,
+        password: String,
+    }
+
+    // Prepend paths with our S3 locations. passwd_input_good.csv uses bare
+    // filenames (resolved via --base-dir locally), so we append the /ocr/
+    // suffix just as the other pwd-input tests would via --base-dir.
+    let mut s3_location = std::env::var("S3_TEST_FIXTURE_LOCATION")
+        .expect("S3_TEST_FIXTURE_LOCATION environment variable not set");
+    if !s3_location.ends_with('/') {
+        s3_location.push('/');
+    }
+    for row in reader.deserialize::<Row>() {
+        let mut row = row.expect("Failed to read record");
+        row.path = format!("{}tests/fixtures/ocr/{}", s3_location, row.path);
+        eprintln!("Writing record with path: {}", row.path);
+        writer.serialize(&row).expect("Failed to write record");
+    }
+
+    // Flush our writer.
+    writer.flush().expect("Failed to flush writer");
+    drop(writer);
+
+    cmd()
+        .arg("ocr")
+        .arg(temp_file.path())
+        .arg("--model")
+        .arg("textract-async")
+        .assert()
+        // Verify the error output includes the document ID and a failed status.
+        // Textract returns a generic "Textract job ... failed" for encrypted
+        // PDFs, so we check for the standard JSONL error markers.
+        .stdout(predicates::str::contains("two_pages_passwd"))
+        .stdout(predicates::str::contains("\"status\":\"failed\""))
+        .failure();
+}
 
 #[test]
 #[ignore = "Needs llama-server running"]
