@@ -337,6 +337,41 @@ fn test_ocr_pdftotext() {
 }
 
 #[test]
+fn test_ocr_pdftotext_password() {
+    cmd()
+        .arg("ocr")
+        .arg("tests/fixtures/ocr/passwd_input_good.csv")
+        .args(["--base-dir", "tests/fixtures/ocr/"])
+        .arg("--jobs")
+        .arg("3")
+        .arg("--model")
+        .arg("pdftotext")
+        .arg("--page-memory-limit")
+        .arg("1GiB")
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_ocr_pdftotext_password_bad() {
+    cmd()
+        .arg("ocr")
+        .arg("tests/fixtures/ocr/passwd_input_bad.csv")
+        .args(["--base-dir", "tests/fixtures/ocr/"])
+        .arg("--jobs")
+        .arg("3")
+        .arg("--model")
+        .arg("pdftotext")
+        .arg("--page-memory-limit")
+        .arg("1GiB")
+        .assert()
+        .stdout(predicates::str::contains("two_pages_passwd_blank"))
+        .stdout(predicates::str::contains("two_pages_passwd_wrong"))
+        .stdout(predicates::str::contains("Incorrect password").count(2))
+        .failure();
+}
+
+#[test]
 fn test_ocr_tesseract() {
     cmd()
         .arg("ocr")
@@ -349,6 +384,39 @@ fn test_ocr_tesseract() {
         .arg("--rasterize")
         .assert()
         .success();
+}
+
+#[test]
+fn test_ocr_tesseract_password() {
+    cmd()
+        .arg("ocr")
+        .arg("tests/fixtures/ocr/passwd_input_good.csv")
+        .args(["--base-dir", "tests/fixtures/ocr/"])
+        .arg("--jobs")
+        .arg("3")
+        .arg("--model")
+        .arg("tesseract")
+        .arg("--rasterize")
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_ocr_tesseract_password_bad() {
+    cmd()
+        .arg("ocr")
+        .arg("tests/fixtures/ocr/passwd_input_bad.csv")
+        .args(["--base-dir", "tests/fixtures/ocr/"])
+        .arg("--jobs")
+        .arg("3")
+        .arg("--model")
+        .arg("tesseract")
+        .arg("--rasterize")
+        .assert()
+        .stdout(predicates::str::contains("two_pages_passwd_blank"))
+        .stdout(predicates::str::contains("two_pages_passwd_wrong"))
+        .stdout(predicates::str::contains("Incorrect password").count(2))
+        .failure();
 }
 
 #[test]
@@ -436,6 +504,13 @@ fn test_ocr_textract_async() {
         .stdout(predicates::str::contains("\\fOCR TEST DOCUMENT"))
         .success();
 }
+
+// TODO: We do not yet have a test confirming that textract-async
+// returns a meaningful error when asked to OCR an encrypted PDF in S3.
+// textract-async never sees the PDF bytes locally (see
+// src/queues/ocr/engines/textract.rs), so the error surfaces only from
+// AWS's response — requires an AWS test environment. No success test is
+// needed: textract-async does not accept a password.
 
 #[test]
 #[ignore = "Needs llama-server running"]

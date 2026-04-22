@@ -139,7 +139,7 @@ impl PageIter {
         }
 
         // Count the number of pages in the PDF.
-        let total_pages = get_pdf_page_count(path).await?;
+        let total_pages = get_pdf_page_count(path, password).await?;
 
         // Construct an output filename. pdfseparate will add digits to
         // this if there is more than one page.
@@ -186,7 +186,7 @@ impl PageIter {
         password: Option<&str>,
     ) -> Result<(Self, TempDirHandle)> {
         // Count the number of pages in the PDF.
-        let total_pages = get_pdf_page_count(path).await?;
+        let total_pages = get_pdf_page_count(path, password).await?;
 
         // Construct an output filename. pdftocairo will add digits to this if
         // there is more than one page.
@@ -378,9 +378,12 @@ fn tmpdir_sorted_iter(
 
 /// Get the number of pages in a PDF file.
 #[instrument(level = "debug", skip_all, fields(path = %path.display()))]
-pub async fn get_pdf_page_count(path: &Path) -> Result<usize> {
+pub async fn get_pdf_page_count(path: &Path, password: Option<&str>) -> Result<usize> {
     // Run pdfinfo to get the number of pages.
     let mut cmd = Command::new("pdfinfo");
+    if let Some(password) = password {
+        cmd.arg("-upw").arg(password);
+    }
     let output = cmd
         .arg(path)
         .output()
@@ -456,7 +459,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "Requires poppler-utils to be installed"]
     async fn page_count_returns_correct_number_of_pages() -> Result<()> {
-        let page_count = get_pdf_page_count(Path::new(TEST_PDF_PATH)).await?;
+        let page_count = get_pdf_page_count(Path::new(TEST_PDF_PATH), None).await?;
         assert_eq!(page_count, 2);
         Ok(())
     }
