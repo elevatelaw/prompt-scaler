@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-04-23
+
+### Added
+
+- Added a `--reasoning-effort` flag, which is used by Vertex and native drivers (but not Bedrock, which ignores it). This helps considerably with some more recent models, where thinking does not help significantly with OCR.
+
+### Fixed
+
+- Changed the `ocr --model` default from `gemini-2.5-flash` to `gemini-2.5-flash-lite`, which is a better OCR default: Cheaper, more throughput, roughly the same quality. This is arguably a breaking change, but the current default is brand new and not actually that good.
+
 ## [0.3.1] - 2026-04-23
 
 ### Fixed
