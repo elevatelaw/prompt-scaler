@@ -99,6 +99,7 @@ impl Driver for NativeDriver {
             temperature: llm_opts.temperature.map(f64::from),
             max_tokens: llm_opts.max_completion_tokens,
             top_p: llm_opts.top_p.map(f64::from),
+            reasoning_effort: llm_opts.reasoning_effort.clone(),
             response_format: Some(ChatResponseFormat::JsonSpec(JsonSpec {
                 name: get_schema_title(&schema),
                 description: None,

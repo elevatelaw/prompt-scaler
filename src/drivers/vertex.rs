@@ -7,11 +7,14 @@ use google_cloud_aiplatform_v1 as vertexai;
 use google_cloud_gax::error::rpc::Code;
 use vertexai::{
     client::PredictionService,
-    model::{Blob, Content, GenerationConfig, Part},
+    model::{Blob, Content, GenerationConfig, Part, generation_config::ThinkingConfig},
 };
 
 use crate::{
-    drivers::{ChatCompletionResponse, Driver, DriverError, LlmOpts, TokenUsage},
+    drivers::{
+        ChatCompletionResponse, Driver, DriverError, LlmOpts, ReasoningEffortExt,
+        TokenUsage,
+    },
     images::{ImageEncoding, ImageFile},
     mem_limit::MemLimiter,
     prelude::*,
@@ -73,6 +76,15 @@ impl Driver for VertexDriver {
         }
         if let Some(top_p) = llm_opts.top_p {
             generation_config = generation_config.set_top_p(top_p);
+        }
+        if let Some(effort) = &llm_opts.reasoning_effort
+            && let Some(budget) = effort.thinking_budget()
+        {
+            // If the thinking budget doesn't fit in an i32, round down.
+            generation_config = generation_config.set_thinking_config(
+                ThinkingConfig::new()
+                    .set_thinking_budget(i32::try_from(budget).unwrap_or(i32::MAX)),
+            );
         }
 
         // Get our full model name.

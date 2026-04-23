@@ -6,6 +6,7 @@ use std::{env::current_dir, fmt, ops::AddAssign, path::PathBuf, time::Duration};
 
 use async_trait::async_trait;
 use clap::{Args, ValueEnum};
+use genai::chat::ReasoningEffort;
 use keen_retry::RetryResult;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -23,6 +24,29 @@ pub mod bedrock;
 pub mod echo;
 pub mod native;
 pub mod vertex;
+
+/// Shared numeric translation of [`ReasoningEffort`] for drivers that express
+/// thinking as a token budget rather than a provider keyword. The keyword
+/// variants use the same token counts the `genai` Gemini adapter does, so
+/// drivers that apply this trait agree with `genai` on what "low" etc. mean.
+pub trait ReasoningEffortExt {
+    /// Token budget, or `None` for [`ReasoningEffort::None`] meaning "do not
+    /// override the provider default". `Budget(0)` disables thinking on
+    /// providers that honor a zero budget (e.g. Gemini 2.5).
+    fn thinking_budget(&self) -> Option<u32>;
+}
+
+impl ReasoningEffortExt for ReasoningEffort {
+    fn thinking_budget(&self) -> Option<u32> {
+        match self {
+            ReasoningEffort::None => None,
+            ReasoningEffort::Low | ReasoningEffort::Minimal => Some(1000),
+            ReasoningEffort::Medium => Some(8000),
+            ReasoningEffort::High => Some(24000),
+            ReasoningEffort::Budget(n) => Some(*n),
+        }
+    }
+}
 
 /// Our different driver types.
 #[derive(
@@ -88,6 +112,14 @@ pub struct LlmOpts {
     /// explanation. Defaults to the model's default.
     #[clap(long)]
     pub top_p: Option<f32>,
+
+    /// Advisory hint for how hard a reasoning model should think. Accepts
+    /// `none|low|medium|high|minimal`, or an integer thinking-token budget
+    /// (`0` disables thinking on providers that support it, e.g. Gemini 2.5).
+    /// Silently ignored by drivers that do not support it (currently
+    /// `bedrock`).
+    #[clap(long, value_parser = str::parse::<ReasoningEffort>)]
+    pub reasoning_effort: Option<ReasoningEffort>,
 
     /// A timeout, in seconds, for the LLM to return a complete response.
     /// Note that even if a request times out, you'll probably still be charged.

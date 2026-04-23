@@ -157,6 +157,7 @@ fn test_chat_image_csv_input_native() {
             .arg(model)
             .arg("--prompt")
             .arg("tests/fixtures/images/prompt.toml")
+            .args(["--reasoning-effort", "low"])
             .assert()
             .success();
     }
@@ -273,6 +274,7 @@ fn test_ocr_pdf_with_options_vertex() {
             .args(["--top-p", "0.1"])
             .args(["--llm-timeout", "60"])
             .args(["--rate-limit", "10/s"])
+            .args(["--reasoning-effort", "0"])
             .assert()
             .success();
     }
