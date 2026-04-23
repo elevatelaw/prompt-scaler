@@ -44,8 +44,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         type=str,
-        default="gemini-2.0-flash",
-        help="OCR model to use (default: gemini-2.0-flash)",
+        default="gemini-2.5-flash-lite",
+        help="OCR model to use (default: gemini-2.5-flash-lite)",
     )
     parser.add_argument(
         "--jobs",

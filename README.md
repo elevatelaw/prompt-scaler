@@ -68,8 +68,8 @@ We have automated regression tests showing that we can talk to the following mod
 | --|--|--|--|--|--|
 | OpenAI | gpt-5.4-nano | native | ✅ | ✅ | ✅ |
 | Anthropic | claude-haiku-4-5-20251001 | native | ✅ | ✅ | ✅ |
-| Google | gemini-2.5-flash | native (AI Studio) | ✅ | ✅ | ✅ |
-| Google | gemini-2.5-flash | vertex | ✅ | ✅ | ✅ |
+| Google | gemini-2.5-flash-lite | native (AI Studio) | ✅ | ✅ | ✅ |
+| Google | gemini-2.5-flash-lite | vertex | ✅ | ✅ | ✅ |
 | Anthropic | us.anthropic.claude-haiku-4-5-20251001-v1:0 | bedrock | ✅ | ✅ | ✅ |
 | Local | unsloth/gemma-4-E2B-it-GGUF:Q4_K_M | native (llama-server) | ✅ | ✅ | ✅ |
 
@@ -95,7 +95,7 @@ prompt-scaler schema --help
 ```sh
 prompt-scaler chat tests/fixtures/texts/input.csv \
     --prompt tests/fixtures/texts/prompt.toml \
-    --model gemini-2.5-flash \
+    --model gemini-2.5-flash-lite \
     --out output.json
 ```
 

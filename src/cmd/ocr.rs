@@ -28,7 +28,7 @@ pub struct OcrOpts {
     pub input_path: Option<PathBuf>,
 
     /// Model to use by default.
-    #[clap(short = 'm', long, default_value = "gemini-2.0-flash")]
+    #[clap(short = 'm', long, default_value = "gemini-2.5-flash-lite")]
     pub model: String,
 
     /// Prompt, in TOML or JSON format. The `response_schema` field will be

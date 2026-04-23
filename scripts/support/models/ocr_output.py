@@ -77,7 +77,7 @@ class OcrOutput(BaseModel):
     ] = None
     errors: Annotated[
         List[str], Field(description='Any errors that occurred during processing.')
-    ]
+    ] = []
     estimated_cost: Annotated[
         Optional[float], Field(description='How much money do we think we spent?')
     ] = None

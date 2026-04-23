@@ -31,7 +31,7 @@ static LLAMA_SERVER_MODEL: &str = "unsloth/gemma-4-E2B-it-GGUF:Q4_K_M";
 /// driver). Each requires the matching API key in `.env`.
 static NATIVE_CHEAP_MODELS: &[&str] = &[
     // Gemini via AI Studio.
-    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
     // Haiku is cheap enough for testing and finally handles JSON.
     "claude-haiku-4-5-20251001",
     // GPT-5.4 Nano is a cheap, current GPT model.
@@ -39,7 +39,7 @@ static NATIVE_CHEAP_MODELS: &[&str] = &[
 ];
 
 /// Some cheap models for use with `--driver=vertex`.
-static VERTEX_CHEAP_MODELS: &[&str] = &["gemini-2.5-flash"];
+static VERTEX_CHEAP_MODELS: &[&str] = &["gemini-2.5-flash-lite"];
 
 /// AWS Bedrock models that are likely to work.
 ///
