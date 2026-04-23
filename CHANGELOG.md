@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-04-23
+
+### Fixed
+
+- Fixed PDF password support for multiple OCR drivers, and verified that OCR drivers logged error messages when encountering password-protected PDFs. The errors for `textract-async` just that processing failed (without an explanation of why), but all the other errors are clear enough.
+
 ## [0.3.0] - 2026-04-21
 
 ### Added
