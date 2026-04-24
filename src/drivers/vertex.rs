@@ -22,6 +22,30 @@ use crate::{
     retry::IsKnownTransient,
 };
 
+/// Look up the Google Cloud project ID from the environment.
+fn google_cloud_project() -> Result<String, anyhow::Error> {
+    let project_id = env::var("GOOGLE_CLOUD_PROJECT")
+        .or_else(|_| env::var("GCP_PROJECT"))
+        .context(
+            "GOOGLE_CLOUD_PROJECT (or legacy GCP_PROJECT) environment variable is not set",
+        )?;
+    Ok(project_id)
+}
+
+/// Look up the Google Cloud location from the environment.
+fn google_cloud_location() -> String {
+    env::var("GOOGLE_CLOUD_LOCATION").unwrap_or_else(|_| "global".to_string())
+}
+
+/// Get the Vertex AI endpoint for a given location.
+fn vertex_endpoint(location: &String) -> String {
+    if *location == "global" {
+        "https://aiplatform.googleapis.com".to_string()
+    } else {
+        format!("https://{location}-aiplatform.googleapis.com")
+    }
+}
+
 /// Our Vertex AI driver.
 #[derive(Debug)]
 pub struct VertexDriver {
@@ -30,18 +54,32 @@ pub struct VertexDriver {
 
     /// Our GCP project ID.
     pub project_id: String,
+
+    /// The GCP location (region, or `"global"`).
+    pub location: String,
 }
 
 impl VertexDriver {
     /// Create a new Vertex AI driver.
     pub async fn new() -> Result<Self> {
+        let project_id = google_cloud_project()?;
+        let location = google_cloud_location();
+
+        // The Rust Vertex client defaults to the global endpoint and does not
+        // auto-derive the host from the `locations/...` segment in the model
+        // path, so we have to set it explicitly for regional locations.
+        let endpoint = vertex_endpoint(&location);
+
         let client = PredictionService::builder()
+            .with_endpoint(endpoint)
             .build()
             .await
             .context("Failed to create Vertex AI client")?;
-        let project_id = env::var("GCP_PROJECT")
-            .context("GCP_PROJECT environment variable is not set")?;
-        Ok(Self { client, project_id })
+        Ok(Self {
+            client,
+            project_id,
+            location,
+        })
     }
 }
 
@@ -89,8 +127,9 @@ impl Driver for VertexDriver {
 
         // Get our full model name.
         let model_path = format!(
-            "projects/{project_id}/locations/global/publishers/google/models/{model}",
+            "projects/{project_id}/locations/{location}/publishers/google/models/{model}",
             project_id = self.project_id,
+            location = self.location,
         );
 
         // Send the request.

@@ -58,8 +58,11 @@ Environment Variables (driver: native, the default):
     OPENAI_API_BASE is not set.
 
 Environment Variables (driver: vertex):
-  - GCP_PROJECT: Google Cloud project ID.
-  - GCP_LOCATION: Google Cloud region.
+  - GOOGLE_CLOUD_PROJECT: Google Cloud project ID. `GCP_PROJECT` is
+    accepted as a legacy alias.
+  - GOOGLE_CLOUD_LOCATION (optional): Google Cloud region (e.g.
+    `us-central1`). Defaults to `global`, which uses Vertex's global
+    endpoint. Set a region for data residency or regional quota.
   - GOOGLE_APPLICATION_CREDENTIALS: Path to the service account JSON.
 
 Environment Variables (drivers: bedrock, and textract for OCR):
