@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-04-24
+
+### Fixed
+
+- vertex: Fixed `GOOGLE_CLOUD_LOCATION` handling, and provided `GOOGLE_CLOUD_PROJECT` as the standard name for `GCP_PROJECT` (which we still accept).
+
 ## [0.3.2] - 2026-04-23
 
 ### Added
