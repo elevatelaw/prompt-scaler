@@ -10,6 +10,7 @@ pub mod file;
 pub mod llm;
 pub mod page;
 pub mod pdftotext;
+pub mod raw;
 pub mod split_pages;
 pub mod tesseract;
 pub mod textract;
@@ -45,6 +46,19 @@ pub async fn ocr_engine_for_model(
         "textract-async" => {
             textract::TextractOcrFileEngine::new(concurrency_limit, ocr_opts).await?
         }
+        // KLUDGE: There's a class of specialized OCR models that pretend to be
+        // LLMs but which need special drivers with fixed prompts. We recognize
+        // these by looking for known strings in their model names, at least for
+        // now. We may regret this later. We only plan to handle a small number
+        // of open models with very good benchmark scores.
+        model_name if model_name.to_lowercase().contains("glm-ocr") => split_pages(
+            raw::RawDriverOcrPageEngine::new(
+                concurrency_limit,
+                "Text Recognition:",
+                ocr_opts,
+            )
+            .await?,
+        ),
         // Assume all other OCR models are LLMs.
         _ => split_pages(
             llm::LlmOcrPageEngine::new(concurrency_limit, prompt, ocr_opts).await?,

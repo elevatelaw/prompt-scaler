@@ -1,6 +1,13 @@
 //! Interface for OCRing a single page.
 
-use crate::{drivers::TokenUsage, images::ImageFile, prelude::*};
+use leaky_bucket::RateLimiter;
+
+use crate::{
+    drivers::{LlmOpts, TokenUsage},
+    images::ImageFile,
+    prelude::*,
+    rate_limit::{RateLimit, RateLimitPeriod},
+};
 
 use super::super::OcrAnalysis;
 
@@ -39,4 +46,20 @@ pub struct OcrPageOutput {
 pub trait OcrPageEngine: Send + Sync + 'static {
     /// OCR a single page.
     async fn ocr_page(&self, input: OcrPageInput) -> Result<OcrPageOutput>;
+}
+
+/// Create a rate limiter, defaulting to concurrency-limit requests per second.
+///
+/// Shared by non-chat OcrPageEngine implementations (textract, raw driver, etc.)
+/// that need per-request rate limiting but don't go through the chat work queue.
+pub fn create_rate_limiter(concurrency_limit: usize, llm_opts: &LlmOpts) -> RateLimiter {
+    // If we don't have a rate limit, set one based on the concurrency limit.
+    //
+    // TODO: FUTURE BREAKING: We may want to remove the default rate limit, but
+    // that would be a breaking change.
+    let rate_limit = llm_opts
+        .rate_limit
+        .clone()
+        .unwrap_or_else(|| RateLimit::new(concurrency_limit, RateLimitPeriod::Second));
+    rate_limit.to_rate_limiter()
 }
