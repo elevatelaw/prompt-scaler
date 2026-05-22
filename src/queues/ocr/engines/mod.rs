@@ -51,6 +51,9 @@ pub async fn ocr_engine_for_model(
         // these by looking for known strings in their model names, at least for
         // now. We may regret this later. We only plan to handle a small number
         // of open models with very good benchmark scores.
+        //
+        // Note that running these models standalone _without_ a page segmentation
+        // algorithm produces mediocre results.
         model_name if model_name.to_lowercase().contains("glm-ocr") => split_pages(
             raw::RawDriverOcrPageEngine::new(
                 concurrency_limit,
