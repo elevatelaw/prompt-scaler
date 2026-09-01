@@ -43,12 +43,20 @@ static VERTEX_CHEAP_MODELS: &[&str] = &["gemini-2.5-flash-lite"];
 
 /// AWS Bedrock models that are likely to work.
 ///
-/// See the chart at https://aws.amazon.com/en/blogs/machine-learning/structured-data-response-with-amazon-bedrock-prompt-engineering-and-tool-use/.
+/// The Bedrock driver forces structured output through tool calling (a single
+/// `report_result` tool plus `ToolChoice::Any`), so models listed here need
+/// solid tool-use support. See the chart at
+/// https://aws.amazon.com/en/blogs/machine-learning/structured-data-response-with-amazon-bedrock-prompt-engineering-and-tool-use/
+/// for how Bedrock models compare on that.
 ///
-/// For now, since we use a manual JSON schema passed in the system prompt, and not
-/// tool calling, we need to avoid Haiku 3.0. Haiku 3.5 works about 98% of the time,
-/// so it might be reasonable for production use with appropriate retries.
-static BEDROCK_MODELS: &[&str] = &["us.anthropic.claude-haiku-4-5-20251001-v1:0"];
+/// GPT-5.6 Luna is a reasoning model. It only emits a `reasoningContent` block
+/// when a prompt is hard enough to reason about, which these fixtures are not,
+/// so this is a live smoke test rather than coverage of that parsing path. See
+/// the unit tests in `drivers::bedrock` for that.
+static BEDROCK_MODELS: &[&str] = &[
+    "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "us.openai.gpt-5.6-luna",
+];
 
 /// Create a new `Command` with our binary.
 fn cmd() -> Command {
