@@ -6,8 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- bedrock: `--reasoning-effort` is now honored for OpenAI models (`none|low|medium|high`; token budgets are rejected, and `minimal` maps to `low`, which is the lowest level those models accept on Bedrock). Other model families warn that the flag is ignored instead of discarding it silently.
+
 ### Fixed
 
+- bedrock: Accept responses from reasoning models. These return an opaque `reasoningContent` block next to the tool call, but we required the message to hold exactly one content block, so any response the model actually reasoned about failed with `Bedrock response contained 2 content blocks, expected 1`. This made models like `us.openai.gpt-5.6-luna` unusable for real work: trivial prompts passed, anything substantial failed and then burned its full retry budget, because the error was classified transient.
+- bedrock: A response truncated by the max token limit (`stopReason: max_tokens`) now fails fast with an actionable error instead of burning the full retry budget on an identical request. On reasoning models, reasoning tokens count against `--max-completion-tokens`, so an undersized cap truncated every attempt deterministically.
+- bedrock: A hallucinated extra tool call next to a valid `report_result` call no longer fails the response; we now select calls to our tool by name and only reject genuinely ambiguous responses (multiple `report_result` calls).
+- bedrock: Error messages and logs no longer include content-block payloads (which can hold customer document text); they describe blocks by kind, text length, and tool name only. Ignored text blocks next to a tool call are logged at `warn` so half-compliant responses stay diagnosable.
 - clippy: Silence `chunks_exact_to_as_chunks`, a lint new in clippy 1.98, in the TIFF CMYK/CMYKA conversions. Behavior is unchanged: `as_chunks::<N>().0` yields the same complete chunks and drops the same trailing remainder.
 
 ### Security

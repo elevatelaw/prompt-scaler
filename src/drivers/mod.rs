@@ -116,8 +116,8 @@ pub struct LlmOpts {
     /// Advisory hint for how hard a reasoning model should think. Accepts
     /// `none|low|medium|high|minimal`, or an integer thinking-token budget
     /// (`0` disables thinking on providers that support it, e.g. Gemini 2.5).
-    /// Silently ignored by drivers that do not support it (currently
-    /// `bedrock`).
+    /// The `bedrock` driver supports it for OpenAI models only (effort levels,
+    /// not budgets) and warns that it is ignored for other model families.
     #[clap(long, value_parser = str::parse::<ReasoningEffort>)]
     pub reasoning_effort: Option<ReasoningEffort>,
 

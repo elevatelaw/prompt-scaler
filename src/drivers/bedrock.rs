@@ -14,6 +14,7 @@ use aws_sdk_bedrockruntime::{
     },
 };
 use aws_smithy_types::{Document, Number};
+use genai::chat::ReasoningEffort;
 use uuid::Uuid;
 
 use crate::{
@@ -88,16 +89,32 @@ impl Driver for BedrockDriver {
             .tool_config(req.tool_config)
             .set_system(req.system.map(|s| vec![s]))
             .set_messages(Some(req.messages))
+            .set_additional_model_request_fields(
+                reasoning_request_fields(model, llm_opts.reasoning_effort.as_ref())
+                    .map_err(DriverError::invalid_input)?,
+            )
             .send()
             .await
             .map_err(DriverError::api)?;
 
         // Check for odd stop reasons.
-        if output.stop_reason() != &StopReason::ToolUse {
-            return Err(DriverError::invalid_output_transient(anyhow!(
-                "Unexpected stop reason: {}",
-                output.stop_reason()
-            )));
+        match output.stop_reason() {
+            StopReason::ToolUse => {}
+            // Reasoning tokens count against the token cap, so retrying the
+            // identical request with the identical cap will almost always
+            // truncate again. Fail fast so the operator can raise the cap.
+            StopReason::MaxTokens => {
+                return Err(DriverError::invalid_output(anyhow!(
+                    "Bedrock response hit the max token limit before completing \
+                     the tool call; raise --max-completion-tokens (on reasoning \
+                     models, reasoning tokens count against it)"
+                )));
+            }
+            other => {
+                return Err(DriverError::invalid_output_transient(anyhow!(
+                    "Unexpected stop reason: {other}"
+                )));
+            }
         }
 
         // Get the token usage.
@@ -115,33 +132,132 @@ impl Driver for BedrockDriver {
             .as_message()
             .map_err(|_| anyhow!("Bedrock response did not contain a message"))
             .map_err(DriverError::invalid_output_transient)?;
-        let blocks = message.content();
-        if blocks.len() != 1 {
-            return Err(DriverError::invalid_output_transient(anyhow!(
-                "Bedrock response contained {} content blocks, expected 1",
-                blocks.len()
-            )));
-        }
-        if let ContentBlock::ToolUse(tool_use) = &blocks[0] {
-            if tool_use.name != OUTPUT_TOOL_NAME {
-                return Err(DriverError::invalid_output_transient(anyhow!(
-                    "Bedrock response contained unexpected tool name: {}",
-                    tool_use.name
-                )));
-            }
-            let response = aws_document_to_value(&tool_use.input)
-                .map_err(DriverError::invalid_output_transient)?;
-            debug!(%response, "Response");
-            Ok(ChatCompletionResponse {
-                response,
-                token_usage,
-            })
-        } else {
-            Err(DriverError::invalid_output_transient(anyhow!(
-                "Bedrock response contained unexpected content block: {blocks:?}"
-            )))
-        }
+        let tool_use = find_output_tool_use(message.content())
+            .map_err(DriverError::invalid_output_transient)?;
+        let response = aws_document_to_value(&tool_use.input)
+            .map_err(DriverError::invalid_output_transient)?;
+        debug!(%response, "Response");
+        Ok(ChatCompletionResponse {
+            response,
+            token_usage,
+        })
     }
+}
+
+/// Build the `additionalModelRequestFields` for a reasoning-effort request.
+///
+/// Bedrock passes these fields straight through to the model provider, so the
+/// reasoning knob's shape is per model family and an unrecognized field is a
+/// hard `ValidationException`. OpenAI models take
+/// `{"reasoning": {"effort": "none"|"low"|"medium"|"high"}}` (they reject
+/// `"minimal"`). Other families ignore `--reasoning-effort` with a warning
+/// until we verify their shapes against live Bedrock.
+fn reasoning_request_fields(
+    model: &str,
+    reasoning_effort: Option<&ReasoningEffort>,
+) -> Result<Option<Document>> {
+    let Some(effort) = reasoning_effort else {
+        return Ok(None);
+    };
+    if !is_openai_model(model) {
+        warn!(
+            %model,
+            "--reasoning-effort is not supported for this model family on \
+             Bedrock; ignoring it"
+        );
+        return Ok(None);
+    }
+    let effort_str = match effort {
+        ReasoningEffort::None => "none",
+        // OpenAI models on Bedrock reject "minimal"; "low" is the closest
+        // accepted level, matching how `thinking_budget` treats the two.
+        ReasoningEffort::Minimal | ReasoningEffort::Low => "low",
+        ReasoningEffort::Medium => "medium",
+        ReasoningEffort::High => "high",
+        ReasoningEffort::Budget(budget) => {
+            return Err(anyhow!(
+                "OpenAI models on Bedrock take a reasoning effort level, not a \
+                 token budget ({budget}); use none, low, medium or high"
+            ));
+        }
+    };
+    Ok(Some(Document::Object(HashMap::from([(
+        "reasoning".to_owned(),
+        Document::Object(HashMap::from([(
+            "effort".to_owned(),
+            Document::String(effort_str.to_owned()),
+        )])),
+    )]))))
+}
+
+/// Does this Bedrock model ID name an OpenAI-family model?
+///
+/// Matches the `openai` vendor segment in IDs like `us.openai.gpt-5.6-luna`,
+/// `openai.gpt-oss-120b-1:0`, and inference-profile ARNs ending in such IDs.
+fn is_openai_model(model: &str) -> bool {
+    model.split('.').any(|segment| segment == "openai")
+}
+
+/// Describe a message's content blocks without their contents.
+///
+/// Block payloads may hold customer documents, and these descriptions end up
+/// in error messages that are logged on every retry attempt, so we report only
+/// block kinds, text lengths, and tool names.
+fn describe_blocks(blocks: &[ContentBlock]) -> String {
+    blocks
+        .iter()
+        .map(|block| match block {
+            ContentBlock::Text(text) => format!("text({} chars)", text.chars().count()),
+            ContentBlock::ToolUse(tool_use) => format!("toolUse({})", tool_use.name),
+            ContentBlock::ReasoningContent(_) => "reasoningContent".to_owned(),
+            _ => "other".to_owned(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Find the tool use block in which the model reported our result.
+///
+/// Reasoning models return an opaque `reasoningContent` block next to the tool
+/// call, so we search the message for a call to our tool instead of requiring
+/// the message to hold a single content block.
+fn find_output_tool_use(blocks: &[ContentBlock]) -> Result<&ToolUseBlock> {
+    let mut tool_uses = blocks.iter().filter_map(|block| match block {
+        ContentBlock::ToolUse(tool_use) if tool_use.name == OUTPUT_TOOL_NAME => {
+            Some(tool_use)
+        }
+        _ => None,
+    });
+    let tool_use = tool_uses.next().ok_or_else(|| {
+        anyhow!(
+            "Bedrock response contained no {OUTPUT_TOOL_NAME} tool use block: [{}]",
+            describe_blocks(blocks)
+        )
+    })?;
+    // We ask for a single report, so more than one is ambiguous.
+    if tool_uses.next().is_some() {
+        return Err(anyhow!(
+            "Bedrock response contained multiple {OUTPUT_TOOL_NAME} tool use blocks: [{}]",
+            describe_blocks(blocks)
+        ));
+    }
+    // A text block next to the tool call may carry a caveat or refusal the
+    // structured payload doesn't, so leave a trace when we ignore one.
+    if blocks
+        .iter()
+        .any(|block| matches!(block, ContentBlock::Text(_)))
+    {
+        warn!(
+            blocks = %describe_blocks(blocks),
+            "Ignoring text block next to the Bedrock tool call"
+        );
+    } else if blocks.len() > 1 {
+        debug!(
+            blocks = %describe_blocks(blocks),
+            "Ignoring extra content blocks next to the Bedrock tool call"
+        );
+    }
+    Ok(tool_use)
 }
 
 impl IsKnownTransient for ConverseError {
@@ -358,5 +474,151 @@ fn aws_document_to_value(doc: &Document) -> Result<serde_json::Value> {
                 })?,
             )),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aws_sdk_bedrockruntime::types::ReasoningContentBlock;
+
+    use super::*;
+
+    /// Build a tool use block calling `name`.
+    fn tool_use(name: &str) -> ContentBlock {
+        ContentBlock::ToolUse(
+            ToolUseBlock::builder()
+                .tool_use_id("call_1")
+                .name(name)
+                .input(Document::String("input".to_owned()))
+                .build()
+                .expect("could not build tool use block"),
+        )
+    }
+
+    /// Build the opaque reasoning block that reasoning models emit.
+    fn redacted_reasoning() -> ContentBlock {
+        ContentBlock::ReasoningContent(ReasoningContentBlock::RedactedContent(Blob::new(
+            "opaque",
+        )))
+    }
+
+    #[test]
+    fn finds_a_lone_tool_use() {
+        let blocks = vec![tool_use(OUTPUT_TOOL_NAME)];
+        let tool_use = find_output_tool_use(&blocks).expect("should find tool use");
+        assert_eq!(tool_use.name, OUTPUT_TOOL_NAME);
+    }
+
+    #[test]
+    fn finds_a_tool_use_after_a_reasoning_block() {
+        let blocks = vec![redacted_reasoning(), tool_use(OUTPUT_TOOL_NAME)];
+        let tool_use = find_output_tool_use(&blocks).expect("should find tool use");
+        assert_eq!(tool_use.name, OUTPUT_TOOL_NAME);
+    }
+
+    #[test]
+    fn finds_a_tool_use_next_to_a_hallucinated_tool_call() {
+        let blocks = vec![tool_use("some_other_tool"), tool_use(OUTPUT_TOOL_NAME)];
+        let tool_use = find_output_tool_use(&blocks).expect("should find tool use");
+        assert_eq!(tool_use.name, OUTPUT_TOOL_NAME);
+    }
+
+    #[test]
+    fn rejects_a_message_with_no_tool_use() {
+        let blocks = vec![redacted_reasoning(), ContentBlock::Text("hi".to_owned())];
+        assert!(find_output_tool_use(&blocks).is_err());
+    }
+
+    #[test]
+    fn rejects_multiple_tool_uses() {
+        let blocks = vec![tool_use(OUTPUT_TOOL_NAME), tool_use(OUTPUT_TOOL_NAME)];
+        assert!(find_output_tool_use(&blocks).is_err());
+    }
+
+    #[test]
+    fn rejects_an_unexpected_tool_name() {
+        let blocks = vec![tool_use("some_other_tool")];
+        assert!(find_output_tool_use(&blocks).is_err());
+    }
+
+    /// Extract `reasoning.effort` from the generated request fields.
+    fn effort_field(fields: &Document) -> &str {
+        let Document::Object(fields) = fields else {
+            panic!("expected an object, got {fields:?}");
+        };
+        let Some(Document::Object(reasoning)) = fields.get("reasoning") else {
+            panic!("expected a reasoning object, got {fields:?}");
+        };
+        let Some(Document::String(effort)) = reasoning.get("effort") else {
+            panic!("expected an effort string, got {reasoning:?}");
+        };
+        effort
+    }
+
+    #[test]
+    fn maps_reasoning_effort_for_openai_models() {
+        let cases = [
+            (ReasoningEffort::None, "none"),
+            (ReasoningEffort::Minimal, "low"),
+            (ReasoningEffort::Low, "low"),
+            (ReasoningEffort::Medium, "medium"),
+            (ReasoningEffort::High, "high"),
+        ];
+        for (effort, expected) in cases {
+            let fields =
+                reasoning_request_fields("us.openai.gpt-5.6-luna", Some(&effort))
+                    .expect("should map effort")
+                    .expect("should produce request fields");
+            assert_eq!(effort_field(&fields), expected);
+        }
+    }
+
+    #[test]
+    fn rejects_token_budgets_for_openai_models() {
+        let result = reasoning_request_fields(
+            "us.openai.gpt-5.6-luna",
+            Some(&ReasoningEffort::Budget(1000)),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn ignores_reasoning_effort_for_other_model_families() {
+        let fields = reasoning_request_fields(
+            "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            Some(&ReasoningEffort::Low),
+        )
+        .expect("should not error");
+        assert!(fields.is_none());
+    }
+
+    #[test]
+    fn recognizes_openai_model_ids() {
+        assert!(is_openai_model("us.openai.gpt-5.6-luna"));
+        assert!(is_openai_model("openai.gpt-oss-120b-1:0"));
+        assert!(is_openai_model(
+            "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.openai.gpt-5.6-luna"
+        ));
+        assert!(!is_openai_model("us.anthropic.claude-sonnet-5"));
+        assert!(!is_openai_model("us.meta.llama4-scout-17b-instruct-v1:0"));
+    }
+
+    #[test]
+    fn errors_and_descriptions_never_contain_block_contents() {
+        let secret = "CONFIDENTIAL DOCUMENT TEXT";
+        let blocks = vec![
+            ContentBlock::Text(secret.to_owned()),
+            redacted_reasoning(),
+            tool_use("some_other_tool"),
+        ];
+        let description = describe_blocks(&blocks);
+        assert!(!description.contains(secret));
+        assert_eq!(
+            description,
+            "text(26 chars), reasoningContent, toolUse(some_other_tool)"
+        );
+        let error = find_output_tool_use(&blocks)
+            .expect_err("should reject a message with no report_result call");
+        assert!(!error.to_string().contains(secret));
     }
 }
