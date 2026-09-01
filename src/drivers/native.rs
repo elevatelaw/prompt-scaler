@@ -24,7 +24,10 @@ use crate::{
     schema::get_schema_title,
 };
 
-use super::{ChatCompletionResponse, Driver, DriverError, LlmOpts, TokenUsage};
+use super::{
+    ChatCompletionResponse, Driver, DriverError, LlmOpts, RawCompletionResponse,
+    RawDriver, TokenUsage,
+};
 
 /// Our native driver, using the `genai` crate.
 #[derive(Debug)]
@@ -58,6 +61,38 @@ impl NativeDriver {
             .with_service_target_resolver(target_resolver)
             .build();
         Ok(Self { client })
+    }
+
+    /// Build [`ChatOptions`] from our common LLM options and a response format.
+    fn chat_options(
+        llm_opts: &LlmOpts,
+        response_format: Option<ChatResponseFormat>,
+    ) -> ChatOptions {
+        ChatOptions {
+            temperature: llm_opts.temperature.map(f64::from),
+            max_tokens: llm_opts.max_completion_tokens,
+            top_p: llm_opts.top_p.map(f64::from),
+            reasoning_effort: llm_opts.reasoning_effort.clone(),
+            response_format,
+            ..ChatOptions::default()
+        }
+    }
+
+    /// Extract [`TokenUsage`] from a [`Usage`] struct.
+    fn extract_token_usage(usage: Usage) -> Option<TokenUsage> {
+        if let Usage {
+            prompt_tokens: Some(prompt_tokens),
+            completion_tokens: Some(completion_tokens),
+            ..
+        } = usage
+        {
+            Some(TokenUsage {
+                prompt_tokens: u64::try_from(prompt_tokens).unwrap_or_default(),
+                completion_tokens: u64::try_from(completion_tokens).unwrap_or_default(),
+            })
+        } else {
+            None
+        }
     }
 }
 
@@ -95,18 +130,14 @@ impl Driver for NativeDriver {
             .to_genai_request(mem_limiter)
             .await
             .map_err(DriverError::invalid_input)?;
-        let opts = ChatOptions {
-            temperature: llm_opts.temperature.map(f64::from),
-            max_tokens: llm_opts.max_completion_tokens,
-            top_p: llm_opts.top_p.map(f64::from),
-            reasoning_effort: llm_opts.reasoning_effort.clone(),
-            response_format: Some(ChatResponseFormat::JsonSpec(JsonSpec {
+        let opts = Self::chat_options(
+            llm_opts,
+            Some(ChatResponseFormat::JsonSpec(JsonSpec {
                 name: get_schema_title(&schema),
                 description: None,
                 schema,
             })),
-            ..ChatOptions::default()
-        };
+        );
 
         // Run our LLM request.
         let chat_res = self
@@ -130,6 +161,79 @@ impl Driver for NativeDriver {
         debug!(%response, "Response");
 
         // Compute our token usage.
+        let token_usage = Self::extract_token_usage(chat_res.usage);
+
+        Ok(ChatCompletionResponse {
+            response,
+            token_usage,
+        })
+    }
+}
+
+#[async_trait]
+impl RawDriver for NativeDriver {
+    #[instrument(level = "debug", skip_all)]
+    async fn raw_completion(
+        &self,
+        model: &str,
+        text: &str,
+        image: &ImageFile,
+        llm_opts: &LlmOpts,
+        mem_limiter: &MemLimiter,
+    ) -> Result<RawCompletionResponse, DriverError> {
+        // Load the image data.
+        let image_data = image
+            .load(ImageEncoding::Base64, mem_limiter)
+            .await
+            .map_err(DriverError::invalid_input)?;
+        let base64_str = std::str::from_utf8(image_data.data())
+            .context("base64 image data is not valid UTF-8")
+            .map_err(DriverError::invalid_input)?;
+
+        // Build a simple user message with text + image.
+        let parts = vec![
+            ContentPart::Text(text.to_owned()),
+            ContentPart::from_binary_base64(
+                image_data.mime_type().to_owned(),
+                Arc::from(base64_str),
+                None,
+            ),
+        ];
+        let req = ChatRequest {
+            system: None,
+            messages: vec![ChatMessage {
+                role: ChatRole::User,
+                content: MessageContent::from_parts(parts),
+                options: None,
+            }],
+            ..ChatRequest::default()
+        };
+
+        // Build options — no response_format (raw text, not JSON).
+        let opts = ChatOptions {
+            temperature: llm_opts.temperature.map(f64::from),
+            max_tokens: llm_opts.max_completion_tokens,
+            top_p: llm_opts.top_p.map(f64::from),
+            reasoning_effort: llm_opts.reasoning_effort.clone(),
+            response_format: None, // raw text, not JSON
+            ..ChatOptions::default()
+        };
+
+        // Run the request.
+        let chat_res = self
+            .client
+            .exec_chat(model, req, Some(&opts))
+            .await
+            .map_err(DriverError::api)?;
+
+        // Extract raw text response.
+        let text = chat_res
+            .first_text()
+            .ok_or_else(|| anyhow!("No text content in response: {:?}", chat_res))
+            .map_err(DriverError::invalid_output)?;
+        debug!(%text, "Raw response");
+
+        // Compute token usage.
         let token_usage = if let Usage {
             prompt_tokens: Some(prompt_tokens),
             completion_tokens: Some(completion_tokens),
@@ -144,8 +248,8 @@ impl Driver for NativeDriver {
             None
         };
 
-        Ok(ChatCompletionResponse {
-            response,
+        Ok(RawCompletionResponse {
+            text: text.to_owned(),
             token_usage,
         })
     }

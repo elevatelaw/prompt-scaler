@@ -18,20 +18,18 @@ use uuid::Uuid;
 
 use crate::aws::load_aws_config;
 use crate::cmd::ocr::OcrOpts;
-use crate::drivers::LlmOpts;
 use crate::images::ImageEncoding;
-use crate::mem_limit::{MEM_PERMIT_DEADLOCK_TIMEOUT, MemLimiter};
+use crate::mem_limit::MemLimiter;
 use crate::prelude::*;
 
 use crate::async_utils::JoinWorker;
-use crate::rate_limit::{RateLimit, RateLimitPeriod};
 use crate::retry::{
     DEFAULT_JITTER, IsKnownTransient, retry_result_ok, retry_with_backoff,
     try_potentially_transient,
 };
 
 use super::file::OcrFileEngine;
-use super::page::{OcrPageEngine, OcrPageInput, OcrPageOutput};
+use super::page::{OcrPageEngine, OcrPageInput, OcrPageOutput, create_rate_limiter};
 use crate::queues::ocr::{OcrInput, OcrOutput};
 use crate::queues::work::{WorkInput, WorkOutput, WorkStatus};
 
@@ -42,19 +40,6 @@ const ESTIMATED_PAGE_COST: f64 = 0.004;
 async fn create_textract_client() -> Result<aws_sdk_textract::Client> {
     let config = load_aws_config().await?;
     Ok(aws_sdk_textract::Client::new(&config))
-}
-
-/// Create a rate limiter, defaulting as best we can.
-fn create_rate_limiter(concurrency_limit: usize, llm_opts: &LlmOpts) -> RateLimiter {
-    // If we don't have a rate limit, set one based on the concurrency limit.
-    //
-    // TODO: FUTURE BREAKING: We may want to remove the default rate limit, but
-    // that would be a breaking change.
-    let rate_limit = llm_opts
-        .rate_limit
-        .clone()
-        .unwrap_or_else(|| RateLimit::new(concurrency_limit, RateLimitPeriod::Second));
-    rate_limit.to_rate_limiter()
 }
 
 /// OCR engine wrapping the synchronous AWS Textract `analyze_document` API.
@@ -81,12 +66,7 @@ impl TextractOcrPageEngine {
     ) -> Result<(Arc<dyn OcrPageEngine>, JoinWorker)> {
         let client = create_textract_client().await?;
         let rate_limiter = create_rate_limiter(concurrency_limit, &ocr_opts.llm_opts);
-        let mem_limiter = ocr_opts
-            .llm_opts
-            .page_memory_limit
-            .as_ref()
-            .map(|ml| ml.to_mem_limiter(Some(MEM_PERMIT_DEADLOCK_TIMEOUT)))
-            .unwrap_or_else(MemLimiter::unlimited);
+        let mem_limiter = ocr_opts.llm_opts.mem_limiter();
 
         Ok((
             Arc::new(Self {

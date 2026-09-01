@@ -26,6 +26,9 @@ static LLAMA_SERVER_API_KEY: &str = "sk-1234";
 /// Default model to use for `llama-server` in tests. Should be a small, fast
 /// model with at least some very basic OCR abilities.
 static LLAMA_SERVER_MODEL: &str = "unsloth/gemma-4-E2B-it-GGUF:Q4_K_M";
+/// GLM-OCR model (a limited, OCR-only model pretending to be an LLM), which we
+/// use to test our GLM-OCR codepath.
+static LLAMA_SERVER_GLM_OCR_MODEL: &str = "ggml-org/GLM-OCR-GGUF:F16";
 
 /// Cheap models that route to their provider's native adapter (the default
 /// driver). Each requires the matching API key in `.env`.
@@ -232,6 +235,22 @@ fn test_ocr_llama() {
         .args(["--model", LLAMA_SERVER_MODEL])
         // Rasterization is needed for PDFs with llama-server.
         .arg("--rasterize")
+        .assert()
+        .success();
+}
+
+#[test]
+#[ignore = "Needs `llama-server` running with GLM-OCR model"]
+fn test_ocr_glm_llama() {
+    cmd()
+        .with_llama_server_env()
+        .arg("ocr")
+        .arg("tests/fixtures/ocr/input.csv")
+        .args(["--base-dir", "tests/fixtures/"])
+        .args(["--jobs", "3"])
+        .args(["--model", LLAMA_SERVER_GLM_OCR_MODEL])
+        .arg("--rasterize")
+        // GLM-OCR uses the raw driver path (no prompt template or schema).
         .assert()
         .success();
 }

@@ -13,7 +13,8 @@ use serde::Serialize;
 
 use crate::{
     costs::ModelCost,
-    mem_limit::{MemLimit, MemLimiter},
+    images::ImageFile,
+    mem_limit::{MEM_PERMIT_DEADLOCK_TIMEOUT, MemLimit, MemLimiter},
     prelude::*,
     prompt::{ChatPrompt, Rendered},
     rate_limit::RateLimit,
@@ -164,6 +165,14 @@ impl LlmOpts {
     /// Get the timeout as a [`Duration`], if set.
     pub fn llm_timeout_duration(&self) -> Option<Duration> {
         self.llm_timeout.map(Duration::from_secs)
+    }
+
+    /// Construct our memory limiter.
+    pub fn mem_limiter(&self) -> MemLimiter {
+        self.page_memory_limit
+            .as_ref()
+            .map(|ml| ml.to_mem_limiter(Some(MEM_PERMIT_DEADLOCK_TIMEOUT)))
+            .unwrap_or_else(MemLimiter::unlimited)
     }
 
     /// Compute and store our canonical base directory for later use.
@@ -343,6 +352,33 @@ pub struct ChatCompletionResponse {
     /// Structured response from the LLM. This will not have been
     /// validated yet.
     pub response: Value,
+
+    /// Token usage.
+    pub token_usage: Option<TokenUsage>,
+}
+
+/// Interface trait for raw (unstructured) LLM completion.
+///
+/// Used by OCR engines that need a simple text + image → text path
+/// without ChatPrompt templating, JSON schemas, or schema validation.
+#[async_trait]
+pub trait RawDriver: Send + Sync + 'static {
+    /// Run a raw completion request with a single text prompt and image.
+    async fn raw_completion(
+        &self,
+        model: &str,
+        text: &str,
+        image: &ImageFile,
+        llm_opts: &LlmOpts,
+        mem_limiter: &MemLimiter,
+    ) -> Result<RawCompletionResponse, DriverError>;
+}
+
+/// A raw completion response (unstructured text).
+#[derive(Debug)]
+pub struct RawCompletionResponse {
+    /// Raw text response from the LLM.
+    pub text: String,
 
     /// Token usage.
     pub token_usage: Option<TokenUsage>,
