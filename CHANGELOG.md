@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Security
+
+- Picked up upstream fixes for RUSTSEC-2026-0190 (`anyhow` unsoundness in `Error::downcast_mut`) and RUSTSEC-2026-0258 (`h2` unbounded empty DATA frames) via dependency updates, and moved off the yanked `chacha20` 0.10.0. Lockfile only, no code changes.
+
 ## [0.3.3] - 2026-04-24
 
 ### Fixed
