@@ -354,14 +354,21 @@ fn decode_8_bit_tiff_image(
             DynamicImage::ImageRgba8(rgba)
         }
         ColorType::CMYK(_) => {
-            let rgb_data: Vec<u8> = data.chunks_exact(4).flat_map(cmyk_to_rgb).collect();
+            let rgb_data: Vec<u8> = data
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .flat_map(|cmyk| cmyk_to_rgb(cmyk))
+                .collect();
             let rgb = RgbImage::from_raw(width, height, rgb_data)
                 .ok_or_else(|| image_creation_error("CMYK→RGB", ifd_index, path))?;
             DynamicImage::ImageRgb8(rgb)
         }
         ColorType::CMYKA(_) => {
             let rgba_data: Vec<u8> = data
-                .chunks_exact(5)
+                .as_chunks::<5>()
+                .0
+                .iter()
                 .flat_map(|cmyka| {
                     let [r, g, b] = cmyk_to_rgb(&cmyka[..4]);
                     [r, g, b, cmyka[4]]
@@ -415,7 +422,9 @@ fn decode_16_bit_tiff_image(
         }
         ColorType::CMYK(_) => {
             let rgb_data: Vec<u8> = data
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .flat_map(|cmyk| {
                     let [r, g, b] = cmyk16_to_rgb(cmyk);
                     [to_u8(r), to_u8(g), to_u8(b)]
@@ -428,7 +437,9 @@ fn decode_16_bit_tiff_image(
         }
         ColorType::CMYKA(_) => {
             let rgba_data: Vec<u8> = data
-                .chunks_exact(5)
+                .as_chunks::<5>()
+                .0
+                .iter()
                 .flat_map(|cmyka| {
                     let [r, g, b] = cmyk16_to_rgb(&cmyka[..4]);
                     [to_u8(r), to_u8(g), to_u8(b), to_u8(cmyka[4])]
