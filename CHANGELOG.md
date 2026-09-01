@@ -6,9 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- clippy: Silence `chunks_exact_to_as_chunks`, a lint new in clippy 1.98, in the TIFF CMYK/CMYKA conversions. Behavior is unchanged: `as_chunks::<N>().0` yields the same complete chunks and drops the same trailing remainder.
+
 ### Security
 
-- Picked up upstream fixes for RUSTSEC-2026-0190 (`anyhow` unsoundness in `Error::downcast_mut`) and RUSTSEC-2026-0258 (`h2` unbounded empty DATA frames) via dependency updates, and moved off the yanked `chacha20` 0.10.0. Lockfile only, no code changes.
+- Picked up upstream fixes for RUSTSEC-2026-0190 (`anyhow` unsoundness in `Error::downcast_mut`) and RUSTSEC-2026-0258 (`h2` unbounded empty DATA frames) via dependency updates, and moved off the yanked `chacha20` 0.10.0.
 
 ## [0.3.3] - 2026-04-24
 
