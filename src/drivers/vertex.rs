@@ -18,7 +18,10 @@ use crate::{
     images::{ImageEncoding, ImageFile},
     mem_limit::MemLimiter,
     prelude::*,
-    prompt::{ChatPrompt, Message, Rendered},
+    prompts::{
+        Rendered,
+        chat::{ChatPrompt, Message},
+    },
     retry::IsKnownTransient,
 };
 

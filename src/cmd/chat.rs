@@ -8,7 +8,7 @@ use crate::{
     drivers::LlmOpts,
     mem_limit::MemLimiter,
     prelude::*,
-    prompt::ChatPrompt,
+    prompts::chat::ChatPrompt,
     queues::{
         chat::{ChatInput, ChatStreamInfo, process_chat_stream},
         work::{WorkInput, WorkOutput},

@@ -11,7 +11,7 @@ use tokio::io::AsyncWriteExt as _;
 use crate::{
     async_utils::io::create_writer,
     prelude::*,
-    prompt::ChatPrompt,
+    prompts::chat::ChatPrompt,
     queues::{
         chat::{ChatInput, ChatOutput},
         ocr::{OcrInput, OcrOutput},

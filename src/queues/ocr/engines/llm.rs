@@ -10,7 +10,7 @@ use crate::{
     cmd::ocr::OcrOpts,
     mem_limit::{MEM_PERMIT_DEADLOCK_TIMEOUT, MemLimiter},
     prelude::*,
-    prompt::ChatPrompt,
+    prompts::chat::ChatPrompt,
     queues::{
         chat::{ChatInput, ChatOutput, create_chat_work_queue},
         ocr::OcrAnalysis,

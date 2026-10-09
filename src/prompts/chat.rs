@@ -1,16 +1,16 @@
-//! Our prompt data type.
+//! Our `chat` prompt data type.
 
-use std::{fmt, marker::PhantomData};
+use std::marker::PhantomData;
 
 use handlebars::Handlebars;
 use schemars::JsonSchema;
-use serde::de::DeserializeOwned;
 use toml_span::{
     DeserError,
     de_helpers::{TableHelper, expected},
     value::ValueInner,
 };
 
+use super::{PromptState, Rendered, Template};
 use crate::{
     async_utils::io::JsonObject,
     prelude::*,
@@ -18,24 +18,6 @@ use crate::{
     templates::{RenderTemplate, TemplateEngine},
     toml_utils::JsonValue,
 };
-
-/// Super-type of allowable prompt states. This is using the popular "type
-/// state" pattern, where we use Rust types to represent allowable states and
-/// transitions for a type. This all happens at compile time, in the type
-/// system, and doesn't actually generate any code.
-pub trait PromptState: fmt::Debug + DeserializeOwned + JsonSchema + 'static {}
-
-/// The state for a prompt that is still a template, which needs to be rendered.
-#[derive(Clone, Debug, Deserialize, JsonSchema)]
-pub struct Template;
-
-impl PromptState for Template {}
-
-/// The state for a prompt that has been rendered.
-#[derive(Clone, Debug, Deserialize, JsonSchema)]
-pub struct Rendered;
-
-impl PromptState for Rendered {}
 
 /// A chat completion prompt.
 #[derive(Clone, Debug, Deserialize, JsonSchema)]

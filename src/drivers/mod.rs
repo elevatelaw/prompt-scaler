@@ -15,7 +15,7 @@ use crate::{
     costs::ModelCost,
     mem_limit::{MemLimit, MemLimiter},
     prelude::*,
-    prompt::{ChatPrompt, Rendered},
+    prompts::{Rendered, chat::ChatPrompt},
     rate_limit::RateLimit,
     retry::IsKnownTransient,
 };

@@ -15,7 +15,7 @@ use crate::{
     async_utils::{BoxedFuture, BoxedStream, JoinWorker, io::write_output_csv},
     cmd::{StreamOpts, ocr::OcrOpts},
     prelude::*,
-    prompt::ChatPrompt,
+    prompts::chat::ChatPrompt,
     timeouts::{TimeoutResultExt as _, WithTimeout as _},
     ui::Ui,
 };

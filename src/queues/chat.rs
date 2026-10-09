@@ -14,7 +14,7 @@ use crate::{
     drivers::{ChatCompletionResponse, Driver, LlmOpts, LlmRetryResult, TokenUsage},
     mem_limit::MemLimiter,
     prelude::*,
-    prompt::{ChatPrompt, Rendered},
+    prompts::{Rendered, chat::ChatPrompt},
     retry::{
         retry_result_ok, retry_with_backoff, try_potentially_transient, try_transient,
     },

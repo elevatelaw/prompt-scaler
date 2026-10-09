@@ -9,7 +9,10 @@ use serde_json::Map;
 
 use crate::{
     prelude::*,
-    prompt::{ChatPrompt, Message, Rendered},
+    prompts::{
+        Rendered,
+        chat::{ChatPrompt, Message},
+    },
     schema::{InternalSchema, InternalSchemaDetails, ScalarType, Schema},
 };
 

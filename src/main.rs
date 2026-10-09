@@ -31,7 +31,7 @@ mod images;
 mod mem_limit;
 mod page_iter;
 mod prelude;
-mod prompt;
+mod prompts;
 mod queues;
 mod rate_limit;
 mod retry;

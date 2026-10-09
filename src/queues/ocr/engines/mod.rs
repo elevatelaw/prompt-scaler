@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use crate::{async_utils::JoinWorker, cmd::ocr::OcrOpts, prelude::*, prompt::ChatPrompt};
+use crate::{
+    async_utils::JoinWorker, cmd::ocr::OcrOpts, prelude::*, prompts::chat::ChatPrompt,
+};
 
 use self::{file::OcrFileEngine, split_pages::SplitPagesOcrEngine};
 

@@ -255,3 +255,20 @@ impl RenderTemplate for &String {
         (&self[..]).render_template(handlebars, bindings)
     }
 }
+
+impl<T> RenderTemplate for Option<T>
+where
+    T: RenderTemplate,
+{
+    type Output = Option<T::Output>;
+
+    fn render_template(
+        &self,
+        handlebars: &Handlebars,
+        bindings: &JsonObject,
+    ) -> Result<Self::Output> {
+        self.as_ref()
+            .map(|val| val.render_template(handlebars, bindings))
+            .transpose()
+    }
+}

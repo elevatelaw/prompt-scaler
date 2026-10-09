@@ -10,7 +10,7 @@ use crate::{
     drivers::LlmOpts,
     page_iter::PageIterOptions,
     prelude::*,
-    prompt::ChatPrompt,
+    prompts::chat::ChatPrompt,
     queues::{
         ocr::{
             OcrInput, OcrOutput, OcrStreamInfo, engines::llm::default_ocr_prompt,
