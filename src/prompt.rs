@@ -1,15 +1,10 @@
 //! Our prompt data type.
 
-use std::{fmt, fs, marker::PhantomData};
+use std::{fmt, marker::PhantomData};
 
-use handlebars::{
-    Context, Handlebars, Helper, HelperDef, HelperResult, Output, RenderContext,
-    RenderErrorReason,
-};
-use handlebars_concat::HandlebarsConcat;
+use handlebars::Handlebars;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
-use serde_json::Map;
 use toml_span::{
     DeserError,
     de_helpers::{TableHelper, expected},
@@ -17,7 +12,10 @@ use toml_span::{
 };
 
 use crate::{
-    async_utils::io::JsonObject, images::ImageFile, prelude::*, schema::Schema,
+    async_utils::io::JsonObject,
+    prelude::*,
+    schema::Schema,
+    templates::{RenderTemplate, TemplateEngine},
     toml_utils::JsonValue,
 };
 
@@ -97,27 +95,9 @@ impl ChatPrompt<Template> {
         base_dir: &Path,
     ) -> Result<ChatPrompt<Rendered>> {
         self.validate()?;
-        if !base_dir.is_absolute() {
-            return Err(anyhow!(
-                "Base directory must be an absolute path, got: {}",
-                base_dir.display()
-            ));
-        }
-
-        // Set up our Handlebars helpers.
-        let mut handlebars = Handlebars::new();
-        handlebars.register_escape_fn(|s| s.to_owned());
-        handlebars.register_helper("concat", Box::new(HandlebarsConcat));
-        handlebars.register_helper(
-            "image-data-url",
-            Box::new(ImageDataUrlHelper::new(base_dir)),
-        );
-        handlebars.register_helper(
-            "text-file-contents",
-            Box::new(TextFileContentsHelper::new(base_dir)),
-        );
-        handlebars.register_helper("to-string", Box::new(to_string_helper));
-        self.render_template(&handlebars, bindings)
+        let engine = TemplateEngine::new(base_dir)?;
+        engine
+            .render(self, bindings)
             .context("Could not render prompt")
     }
 }
@@ -213,130 +193,6 @@ impl<'de> toml_span::Deserialize<'de> for Message {
     }
 }
 
-/// Handlebars helper for converting a path to a `file:` URL for late image
-/// loading. The image is not loaded during template rendering — it will be
-/// loaded later by the driver with the appropriate encoding.
-struct ImageDataUrlHelper {
-    base_dir: PathBuf,
-}
-
-impl ImageDataUrlHelper {
-    fn new(base_dir: &Path) -> Self {
-        let base_dir = base_dir.to_path_buf();
-        Self { base_dir }
-    }
-}
-
-impl HelperDef for ImageDataUrlHelper {
-    fn call<'reg: 'rc, 'rc>(
-        &self,
-        h: &Helper<'rc>,
-        _r: &'reg Handlebars<'reg>,
-        _ctx: &'rc Context,
-        _rc: &mut RenderContext<'reg, 'rc>,
-        out: &mut dyn Output,
-    ) -> HelperResult {
-        // Get our path parameter.
-        let path = h
-            .param(0)
-            .ok_or_else(|| RenderErrorReason::ParamNotFoundForIndex("image-data-url", 0))?
-            .value()
-            .as_str()
-            .ok_or_else(|| RenderErrorReason::InvalidParamType("string"))?;
-
-        // Construct the full path, by joining with our root directory.
-        //
-        // SECURITY: If you are processing untrusted data, you will want to
-        // modify the code to to restrict file reads outside of a specific
-        // directory.
-        let full_path = self.base_dir.join(path);
-
-        // Construct an ImageFile and emit a file: URL.
-        let image_file = ImageFile::from_path(&full_path)
-            .map_err(|err| RenderErrorReason::Other(err.to_string()))?;
-        out.write(&image_file.to_url())?;
-        Ok(())
-    }
-}
-
-/// Handlebars helper for reading the contents of a text file and returning it
-/// as a string.
-struct TextFileContentsHelper {
-    base_dir: PathBuf,
-}
-
-impl TextFileContentsHelper {
-    fn new(base_dir: &Path) -> Self {
-        let base_dir = base_dir.to_path_buf();
-        Self { base_dir }
-    }
-}
-
-impl HelperDef for TextFileContentsHelper {
-    fn call<'reg: 'rc, 'rc>(
-        &self,
-        h: &Helper<'rc>,
-        _r: &'reg Handlebars<'reg>,
-        _ctx: &'rc Context,
-        _rc: &mut RenderContext<'reg, 'rc>,
-        out: &mut dyn Output,
-    ) -> HelperResult {
-        // Get our path parameter.
-        let path = h
-            .param(0)
-            .ok_or_else(|| {
-                RenderErrorReason::ParamNotFoundForIndex("text-file-contents", 0)
-            })?
-            .value()
-            .as_str()
-            .ok_or_else(|| RenderErrorReason::InvalidParamType("string"))?;
-
-        // Construct the full path, by joining with our root directory.
-        //
-        // SECURITY: If you are processing untrusted data, you will want to
-        // modify the code to to restrict file reads outside of a specific
-        // directory.
-        let full_path = self.base_dir.join(path);
-
-        // Read the file.
-        let contents = fs::read_to_string(&full_path).map_err(|err| {
-            RenderErrorReason::Other(format!("error reading {full_path:?}: {err}"))
-        })?;
-        out.write(&contents)?;
-        Ok(())
-    }
-}
-
-/// Convert a value into a string, using Rust's [`std::fmt::Display`] trait.
-fn to_string_helper(
-    h: &Helper,
-    _: &Handlebars,
-    _: &Context,
-    _: &mut RenderContext,
-    out: &mut dyn Output,
-) -> HelperResult {
-    // Get our value parameter.
-    let value = h
-        .param(0)
-        .ok_or_else(|| RenderErrorReason::ParamNotFoundForIndex("to-string", 0))?
-        .value();
-
-    // Convert the value to a string.
-    Ok(out.write(&value.to_string())?)
-}
-
-/// Render a [`Template`] version of a type, and return the [`Rendered`] version
-trait RenderTemplate {
-    type Output;
-
-    /// Render the template.
-    fn render_template(
-        &self,
-        handlebars: &Handlebars,
-        bindings: &JsonObject,
-    ) -> Result<Self::Output>;
-}
-
 impl RenderTemplate for ChatPrompt<Template> {
     type Output = ChatPrompt<Rendered>;
 
@@ -349,7 +205,7 @@ impl RenderTemplate for ChatPrompt<Template> {
             developer: self
                 .developer
                 .as_deref()
-                .map(|developer| render_template(handlebars, developer, bindings))
+                .map(|developer| developer.render_template(handlebars, bindings))
                 .transpose()?,
             response_schema: self.response_schema.clone(),
             messages: self
@@ -374,11 +230,11 @@ impl RenderTemplate for Message {
             Message::User { text, images } => Ok(Message::User {
                 text: text
                     .as_ref()
-                    .map(|text| render_template(handlebars, text, bindings))
+                    .map(|text| text.render_template(handlebars, bindings))
                     .transpose()?,
                 images: images
                     .iter()
-                    .map(|image| render_template(handlebars, image, bindings))
+                    .map(|image| image.render_template(handlebars, bindings))
                     .collect::<Result<Vec<_>, _>>()?,
             }),
             Message::Assistant { json } => {
@@ -387,69 +243,4 @@ impl RenderTemplate for Message {
             }
         }
     }
-}
-
-impl RenderTemplate for Value {
-    type Output = Value;
-
-    fn render_template(
-        &self,
-        handlebars: &Handlebars,
-        bindings: &JsonObject,
-    ) -> Result<Self::Output> {
-        match self {
-            Value::String(s) => {
-                let rendered = render_template(handlebars, s, bindings)?;
-                Ok(Value::String(rendered))
-            }
-            Value::Object(obj) => obj.render_template(handlebars, bindings),
-            Value::Array(arr) => {
-                let mut output = Vec::new();
-                for value in arr {
-                    let rendered = value.render_template(handlebars, bindings)?;
-                    output.push(rendered);
-                }
-                Ok(Value::Array(output))
-            }
-            _ => Ok(self.clone()),
-        }
-    }
-}
-
-impl RenderTemplate for JsonObject {
-    type Output = Value;
-
-    fn render_template(
-        &self,
-        handlebars: &Handlebars,
-        bindings: &JsonObject,
-    ) -> Result<Self::Output> {
-        let mut output = Map::new();
-        for (key, value) in self {
-            let rendered_key = handlebars.render_template(key, bindings)?;
-            let rendered_value = value.render_template(handlebars, bindings)?;
-            output.insert(rendered_key, rendered_value);
-        }
-        Ok(Value::Object(output))
-    }
-}
-
-/// Render a template, returning a helpful error message if it fails.
-fn render_template(
-    handlebars: &Handlebars,
-    template: &str,
-    bindings: &JsonObject,
-) -> Result<String> {
-    handlebars
-        .render_template(template, bindings)
-        .with_context(|| {
-            let binding_keys = bindings
-                .keys()
-                .map(|k| &k[..])
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!(
-                "Error rendering template {template:?} with bindings: [{binding_keys}]",
-            )
-        })
 }

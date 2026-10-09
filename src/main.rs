@@ -36,6 +36,7 @@ mod queues;
 mod rate_limit;
 mod retry;
 mod schema;
+mod templates;
 mod timeouts;
 mod toml_utils;
 mod ui;
