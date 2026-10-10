@@ -8,14 +8,13 @@ use async_trait::async_trait;
 use clap::{Args, ValueEnum};
 use genai::chat::ReasoningEffort;
 
+use super::DriverOpts;
 use crate::{
     drivers::{DriverError, TokenUsage},
     mem_limit::MemLimiter,
     prelude::*,
     prompts::{Rendered, chat::ChatPrompt},
 };
-
-use super::DriverOpts;
 
 pub mod bedrock;
 pub mod echo;

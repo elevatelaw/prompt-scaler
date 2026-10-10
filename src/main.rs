@@ -17,9 +17,8 @@ use tracing_subscriber::{
     util::SubscriberInitExt as _,
 };
 
-use crate::async_utils::io::DiagnosticsError;
-
 use self::{prelude::*, ui::Ui};
+use crate::async_utils::io::DiagnosticsError;
 
 mod async_utils;
 mod aws;

@@ -15,6 +15,7 @@ use genai::{
     webc,
 };
 
+use super::{ChatCompletionResponse, DriverError, LlmDriver, LlmOpts, TokenUsage};
 use crate::{
     images::{ImageEncoding, ImageFile},
     mem_limit::MemLimiter,
@@ -26,8 +27,6 @@ use crate::{
     retry::IsKnownTransient,
     schema::get_schema_title,
 };
-
-use super::{ChatCompletionResponse, DriverError, LlmDriver, LlmOpts, TokenUsage};
 
 /// Our native driver, using the `genai` crate.
 #[derive(Debug)]

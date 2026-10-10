@@ -4,13 +4,12 @@ use std::{fs::read_to_string, sync::Arc};
 
 use tokio::process::Command;
 
+use super::page::{OcrPageEngine, OcrPageInput, OcrPageOutput};
 use crate::{
     async_utils::{JoinWorker, check_for_command_failure},
     cmd::ocr::OcrOpts,
     prelude::*,
 };
-
-use super::page::{OcrPageEngine, OcrPageInput, OcrPageOutput};
 
 /// OCR engine wrapping the `tesseract` CLI tool.
 #[non_exhaustive]

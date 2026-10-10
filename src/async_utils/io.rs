@@ -28,13 +28,12 @@ use tokio::{
 };
 use tokio_stream::wrappers::LinesStream;
 
+use super::{BoxedStream, size_hint::WithSizeHintExt};
 use crate::{
     prelude::*,
     toml_utils::{JsonValue, from_toml_str},
     ui::{ProgressConfig, Ui},
 };
-
-use super::{BoxedStream, size_hint::WithSizeHintExt};
 
 /// A smart async reader that uses [`AsyncPeekable`] to detect whether the input is JSON
 /// or JSONL, or something else.

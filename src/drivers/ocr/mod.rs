@@ -2,11 +2,10 @@
 
 use std::sync::Arc;
 
+use self::{file::OcrFileEngine, split_pages::SplitPagesOcrEngine};
 use crate::{
     async_utils::JoinWorker, cmd::ocr::OcrOpts, prelude::*, prompts::chat::ChatPrompt,
 };
-
-use self::{file::OcrFileEngine, split_pages::SplitPagesOcrEngine};
 
 pub mod file;
 pub mod llm;

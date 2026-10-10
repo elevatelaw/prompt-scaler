@@ -17,6 +17,7 @@ use aws_smithy_types::{Document, Number};
 use genai::chat::ReasoningEffort;
 use uuid::Uuid;
 
+use super::LlmDriver;
 use crate::{
     aws::load_aws_config,
     drivers::{
@@ -32,8 +33,6 @@ use crate::{
     },
     retry::IsKnownTransient,
 };
-
-use super::LlmDriver;
 
 /// The name of the tool we tell Bedrock to use for reporting results.
 static OUTPUT_TOOL_NAME: &str = "report_result";
