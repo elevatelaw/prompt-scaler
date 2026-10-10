@@ -15,7 +15,7 @@ Subcommands:
 - To generated correctly-formed prompts, see `schemas/ChatPrompt.json` and use the JSON Schema to guide your TOML generation.
 - For working examples, see `tests/fixtures/**/*prompt*.toml`.
 
-BE CAREFUL! The `[response_schema]` part of prompt files uses an _abbreviated_ version of JSON Schema.
+BE CAREFUL! The `[response_schema]` part of chat prompt files uses an _abbreviated_ version of JSON Schema.
 
 ## Source tree
 
@@ -26,11 +26,15 @@ BE CAREFUL! The `[response_schema]` part of prompt files uses an _abbreviated_ v
     - `cmd/`: Command-line interface. Uses `clap` to parse arguments.
     - `drivers/`: Backend drivers.
         - `llm/`: Drivers for LLMs. 
+        - `ocr/`: Drivers for OCR.
+            - `llm.rs`: Perform OCR using LLMs. 
     - `queues/`: Work queues of various types.
         - `work.rs`: Core work queue interface.
         - `chat.rs`: Chat completion work queue.
-        - `ocr/`: OCR work queue drivers (not all LLM-based).
-    - `prompt.rs`: Main chat prompt types.
+        - `ocr.rs`: OCR work queue.
+    - `prompts/`:
+        - `chat.rs`: Main chat prompt types.
+        - `decide.rs`: Decision-model prompts.
     - `schema.rs`: Schema format for constraining structured output.
     - `page_iter.rs`: Splitting PDFs into individual pages.
     - `rate_limit.rs`: Enforcing rate limits to avoid hitting API quotas.

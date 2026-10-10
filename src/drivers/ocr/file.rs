@@ -4,10 +4,12 @@
 //! page at a time. This file contains a trait [`OcrFileEngine`], and an
 //! implementation [`SplitPagesOcrEngine`].
 
-use super::super::{OcrInput, OcrOutput};
 use crate::{
     prelude::*,
-    queues::work::{WorkInput, WorkOutput},
+    queues::{
+        ocr::{OcrInput, OcrOutput},
+        work::{WorkInput, WorkOutput},
+    },
 };
 
 /// Interface for OCRing a document.

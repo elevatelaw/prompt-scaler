@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use crate::aws::load_aws_config;
 use crate::cmd::ocr::OcrOpts;
-use crate::drivers::llm::LlmOpts;
+use crate::drivers::DriverOpts;
 use crate::images::ImageEncoding;
 use crate::mem_limit::{MEM_PERMIT_DEADLOCK_TIMEOUT, MemLimiter};
 use crate::prelude::*;
@@ -45,13 +45,13 @@ async fn create_textract_client() -> Result<aws_sdk_textract::Client> {
 }
 
 /// Create a rate limiter, defaulting as best we can.
-fn create_rate_limiter(concurrency_limit: usize, llm_opts: &LlmOpts) -> RateLimiter {
+fn create_rate_limiter(concurrency_limit: usize, driver_opts: &DriverOpts) -> RateLimiter {
     // If we don't have a rate limit, set one based on the concurrency limit.
     //
     // TODO: FUTURE BREAKING: We may want to remove the default rate limit, but
     // that would be a breaking change.
     let rate_limit =
-        llm_opts.driver_opts.rate_limit.clone().unwrap_or_else(|| {
+        driver_opts.rate_limit.clone().unwrap_or_else(|| {
             RateLimit::new(concurrency_limit, RateLimitPeriod::Second)
         });
     rate_limit.to_rate_limiter()
@@ -80,7 +80,7 @@ impl TextractOcrPageEngine {
         ocr_opts: Arc<OcrOpts>,
     ) -> Result<(Arc<dyn OcrPageEngine>, JoinWorker)> {
         let client = create_textract_client().await?;
-        let rate_limiter = create_rate_limiter(concurrency_limit, &ocr_opts.llm_opts);
+        let rate_limiter = create_rate_limiter(concurrency_limit, &ocr_opts.llm_opts.driver_opts);
         let mem_limiter = ocr_opts
             .llm_opts
             .driver_opts
@@ -182,7 +182,7 @@ impl TextractOcrFileEngine {
         ocr_opts: Arc<OcrOpts>,
     ) -> Result<(Arc<dyn OcrFileEngine>, JoinWorker)> {
         let client = create_textract_client().await?;
-        let rate_limiter = create_rate_limiter(concurrency_limit, &ocr_opts.llm_opts);
+        let rate_limiter = create_rate_limiter(concurrency_limit, &ocr_opts.llm_opts.driver_opts);
 
         if ocr_opts.page_iter_opts.max_pages.is_some()
             || ocr_opts.page_iter_opts.rasterize

@@ -1,8 +1,8 @@
 //! Interface for OCRing a single page.
 
-use crate::{drivers::TokenUsage, images::ImageFile, prelude::*};
-
-use super::super::OcrAnalysis;
+use crate::{
+    drivers::TokenUsage, images::ImageFile, prelude::*, queues::ocr::OcrAnalysis,
+};
 
 /// Input record describing a file to OCR.
 pub struct OcrPageInput {

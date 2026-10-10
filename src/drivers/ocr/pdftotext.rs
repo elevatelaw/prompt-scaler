@@ -7,10 +7,11 @@ use tokio::process::Command;
 use crate::{
     async_utils::{JoinWorker, check_for_command_failure},
     cmd::ocr::OcrOpts,
+    drivers::ocr::file::OcrFileEngine,
     page_iter::get_mime_type,
     prelude::*,
     queues::{
-        ocr::{OcrInput, OcrOutput, engines::file::OcrFileEngine},
+        ocr::{OcrInput, OcrOutput},
         work::{WorkInput, WorkOutput, WorkStatus},
     },
 };

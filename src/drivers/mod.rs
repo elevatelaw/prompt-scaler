@@ -12,6 +12,7 @@ use crate::{
 };
 
 pub mod llm;
+pub mod ocr;
 
 /// Driver-related options.
 #[derive(Args, Clone, Debug)]

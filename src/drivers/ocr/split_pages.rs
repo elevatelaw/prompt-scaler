@@ -5,7 +5,6 @@ use std::{env, sync::Arc};
 use futures::StreamExt as _;
 
 use super::{
-    super::{OcrInput, OcrOutput},
     file::OcrFileEngine,
     page::{OcrPageEngine, OcrPageInput, OcrPageOutput},
 };
@@ -16,7 +15,7 @@ use crate::{
     page_iter::PageIter,
     prelude::*,
     queues::{
-        ocr::OcrAnalysis,
+        ocr::{OcrAnalysis, OcrInput, OcrOutput},
         work::{WorkInput, WorkOutput, WorkStatus},
     },
     timeouts::{TimeoutResultExt as _, WithTimeout as _},

@@ -1,19 +1,17 @@
 //! PDF utilities.
 
-pub mod engines;
-
 use std::{sync::Arc, vec};
 
 use futures::{FutureExt as _, StreamExt as _};
 use schemars::JsonSchema;
 
-use self::engines::{file::OcrFileEngine, ocr_engine_for_model};
 use super::work::{
     WorkInput, WorkItemCounterExt as _, WorkOutput, WorkOutputCounters, WorkStatus,
 };
 use crate::{
     async_utils::{BoxedFuture, BoxedStream, JoinWorker, io::write_output_csv},
     cmd::{StreamOpts, ocr::OcrOpts},
+    drivers::ocr::{file::OcrFileEngine, ocr_engine_for_model},
     prelude::*,
     prompts::chat::ChatPrompt,
     timeouts::{TimeoutResultExt as _, WithTimeout as _},
@@ -200,7 +198,7 @@ pub struct OcrAnalysis {
 
 impl OcrAnalysis {
     /// Merge two sets of flags using OR.
-    fn merge(&mut self, other: &Self) -> Self {
+    pub fn merge(&mut self, other: &Self) -> Self {
         Self {
             image_source: self.image_source.merge(other.image_source),
             contains_handwriting: self.contains_handwriting || other.contains_handwriting,
