@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use crate::aws::load_aws_config;
 use crate::cmd::ocr::OcrOpts;
-use crate::drivers::LlmOpts;
+use crate::drivers::llm::LlmOpts;
 use crate::images::ImageEncoding;
 use crate::mem_limit::{MEM_PERMIT_DEADLOCK_TIMEOUT, MemLimiter};
 use crate::prelude::*;
@@ -50,10 +50,10 @@ fn create_rate_limiter(concurrency_limit: usize, llm_opts: &LlmOpts) -> RateLimi
     //
     // TODO: FUTURE BREAKING: We may want to remove the default rate limit, but
     // that would be a breaking change.
-    let rate_limit = llm_opts
-        .rate_limit
-        .clone()
-        .unwrap_or_else(|| RateLimit::new(concurrency_limit, RateLimitPeriod::Second));
+    let rate_limit =
+        llm_opts.driver_opts.rate_limit.clone().unwrap_or_else(|| {
+            RateLimit::new(concurrency_limit, RateLimitPeriod::Second)
+        });
     rate_limit.to_rate_limiter()
 }
 
@@ -83,6 +83,7 @@ impl TextractOcrPageEngine {
         let rate_limiter = create_rate_limiter(concurrency_limit, &ocr_opts.llm_opts);
         let mem_limiter = ocr_opts
             .llm_opts
+            .driver_opts
             .page_memory_limit
             .as_ref()
             .map(|ml| ml.to_mem_limiter(Some(MEM_PERMIT_DEADLOCK_TIMEOUT)))

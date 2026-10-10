@@ -55,7 +55,7 @@ impl OcrFileEngine for SplitPagesOcrEngine {
 
         // Create a page stream, using BlockingIterStream to avoid blocking the
         // async executor with slow PDF processing.
-        let base_dir = self.ocr_opts.llm_opts.canonical_base_dir();
+        let base_dir = self.ocr_opts.llm_opts.driver_opts.canonical_base_dir();
         let resolved = ocr_input.data.resolved_path(base_dir);
         let (page_iter, _tmpdir_handle) = PageIter::from_path(
             &resolved,

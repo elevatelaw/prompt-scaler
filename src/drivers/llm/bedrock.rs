@@ -19,7 +19,10 @@ use uuid::Uuid;
 
 use crate::{
     aws::load_aws_config,
-    drivers::{ChatCompletionResponse, DriverError, LlmOpts, TokenUsage},
+    drivers::{
+        DriverError, TokenUsage,
+        llm::{ChatCompletionResponse, LlmOpts},
+    },
     images::{ImageEncoding, ImageFile},
     mem_limit::MemLimiter,
     prelude::*,
@@ -30,7 +33,7 @@ use crate::{
     retry::IsKnownTransient,
 };
 
-use super::Driver;
+use super::LlmDriver;
 
 /// The name of the tool we tell Bedrock to use for reporting results.
 static OUTPUT_TOOL_NAME: &str = "report_result";
@@ -53,7 +56,7 @@ impl BedrockDriver {
 }
 
 #[async_trait]
-impl Driver for BedrockDriver {
+impl LlmDriver for BedrockDriver {
     #[instrument(level = "debug", skip_all)]
     async fn chat_completion(
         &self,

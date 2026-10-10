@@ -11,8 +11,8 @@ use vertexai::{
 };
 
 use crate::{
-    drivers::{
-        ChatCompletionResponse, Driver, DriverError, LlmOpts, ReasoningEffortExt,
+    drivers::llm::{
+        ChatCompletionResponse, DriverError, LlmDriver, LlmOpts, ReasoningEffortExt,
         TokenUsage,
     },
     images::{ImageEncoding, ImageFile},
@@ -87,7 +87,7 @@ impl VertexDriver {
 }
 
 #[async_trait]
-impl Driver for VertexDriver {
+impl LlmDriver for VertexDriver {
     #[instrument(level = "debug", skip_all)]
     async fn chat_completion(
         &self,

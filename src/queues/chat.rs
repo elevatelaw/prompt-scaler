@@ -11,7 +11,10 @@ use super::work::{WorkInput, WorkOutput, WorkQueue, WorkStatus};
 use crate::{
     async_utils::{BoxedFuture, BoxedStream, JoinWorker, io::JsonObject},
     costs::{ModelCost, ModelCostDatabase},
-    drivers::{ChatCompletionResponse, Driver, LlmOpts, LlmRetryResult, TokenUsage},
+    drivers::{
+        DriverRetryResult, TokenUsage,
+        llm::{ChatCompletionResponse, LlmDriver, LlmOpts},
+    },
     mem_limit::MemLimiter,
     prelude::*,
     prompts::{Rendered, chat::ChatPrompt},
@@ -167,7 +170,7 @@ pub async fn create_chat_work_queue(
     let driver = llm_opts.driver.create_driver().await?;
 
     // Look up model cost data.
-    let cost_db = ModelCostDatabase::new(llm_opts.model_cost_data.as_deref());
+    let cost_db = ModelCostDatabase::new(llm_opts.driver_opts.model_cost_data.as_deref());
     let cost = cost_db.lookup(llm_opts.driver, &model).cloned();
     if let Some(ref cost) = cost {
         debug!(driver = ?llm_opts.driver, %model, ?cost, "Model cost info");
@@ -183,7 +186,11 @@ pub async fn create_chat_work_queue(
     let validator = jsonschema::validator_for(&schema)?;
 
     // Construct a rate limiter to control the rate of API requests.
-    let rate_limiter = llm_opts.rate_limit.as_ref().map(|rl| rl.to_rate_limiter());
+    let rate_limiter = llm_opts
+        .driver_opts
+        .rate_limit
+        .as_ref()
+        .map(|rl| rl.to_rate_limiter());
 
     // Build our shared state.
     let state = Arc::new(ProcessorState {
@@ -212,7 +219,7 @@ pub async fn create_chat_work_queue(
 #[derive(Debug)]
 struct ProcessorState {
     /// Our LLM client.
-    driver: Box<dyn Driver>,
+    driver: Box<dyn LlmDriver>,
 
     /// A rate limiter to control API request rate.
     rate_limiter: Option<RateLimiter>,
@@ -269,7 +276,7 @@ async fn run_chat(
     );
     let prompt = state.prompt.render(
         &input_record.data.template_bindings,
-        state.llm_opts.canonical_base_dir(),
+        state.llm_opts.driver_opts.canonical_base_dir(),
     )?;
 
     // Release the input data, because it adds up, especially for images.
@@ -302,7 +309,7 @@ async fn run_chat(
 async fn run_chat_inner(
     state: Arc<ProcessorState>,
     prompt: ChatPrompt<Rendered>,
-) -> LlmRetryResult<ChatCompletionResponse> {
+) -> DriverRetryResult<ChatCompletionResponse> {
     // If we have a rate limiter, acquire a permit for one request.
     if let Some(rate_limiter) = state.rate_limiter.as_ref() {
         rate_limiter.acquire(1).await;

@@ -7,17 +7,15 @@
 use async_trait::async_trait;
 use serde_json::Map;
 
+use super::{ChatCompletionResponse, DriverError, LlmDriver, LlmOpts, MemLimiter};
 use crate::{
+    drivers::TokenUsage,
     prelude::*,
     prompts::{
         Rendered,
         chat::{ChatPrompt, Message},
     },
     schema::{InternalSchema, InternalSchemaDetails, ScalarType, Schema},
-};
-
-use super::{
-    ChatCompletionResponse, Driver, DriverError, LlmOpts, MemLimiter, TokenUsage,
 };
 
 /// Echo driver for testing.
@@ -86,7 +84,7 @@ impl EchoDriver {
 }
 
 #[async_trait]
-impl Driver for EchoDriver {
+impl LlmDriver for EchoDriver {
     async fn chat_completion(
         &self,
         _model: &str,

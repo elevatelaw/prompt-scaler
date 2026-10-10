@@ -24,7 +24,8 @@ BE CAREFUL! The `[response_schema]` part of prompt files uses an _abbreviated_ v
 - `src/`: Main Rust source code.
     - `async_utils/`: Tokio and async stream support code.
     - `cmd/`: Command-line interface. Uses `clap` to parse arguments.
-    - `drivers/`: LLM client drivers.
+    - `drivers/`: Backend drivers.
+        - `llm/`: Drivers for LLMs. 
     - `queues/`: Work queues of various types.
         - `work.rs`: Core work queue interface.
         - `chat.rs`: Chat completion work queue.

@@ -27,7 +27,7 @@ use crate::{
     schema::get_schema_title,
 };
 
-use super::{ChatCompletionResponse, Driver, DriverError, LlmOpts, TokenUsage};
+use super::{ChatCompletionResponse, DriverError, LlmDriver, LlmOpts, TokenUsage};
 
 /// Our native driver, using the `genai` crate.
 #[derive(Debug)]
@@ -65,7 +65,7 @@ impl NativeDriver {
 }
 
 #[async_trait]
-impl Driver for NativeDriver {
+impl LlmDriver for NativeDriver {
     #[instrument(level = "debug", skip_all)]
     async fn chat_completion(
         &self,
