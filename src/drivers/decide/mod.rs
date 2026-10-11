@@ -1,0 +1,176 @@
+//! Drivers for decision models.
+
+// We have not yet finished hooking this up.
+#![allow(dead_code)]
+
+use std::collections::BTreeMap;
+
+use anyhow::ensure;
+use schemars::JsonSchema;
+
+use crate::prelude::*;
+
+/// A request to a decision model.
+#[derive(Clone, Debug, JsonSchema, Serialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct DecideRequest {
+    /// Model to use. Required by most APIs.
+    model: String,
+
+    /// The state to send.
+    state: Value,
+
+    /// Images to send, as data URLs. Only supported by limited number
+    /// of models, many served with llama.cpp.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    images: Option<Vec<String>>,
+
+    /// Questions to ask.
+    questions: BTreeMap<String, Question>,
+}
+
+/// A question. This will not undergo template instantiation.
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+#[non_exhaustive]
+pub enum Question {
+    /// A question with a Boolean answer. Outputs the model's
+    /// estimated probability that the answer it true.
+    Noul {
+        /// The true-or-false question to ask.
+        instructions: String,
+        /// Descriptions of `true` and `false` responses. Highly recommended,
+        /// especially for smaller models.
+        criteria: Option<NoulCriteria>,
+    },
+    /// A multiple-choice question. Outputs the most likely choice, a
+    /// confidence score, and the model's probability distribution
+    /// over the choices.
+    Choice {
+        /// The multiple choice question to ask.
+        instructions: String,
+        /// The labels, and their criteria. Including criteria is highly
+        /// recommended. Must have at least 2 criteria. The maximum number
+        /// may be as low as 52 with some models.
+        criteria: BTreeMap<String, Option<String>>,
+    },
+    /// A question to pick a score between 0 and (N-1), where N is the
+    /// provided set of criteria. Returns the **expected value** of the
+    /// label chosen. Must have 2-10 criteria.
+    Score {
+        /// The scoring question to ask.
+        instructions: String,
+        /// The criteria for each score, starting with 0 (not 1).
+        criteria: Vec<String>,
+    },
+}
+
+impl Question {
+    /// Get the instructions for this question.
+    fn instructions(&self) -> &str {
+        match self {
+            Question::Noul { instructions, .. } => instructions,
+            Question::Choice { instructions, .. } => instructions,
+            Question::Score { instructions, .. } => instructions,
+        }
+    }
+
+    /// Validate this question.
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            !self.instructions().is_empty(),
+            "question instructions must not be empty"
+        );
+        match self {
+            Question::Noul { .. } => {}
+            Question::Choice { criteria, .. } => {
+                ensure!(
+                    criteria.len() >= 2,
+                    "choice must have at least two criteria"
+                );
+            }
+            Question::Score { criteria, .. } => {
+                ensure!(
+                    (2..=10).contains(&criteria.len()),
+                    "score must have 2-10 criteria"
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The criteria for true and false responses. Recommended, especially
+/// for smaller models.
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct NoulCriteria {
+    /// The criteria for a true answer.
+    pub r#true: Option<String>,
+    /// The criteria for a false answer.
+    pub r#false: Option<String>,
+}
+
+/// A response from a decision model.
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct DecideResponse {
+    /// The name of the model used. May be different from the requested model name, thanks
+    /// to model name resolution.
+    model: String,
+
+    /// Answers to the questions.
+    answers: BTreeMap<String, Answer>,
+
+    /// Usage metrics.
+    usage: Usage,
+}
+
+/// An answer to a [`Question`].
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "snake_case", tag = "type")]
+#[non_exhaustive]
+pub enum Answer {
+    /// Answer to a true/false question.
+    Noul {
+        /// Probability that the generated token would have represented `true`.
+        noul: f64,
+    },
+    /// Answer to a multiple-choice question.
+    Choice {
+        /// The most likely choice.
+        choice: String,
+        /// The probability that each of the choices would have been generated.
+        probabilities: BTreeMap<String, f64>,
+        /// Confidence in the choice we chose. The meaning of this field
+        /// unfortunately differs between models.
+        confidence: f64,
+    },
+    /// Answer to a scoring question.
+    Score {
+        /// Expected value of the score, counting from 0. Will typically fall
+        /// in between two labels.
+        score: f64,
+        /// A mapping from score values (represented as integer strings) to the
+        /// descriptions of those labels.
+        legend: BTreeMap<String, String>,
+        /// The probability that each of the score values would have been generated.
+        probabilities: BTreeMap<String, f64>,
+        /// Confidence in the score we chose. The meaning of this field may
+        /// differs between models.
+        confidence: f64,
+    },
+}
+
+/// Usage metrics for a decision request.
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct Usage {
+    /// The number of input tokens used.
+    input_tokens: u64,
+
+    /// The number of output tokens used. Depending on the API used, this will
+    /// typically be either 1 token per question asked, or 0.
+    #[serde(default)]
+    output_tokens: u64,
+}

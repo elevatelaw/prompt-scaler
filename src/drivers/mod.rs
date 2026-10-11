@@ -11,6 +11,7 @@ use crate::{
     retry::IsKnownTransient,
 };
 
+pub mod decide;
 pub mod llm;
 pub mod ocr;
 

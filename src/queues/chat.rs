@@ -24,7 +24,7 @@ use crate::{
     timeouts::WithTimeout,
 };
 
-/// An input record.
+/// A chat input record.
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct ChatInput {
     /// Other fields. We keep these "flattened" in the record because they're
@@ -34,7 +34,7 @@ pub struct ChatInput {
     pub template_bindings: JsonObject,
 }
 
-/// An output record.
+/// A chat output record.
 #[derive(Clone, Debug, JsonSchema, Serialize)]
 pub struct ChatOutput {
     /// The response from the LLM. If this is present, the request succeeded.
