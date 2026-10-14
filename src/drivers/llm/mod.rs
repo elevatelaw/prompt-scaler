@@ -81,6 +81,17 @@ impl LlmDriverType {
     }
 }
 
+impl fmt::Display for LlmDriverType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LlmDriverType::Bedrock => write!(f, "bedrock"),
+            LlmDriverType::Echo => write!(f, "echo"),
+            LlmDriverType::Native => write!(f, "native"),
+            LlmDriverType::Vertex => write!(f, "vertex"),
+        }
+    }
+}
+
 /// Our chat-related options.
 #[derive(Args, Clone, Debug)]
 pub struct LlmOpts {

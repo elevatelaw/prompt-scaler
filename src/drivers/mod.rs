@@ -1,8 +1,8 @@
 //! Drivers for various backend implementations.
 
-use std::{env::current_dir, fmt, ops::AddAssign};
+use std::{env::current_dir, fmt, ops::AddAssign, str::FromStr};
 
-use clap::Args;
+use clap::{Args, ValueEnum as _};
 use keen_retry::RetryResult;
 use leaky_bucket::RateLimiter;
 use schemars::JsonSchema;
@@ -19,6 +19,28 @@ use crate::{
 pub mod decide;
 pub mod llm;
 pub mod ocr;
+
+/// Types of drivers.
+///
+/// This enum is of limited use, because it includes incompatible driver types.
+/// Right now, we use it for [`crate::costs::ModelCostDatabase`] lookups, but
+/// that file format may change to include driver types in the future.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Hash, Ord)]
+pub enum DriverType {
+    Llm(LlmDriverType),
+}
+
+impl FromStr for DriverType {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(llm) = LlmDriverType::from_str(s, true) {
+            Ok(Self::Llm(llm))
+        } else {
+            Err(anyhow::anyhow!("invalid driver type: {}", s))
+        }
+    }
+}
 
 /// Driver-related options.
 #[derive(Args, Clone, Debug)]
@@ -62,11 +84,7 @@ impl DriverOpts {
     /// There's no deeply-principled reason that this is here, other than that
     /// it has [`Self::model_cost_data`]. It could potentially be moved to
     /// [`ModelCostDatabase`].
-    pub fn cost_info(
-        &self,
-        driver_type: LlmDriverType,
-        model: &str,
-    ) -> Option<ModelCost> {
+    pub fn cost_info(&self, driver_type: DriverType, model: &str) -> Option<ModelCost> {
         // Look up model cost data.
         let cost_db = ModelCostDatabase::new(self.model_cost_data.as_deref());
         let cost = cost_db.lookup(driver_type, model).cloned();

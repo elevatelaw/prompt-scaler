@@ -266,7 +266,7 @@ pub trait WorkResponse {
 
     /// Get the [`Self::Output`] value associated with this
     /// response.
-    fn to_output(&self) -> Self::Output;
+    fn to_output(self) -> Self::Output;
 
     /// Get the token usage associated with this response.
     fn token_usage(&self) -> Option<&TokenUsage>;

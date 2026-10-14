@@ -10,7 +10,7 @@ use super::work::{WorkInput, WorkOutput, WorkQueue, WorkResponse, WorkStatus};
 use crate::{
     async_utils::{BoxedFuture, BoxedStream, JoinWorker, io::JsonObject},
     drivers::{
-        DriverRetryResult, TokenUsage,
+        DriverRetryResult, DriverType, TokenUsage,
         llm::{ChatCompletionResponse, LlmDriver, LlmOpts},
     },
     mem_limit::MemLimiter,
@@ -44,9 +44,9 @@ pub struct ChatOutput {
 impl WorkResponse for ChatCompletionResponse {
     type Output = ChatOutput;
 
-    fn to_output(&self) -> Self::Output {
+    fn to_output(self) -> Self::Output {
         ChatOutput {
-            response: Some(self.response.clone()),
+            response: Some(self.response),
         }
     }
 
@@ -98,7 +98,9 @@ pub async fn create_chat_work_queue(
     let driver = llm_opts.driver.create_driver().await?;
 
     // Look up model cost data.
-    let cost = llm_opts.driver_opts.cost_info(llm_opts.driver, &model);
+    let cost = llm_opts
+        .driver_opts
+        .cost_info(DriverType::Llm(llm_opts.driver), &model);
 
     // Read our schema.
     //

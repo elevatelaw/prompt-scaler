@@ -5,22 +5,20 @@
 
 use std::{collections::BTreeMap, path::Path};
 
-use clap::ValueEnum;
-
-use crate::{drivers::llm::LlmDriverType, prelude::*};
+use crate::{drivers::DriverType, prelude::*};
 
 /// A key for looking up model costs, based on driver and model name. If the
 /// driver is `None`, then the cost applies to any driver lacking a more
 /// specific match.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 struct ModelKey {
-    driver: Option<LlmDriverType>,
+    driver: Option<DriverType>,
     model: String,
 }
 
 impl ModelKey {
-    /// Construct a key for a specific driver and model.
-    fn for_driver(driver: LlmDriverType, model: &str) -> Self {
+    /// Construct a key for a specific chat driver and model.
+    fn for_driver(driver: DriverType, model: &str) -> Self {
         Self {
             driver: Some(driver),
             model: model.to_string(),
@@ -56,7 +54,7 @@ impl ModelCostDatabase {
 
     /// Look up cost information for a model and driver, with fallback to a
     /// generic model match.
-    pub fn lookup(&self, driver: LlmDriverType, model: &str) -> Option<&ModelCost> {
+    pub fn lookup(&self, driver: DriverType, model: &str) -> Option<&ModelCost> {
         // First try a driver-specific match, then a generic match.
         self.costs
             .get(&ModelKey::for_driver(driver, model))
@@ -118,10 +116,7 @@ fn parse_model_costs_csv(csv_data: &str) -> Result<BTreeMap<ModelKey, ModelCost>
         let record = result.context("Failed to parse model cost record")?;
         let driver = match record.driver.as_deref() {
             None | Some("") => None,
-            Some(s) => Some(
-                LlmDriverType::from_str(s, true)
-                    .map_err(|e| anyhow!("Unknown driver {s:?}: {e}"))?,
-            ),
+            Some(s) => Some(s.parse::<DriverType>()?),
         };
         let key = ModelKey {
             driver,
@@ -141,6 +136,8 @@ fn parse_model_costs_csv(csv_data: &str) -> Result<BTreeMap<ModelKey, ModelCost>
 
 #[cfg(test)]
 mod tests {
+    use crate::drivers::llm::LlmDriverType;
+
     use super::*;
 
     fn default_db() -> ModelCostDatabase {
@@ -161,7 +158,7 @@ mod tests {
     fn known_model_has_expected_cost() {
         let db = default_db();
         let cost = db
-            .lookup(LlmDriverType::Native, "gpt-4o-mini")
+            .lookup(DriverType::Llm(LlmDriverType::Native), "gpt-4o-mini")
             .expect("gpt-4o-mini should be in database");
         assert!(
             (cost.input_cost_per_token - 0.00000015).abs() < 1e-12,
@@ -179,8 +176,11 @@ mod tests {
     fn unknown_model_returns_none() {
         let db = default_db();
         assert!(
-            db.lookup(LlmDriverType::Native, "nonexistent-model-xyz")
-                .is_none()
+            db.lookup(
+                DriverType::Llm(LlmDriverType::Native),
+                "nonexistent-model-xyz"
+            )
+            .is_none()
         );
     }
 }
