@@ -3,7 +3,7 @@
 
 use leaky_bucket::RateLimiter;
 
-use crate::{costs::ModelCost, drivers::DriverOpts, mem_limit::MemLimiter};
+use crate::{costs::ModelCost, mem_limit::MemLimiter};
 
 /// Shared processor state.
 #[derive(Debug)]
@@ -13,9 +13,6 @@ pub struct CommonProcessorState {
 
     /// A memory limiter for image loading.
     pub mem_limiter: MemLimiter,
-
-    /// The driver options to use.
-    pub driver_opts: DriverOpts,
 
     /// Model cost information, if available.
     pub model_cost: Option<ModelCost>,

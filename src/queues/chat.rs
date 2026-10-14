@@ -115,7 +115,6 @@ pub async fn create_chat_work_queue(
         common: CommonProcessorState {
             rate_limiter,
             mem_limiter,
-            driver_opts: llm_opts.driver_opts.clone(),
             model_cost: cost,
         },
         driver,
