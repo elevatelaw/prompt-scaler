@@ -4,10 +4,15 @@ use std::{env::current_dir, fmt, ops::AddAssign};
 
 use clap::Args;
 use keen_retry::RetryResult;
+use leaky_bucket::RateLimiter;
 use schemars::JsonSchema;
 
 use crate::{
-    costs::ModelCost, mem_limit::MemLimit, prelude::*, rate_limit::RateLimit,
+    costs::{ModelCost, ModelCostDatabase},
+    drivers::llm::LlmDriverType,
+    mem_limit::MemLimit,
+    prelude::*,
+    rate_limit::RateLimit,
     retry::IsKnownTransient,
 };
 
@@ -52,6 +57,32 @@ pub struct DriverOpts {
 }
 
 impl DriverOpts {
+    /// Get the cost for the chosen model.
+    ///
+    /// There's no deeply-principled reason that this is here, other than that
+    /// it has [`Self::model_cost_data`]. It could potentially be moved to
+    /// [`ModelCostDatabase`].
+    pub fn cost_info(
+        &self,
+        driver_type: LlmDriverType,
+        model: &str,
+    ) -> Option<ModelCost> {
+        // Look up model cost data.
+        let cost_db = ModelCostDatabase::new(self.model_cost_data.as_deref());
+        let cost = cost_db.lookup(driver_type, model).cloned();
+        if let Some(ref cost) = cost {
+            debug!(driver = ?driver_type, %model, ?cost, "Model cost info");
+        } else {
+            debug!(driver = ?driver_type, %model, "Model cost info not available");
+        }
+        cost
+    }
+
+    /// Build a rate limiter.
+    pub fn rate_limiter(&self) -> Option<RateLimiter> {
+        self.rate_limit.as_ref().map(|rl| rl.to_rate_limiter())
+    }
+
     /// Compute and store our canonical base directory for later use.
     ///
     /// The order of precedence is:
