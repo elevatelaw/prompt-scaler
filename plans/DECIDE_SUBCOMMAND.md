@@ -2,7 +2,7 @@
 
 > **Status**: Design agreed. Groundwork (Phase 0), the decision data types, the
 > `DecideDriver` trait and the **SystemOne transport (validated against a live llama.cpp
-> with Kev-4B)** and `DecideDriverType` are **landed**; `verify_answers`, the queue
+> with Kev-4B)**, `DecideDriverType` and `verify_answers` are **landed**; the queue
 > body, the CLI and the Luna transport are still open. **Echo is on hold pending
 discussion** — it doesn't map cleanly onto `decide`, and item 11's offline-coverage
 > strategy needs revisiting as a result. Where this section and the original draft disagree, §Progress
@@ -199,7 +199,8 @@ silently drop them — silent small-model regression is still the worst failure 
 Net: the hoisting that mattered is done (~120 lines moved into `work.rs` /
 `processor_state.rs` / `templates.rs` / `DriverOpts`); what's left to write is roughly
 1000 lines — SystemOne is in (tests included), Luna ~150; `queues/decide.rs` body ~180,
-`verify_answers` ~80 (`Limits` deferred), CLI/echo/tests ~250, plus prompt-shape churn.
+`verify_answers` done (`Limits` deferred, arithmetic checks cut), CLI/tests ~250,
+plus prompt-shape churn.
 
 ## Driver API
 
@@ -251,11 +252,14 @@ src/drivers/decide/openai_decisions.rs  # /v1/decisions (Luna)
   auto-negotiation is still not being done (§Deferred).
 - Forward-compat serde: keep unknown request/answer fields intact (kunobi's
   `extra()`/`Answer::Unknown`), catch-all for unknown answer variants (beta API).
-- `verify_answers(&questions, &answers)` in the decide work fn: missing ids, kind
-  mismatch, choice ∉ offered options ⇒ `invalid_output` **fatal** (server bug; retrying
-  sends the same request to the same broken endpoint). Luna `refusal` ⇒ first-class
-  per-question outcome carried in `answers[q]`, never a record-level status (see
-  §Landmines).
+- `verify_answers(&questions, &answers)` — **landed** (`drivers/decide/mod.rs`, unit
+  tested): checks only what parsing can't — same question names (missing/extra), same
+  kinds, and choices actually offered ⇒ `invalid_output` **fatal** (deterministic server
+  ⇒ endpoint bug, not generation flake; retrying re-hits the same bug).
+  **Deliberately no arithmetic checks** (probabilities summing to 1, choice == argmax):
+  server-quality questions, not ours to fail records on. The queue still owes Luna
+  `refusal` ⇒ first-class per-question outcome carried in `answers[q]`, never a
+  record-level status (see §Landmines, items 15/24).
 - Router mode: `--model` maps to the per-request `model` field. N questions per request
   (native + cheap); **one row per request** — no multi-state batch endpoint exists, and
   packing N rows into one `state` cross-contaminates on small models. Document "never
@@ -412,7 +416,7 @@ queue → JSONL offline, so each later transport diffs as a pure wire adapter.
 |---|---|---|---|---|
 | 6 | `prompt: add DecidePrompt type (not yet wired)` | 2 | ◐ | Type exists with `state: Option<Value>` + `images` + `questions`. Still missing: the `text`/`field`/`row`/`json` state modes, the leaf-type splice rule, and a `toml_span::Deserialize` impl (item 21). This remains the artifact most likely to churn — and it has no consumers yet, which was the point. |
 | 7 | `schema: expose DecidePrompt/DecideInput/DecideOutput` | 6 | ◐ | `SchemaType` variants + titles exist. Missing: `schemas/Decide*.json` (item 22) and **the ergonomics review** — mock 3–4 prompts (whole-row JSON state, image + state, score, bool with polarities) and judge them. Expect a follow-up fix commit; that's why it sits here. |
-| 8 | `drivers: canonical decision request/response + answer verification` | (9, CI) | ◐ | Types landed (wire-shaped, `Answer` probabilities as maps, answers keyed by name). Missing: `verify_answers` (unit-testable standalone; missing ids, kind mismatch, choice ∉ offered options ⇒ `invalid_output` **fatal**), and the usability fixes in item 20. |
+| 8 | `drivers: canonical decision request/response + answer verification` | (9, CI) | ✅ | Types landed (request wire-shaped; `Answer` probabilities as maps, answers keyed by name). `verify_answers` landed and unit-tested, scoped to relational checks only — names, kinds, offered-choice membership; no probability arithmetic (see §Driver API). The remaining usability fixes moved to item 20. |
 
 New items found while implementing (numbered from 20 to leave 1–19 stable for cross-references):
 

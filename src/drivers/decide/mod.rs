@@ -200,6 +200,61 @@ impl fmt::Display for DecideDriverType {
     }
 }
 
+/// Check that `answers` correspond to the questions we sent.
+///
+/// Decision-model servers are deterministic, so a mismatch here indicates a
+/// bug in the endpoint, not flaky generation: failures are always fatal
+/// ([`DriverError::invalid_output`]), because retrying would send the same
+/// request to the same broken server.
+///
+/// This is intentionally minimal. We already parsed the answers' structure;
+/// what parsing can't check is the *relation* between answers and
+/// questions, so that's all we check: matching names, matching kinds, and
+/// choices we actually offered. We deliberately do not check arithmetic
+/// properties (probabilities summing to 1, choice equalling argmax): those
+/// are server-quality questions that shouldn't fail our records.
+pub fn verify_answers(
+    questions: &BTreeMap<String, Question>,
+    answers: &BTreeMap<String, Answer>,
+) -> Result<(), DriverError> {
+    // We must have answered exactly the questions we asked.
+    let missing: Vec<&String> = questions
+        .keys()
+        .filter(|name| !answers.contains_key(*name))
+        .collect();
+    let extra: Vec<&String> = answers
+        .keys()
+        .filter(|name| !questions.contains_key(*name))
+        .collect();
+    if !missing.is_empty() || !extra.is_empty() {
+        return Err(DriverError::invalid_output(anyhow!(
+            "Answers don't match the questions sent: missing {missing:?}, unexpected {extra:?}"
+        )));
+    }
+
+    for (name, question) in questions {
+        let answer = &answers[name]; // presence guaranteed above
+        match (question, answer) {
+            (Question::Noul { .. }, Answer::Noul { .. }) => {}
+            (Question::Choice { criteria, .. }, Answer::Choice { choice, .. }) => {
+                if !criteria.contains_key(choice) {
+                    return Err(DriverError::invalid_output(anyhow!(
+                        "Answer to {name:?} chose {choice:?}, which was not offered"
+                    )));
+                }
+            }
+            (Question::Score { .. }, Answer::Score { .. }) => {}
+            _ => {
+                return Err(DriverError::invalid_output(anyhow!(
+                    "Answer to {name:?} has the wrong type: {answer:?}"
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// A driver for decision ("system one") models.
 #[async_trait]
 pub trait DecideDriver: fmt::Debug + Send + Sync + 'static {
@@ -211,4 +266,131 @@ pub trait DecideDriver: fmt::Debug + Send + Sync + 'static {
         &self,
         request: &DecideRequest,
     ) -> Result<DecideResponse, DriverError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn questions() -> BTreeMap<String, Question> {
+        BTreeMap::from([
+            (
+                "category".to_string(),
+                Question::Choice {
+                    instructions: "What kind of document is this?".to_string(),
+                    criteria: BTreeMap::from([
+                        ("invoice".to_string(), None),
+                        ("memo".to_string(), None),
+                    ]),
+                },
+            ),
+            (
+                "urgent".to_string(),
+                Question::Noul {
+                    instructions: "Is it urgent?".to_string(),
+                    criteria: None,
+                },
+            ),
+            (
+                "quality".to_string(),
+                Question::Score {
+                    instructions: "How well written is it?".to_string(),
+                    criteria: vec!["bad".to_string(), "good".to_string()],
+                },
+            ),
+        ])
+    }
+
+    fn answers() -> BTreeMap<String, Answer> {
+        BTreeMap::from([
+            (
+                "category".to_string(),
+                Answer::Choice {
+                    choice: "invoice".to_string(),
+                    probabilities: BTreeMap::from([
+                        ("invoice".to_string(), 0.9),
+                        ("memo".to_string(), 0.1),
+                    ]),
+                    confidence: 0.8,
+                },
+            ),
+            ("urgent".to_string(), Answer::Noul { noul: 0.7 }),
+            (
+                "quality".to_string(),
+                Answer::Score {
+                    score: 1.0,
+                    legend: BTreeMap::from([
+                        ("0".to_string(), "bad".to_string()),
+                        ("1".to_string(), "good".to_string()),
+                    ]),
+                    probabilities: BTreeMap::from([
+                        ("0".to_string(), 0.5),
+                        ("1".to_string(), 0.5),
+                    ]),
+                    confidence: 0.0,
+                },
+            ),
+        ])
+    }
+
+    #[test]
+    fn verify_accepts_matching_answers() {
+        verify_answers(&questions(), &answers()).unwrap();
+    }
+
+    #[test]
+    fn verify_rejects_missing_answer() {
+        let mut answers = answers();
+        answers.remove("urgent");
+        let err = verify_answers(&questions(), &answers).unwrap_err();
+        assert!(err.to_string().contains("missing [\"urgent\"]"), "{err}");
+    }
+
+    #[test]
+    fn verify_rejects_extra_answer() {
+        let mut answers = answers();
+        answers.insert("bogus".to_string(), Answer::Noul { noul: 0.5 });
+        let err = verify_answers(&questions(), &answers).unwrap_err();
+        assert!(err.to_string().contains("unexpected [\"bogus\"]"), "{err}");
+    }
+
+    #[test]
+    fn verify_rejects_wrong_kind() {
+        let mut answers = answers();
+        answers.insert(
+            "urgent".to_string(),
+            Answer::Score {
+                score: 0.5,
+                legend: BTreeMap::from([
+                    ("0".to_string(), "a".to_string()),
+                    ("1".to_string(), "b".to_string()),
+                ]),
+                probabilities: BTreeMap::from([
+                    ("0".to_string(), 0.5),
+                    ("1".to_string(), 0.5),
+                ]),
+                confidence: 0.0,
+            },
+        );
+        let err = verify_answers(&questions(), &answers).unwrap_err();
+        assert!(err.to_string().contains("wrong type"), "{err}");
+    }
+
+    #[test]
+    fn verify_rejects_unoffered_choice() {
+        let mut answers = answers();
+        answers.insert(
+            "category".to_string(),
+            Answer::Choice {
+                choice: "receipt".to_string(),
+                probabilities: BTreeMap::from([
+                    ("invoice".to_string(), 0.9),
+                    ("memo".to_string(), 0.1),
+                ]),
+                confidence: 0.8,
+            },
+        );
+        let err = verify_answers(&questions(), &answers).unwrap_err();
+        assert!(err.to_string().contains("was not offered"), "{err}");
+    }
 }
