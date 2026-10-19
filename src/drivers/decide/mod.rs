@@ -7,6 +7,7 @@ use std::{collections::BTreeMap, fmt};
 
 use anyhow::ensure;
 use async_trait::async_trait;
+use clap::ValueEnum;
 use schemars::JsonSchema;
 
 use super::{DriverError, TokenUsage};
@@ -168,6 +169,35 @@ pub enum Answer {
         /// differs between models.
         confidence: f64,
     },
+}
+
+/// Our different decide driver types.
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, ValueEnum,
+)]
+#[clap(rename_all = "snake_case")]
+pub enum DecideDriverType {
+    /// llama.cpp, Jev, and other System One-compatible servers. Set
+    /// `SYSTEM_ONE_API_URL` to point at a server.
+    #[default]
+    SystemOne,
+}
+
+impl DecideDriverType {
+    /// Instantiate an appropriate driver.
+    pub fn create_driver(&self) -> Result<Box<dyn DecideDriver>> {
+        match self {
+            Self::SystemOne => Ok(Box::new(system_one::SystemOneDriver::new())),
+        }
+    }
+}
+
+impl fmt::Display for DecideDriverType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SystemOne => write!(f, "system_one"),
+        }
+    }
 }
 
 /// A driver for decision ("system one") models.

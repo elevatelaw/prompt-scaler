@@ -10,7 +10,7 @@ use schemars::JsonSchema;
 
 use crate::{
     costs::{ModelCost, ModelCostDatabase},
-    drivers::llm::LlmDriverType,
+    drivers::{decide::DecideDriverType, llm::LlmDriverType},
     mem_limit::MemLimit,
     prelude::*,
     rate_limit::RateLimit,
@@ -29,17 +29,40 @@ pub mod ocr;
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Hash, Ord)]
 pub enum DriverType {
     Llm(LlmDriverType),
+    Decide(DecideDriverType),
 }
 
 impl FromStr for DriverType {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // LLM drivers are tried first, so they keep their names in the cost
+        // CSV if a decide driver name is ever added that collides.
         if let Ok(llm) = LlmDriverType::from_str(s, true) {
             Ok(Self::Llm(llm))
+        } else if let Ok(decide) = DecideDriverType::from_str(s, true) {
+            Ok(Self::Decide(decide))
         } else {
             Err(anyhow::anyhow!("invalid driver type: {}", s))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn driver_type_parses_llm_and_decide_names() {
+        assert_eq!(
+            DriverType::from_str("native").unwrap(),
+            DriverType::Llm(LlmDriverType::Native)
+        );
+        assert_eq!(
+            DriverType::from_str("system_one").unwrap(),
+            DriverType::Decide(DecideDriverType::SystemOne)
+        );
+        assert!(DriverType::from_str("not-a-driver").is_err());
     }
 }
 
