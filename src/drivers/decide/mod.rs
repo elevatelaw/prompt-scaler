@@ -3,12 +3,16 @@
 // We have not yet finished hooking this up.
 #![allow(dead_code)]
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt};
 
 use anyhow::ensure;
+use async_trait::async_trait;
 use schemars::JsonSchema;
 
+use super::{DriverError, TokenUsage};
 use crate::prelude::*;
+
+pub mod system_one;
 
 /// A request to a decision model.
 #[derive(Clone, Debug, JsonSchema, Serialize)]
@@ -112,7 +116,9 @@ pub struct NoulCriteria {
 }
 
 /// A response from a decision model.
-#[derive(Clone, Debug, Deserialize, JsonSchema)]
+///
+/// This is our standard response type, which
+#[derive(Clone, Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct DecideResponse {
     /// The name of the model used. May be different from the requested model name, thanks
@@ -122,8 +128,10 @@ pub struct DecideResponse {
     /// Answers to the questions.
     answers: BTreeMap<String, Answer>,
 
-    /// Usage metrics.
-    usage: Usage,
+    /// Token usage. `None` if the server reported no usage at all. In some
+    /// cases, servers may return 0 output tokens used. We typically
+    /// normalize this 1 token per answer.
+    token_usage: Option<TokenUsage>,
 }
 
 /// An answer to a [`Question`].
@@ -162,15 +170,15 @@ pub enum Answer {
     },
 }
 
-/// Usage metrics for a decision request.
-#[derive(Clone, Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub struct Usage {
-    /// The number of input tokens used.
-    input_tokens: u64,
-
-    /// The number of output tokens used. Depending on the API used, this will
-    /// typically be either 1 token per question asked, or 0.
-    #[serde(default)]
-    output_tokens: u64,
+/// A driver for decision ("system one") models.
+#[async_trait]
+pub trait DecideDriver: fmt::Debug + Send + Sync + 'static {
+    /// Answer the questions in `request`.
+    ///
+    /// We include `model` inside `request`. Callers are responsible for
+    /// handling timeouts and retry behavior.
+    async fn decide(
+        &self,
+        request: &DecideRequest,
+    ) -> Result<DecideResponse, DriverError>;
 }

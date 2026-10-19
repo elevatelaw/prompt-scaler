@@ -212,12 +212,20 @@ impl IsKnownTransient for reqwest::Error {
 
 impl IsKnownTransient for StatusCode {
     fn is_known_transient(&self) -> bool {
-        let transient_failures = [
+        // 529 "Overloaded" is non-standard; Jev and OpenAI use it with
+        // Retry-After, and exponential backoff honors the wait.
+        [
             StatusCode::TOO_MANY_REQUESTS,
             StatusCode::BAD_GATEWAY,
             StatusCode::SERVICE_UNAVAILABLE,
             StatusCode::GATEWAY_TIMEOUT,
-        ];
-        transient_failures.contains(self)
+        ]
+        .contains(self)
+            || [
+                // 529 is a non-standard status used by Jev and maybe
+                // some others.
+                529,
+            ]
+            .contains(&self.as_u16())
     }
 }

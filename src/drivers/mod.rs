@@ -5,6 +5,7 @@ use std::{env::current_dir, fmt, ops::AddAssign, str::FromStr};
 use clap::{Args, ValueEnum as _};
 use keen_retry::RetryResult;
 use leaky_bucket::RateLimiter;
+use reqwest::StatusCode;
 use schemars::JsonSchema;
 
 use crate::{
@@ -235,6 +236,17 @@ impl DriverError {
         Self {
             kind: DriverErrorKind::Api,
             source: Some(error.into()),
+            is_transient,
+        }
+    }
+
+    /// API call returned an error HTTP status along with the server's own error
+    /// message. [`is_transient`] set from the status code.
+    pub fn api_status(status: StatusCode, source: impl Into<anyhow::Error>) -> Self {
+        let is_transient = status.is_known_transient();
+        Self {
+            kind: DriverErrorKind::Api,
+            source: Some(source.into()),
             is_transient,
         }
     }
