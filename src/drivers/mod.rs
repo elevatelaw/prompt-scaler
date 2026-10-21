@@ -64,6 +64,41 @@ mod tests {
         );
         assert!(DriverType::from_str("not-a-driver").is_err());
     }
+
+    #[test]
+    fn driver_errors_we_create_are_never_transient() {
+        // `invalid_input` and `invalid_output` describe deterministic failures:
+        // a bad prompt, or a server that answered the wrong question. Retrying
+        // resends the same request to the same broken endpoint, so these must
+        // stay fatal however the message reads.
+        for error in [
+            DriverError::invalid_input(anyhow!("prompt has no questions")),
+            DriverError::invalid_output(anyhow!("answer was not offered")),
+        ] {
+            assert!(
+                !error.is_known_transient(),
+                "{error:?} should not be retried"
+            );
+        }
+    }
+
+    #[test]
+    fn api_status_errors_classify_from_the_status() {
+        // The transience table itself lives in `retry`; what matters here is
+        // that `api_status` consults it, so a driver reporting a server status
+        // gets the retry policy that status implies.
+        assert!(
+            DriverError::api_status(StatusCode::TOO_MANY_REQUESTS, anyhow!("slow down"))
+                .is_known_transient()
+        );
+        assert!(
+            !DriverError::api_status(
+                StatusCode::BAD_REQUEST,
+                anyhow!("not a decision model"),
+            )
+            .is_known_transient()
+        );
+    }
 }
 
 /// Driver-related options.

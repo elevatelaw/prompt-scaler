@@ -428,4 +428,66 @@ mod tests {
         let err = verify_answers(&questions(), &answers).unwrap_err();
         assert!(err.to_string().contains("was not offered"), "{err}");
     }
+
+    // `Question::validate` runs at prompt-load time, so it is the difference
+    // between "your prompt is wrong" up front and 600,000 records failing
+    // identically later.
+
+    #[test]
+    fn validate_accepts_our_test_questions() {
+        for (name, question) in questions() {
+            question
+                .validate()
+                .unwrap_or_else(|err| panic!("{name} should validate: {err}"));
+        }
+    }
+
+    #[test]
+    fn validate_rejects_empty_instructions() {
+        // Small models degrade badly without instructions, so an empty one is a
+        // prompt mistake rather than a legal-but-bad question.
+        let question = Question::Noul {
+            instructions: String::new(),
+            criteria: None,
+        };
+        let err = question.validate().unwrap_err().to_string();
+        assert!(
+            err.contains("question instructions must not be empty"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_choice_with_one_option() {
+        let question = Question::Choice {
+            instructions: "Which one?".to_string(),
+            criteria: BTreeMap::from([("only".to_string(), None)]),
+        };
+        let err = question.validate().unwrap_err().to_string();
+        assert!(err.contains("at least two criteria"), "{err}");
+    }
+
+    #[test]
+    fn validate_bounds_score_criteria() {
+        // One criterion can't express a range; past ten we're past what every
+        // server we target accepts, so we fail at load rather than per-request.
+        for count in [1usize, 11] {
+            let question = Question::Score {
+                instructions: "How good?".to_string(),
+                criteria: (0..count).map(|index| index.to_string()).collect(),
+            };
+            let err = question.validate().unwrap_err().to_string();
+            assert!(err.contains("score must have 2-10 criteria"), "{err}");
+        }
+
+        for count in [2usize, 10] {
+            let question = Question::Score {
+                instructions: "How good?".to_string(),
+                criteria: (0..count).map(|index| index.to_string()).collect(),
+            };
+            question.validate().unwrap_or_else(|err| {
+                panic!("score with {count} criteria should validate: {err}")
+            });
+        }
+    }
 }

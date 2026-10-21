@@ -305,3 +305,86 @@ async fn run_decide_inner(
 
     retry_result_ok(response)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An input record with the given `state`, plus one template binding.
+    fn input(state: Option<Value>) -> DecideInput {
+        let mut template_bindings = JsonObject::new();
+        template_bindings.insert("text".to_string(), json!("a bound value"));
+        DecideInput {
+            state,
+            template_bindings,
+        }
+    }
+
+    #[test]
+    fn state_from_the_record_is_sent_verbatim() {
+        // Mode (a): a record's `state` goes to the model untouched, with no
+        // template substitution, even when it happens to contain template
+        // syntax. Only [`DecidePrompt::state`] is ever rendered.
+        let state = json!({ "body": "{{not_a_binding}}", "count": 7 });
+        let assembled = assemble_state(None, &input(Some(state.clone())))
+            .expect("state from the record alone should assemble");
+        assert_eq!(assembled, state);
+    }
+
+    #[test]
+    fn state_from_the_prompt_is_not_reprocessed() {
+        // Mode (b): by the time [`assemble_state`] sees prompt state it has
+        // already been rendered, and must not be touched again.
+        let prompt_state = json!("Rendered text, with {{braces}} left alone.");
+        let assembled = assemble_state(Some(prompt_state.clone()), &input(None))
+            .expect("prompt state alone should assemble");
+        assert_eq!(assembled, prompt_state);
+    }
+
+    #[test]
+    fn record_envelope_keys_are_not_template_bindings() {
+        // An input record mixes two kinds of key: the work envelope, which
+        // routes records, and caller-supplied fields, which template the
+        // prompt. Envelope keys — `state` included — must not reach Handlebars,
+        // or a prompt could silently template against data meant for us alone.
+        let record: WorkInput<DecideInput> = serde_json::from_str(
+            r#"{
+                 "id": "row-1",
+                 "skip_processing": true,
+                 "passthrough_data": { "gold": "invoice" },
+                 "state": { "doc": "text" },
+                 "custom": "value",
+                 "count": 3
+             }"#,
+        )
+        .expect("record should deserialize");
+
+        assert_eq!(record.id, json!("row-1"));
+        assert_eq!(record.skip_processing, Some(true));
+        assert_eq!(record.passthrough_data, Some(json!({ "gold": "invoice" })));
+        assert_eq!(record.data.state, Some(json!({ "doc": "text" })));
+
+        // Custom fields are bindings…
+        assert_eq!(record.data.template_bindings["custom"], json!("value"));
+        assert_eq!(record.data.template_bindings["count"], json!(3));
+        // …and nothing else is.
+        for key in ["id", "skip_processing", "passthrough_data", "state"] {
+            assert!(
+                !record.data.template_bindings.contains_key(key),
+                "`{key}` leaked into template bindings"
+            );
+        }
+    }
+
+    #[test]
+    fn record_without_state_leaves_it_to_the_prompt() {
+        let record: WorkInput<DecideInput> =
+            serde_json::from_str(r#"{ "id": "row-1", "text": "hello" }"#)
+                .expect("record should deserialize");
+
+        // No `state` key means "the prompt supplies state", not "empty state":
+        // `assemble_state` must see `None`, not `Some(Value::Null)`.
+        assert!(record.data.state.is_none());
+        assert_eq!(record.data.template_bindings["text"], json!("hello"));
+    }
+}

@@ -96,3 +96,112 @@ impl RenderTemplate for DecidePrompt<Template> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Template bindings.
+    fn bindings(pairs: &[(&str, &str)]) -> JsonObject {
+        pairs
+            .iter()
+            .map(|(key, value)| (key.to_string(), json!(value)))
+            .collect()
+    }
+
+    /// A prompt whose single valid question carries `instructions`, so that
+    /// [`DecidePrompt::render`]'s validation step passes.
+    fn prompt(
+        state: Value,
+        instructions: &str,
+        images: Option<Vec<String>>,
+    ) -> DecidePrompt {
+        DecidePrompt {
+            state: Some(state),
+            images,
+            questions: BTreeMap::from([(
+                "urgent".to_string(),
+                Question::Noul {
+                    instructions: instructions.to_string(),
+                    criteria: None,
+                },
+            )]),
+            _phantom: PhantomData,
+        }
+    }
+
+    fn base_dir() -> PathBuf {
+        std::env::current_dir().expect("should be able to find the current directory")
+    }
+
+    #[test]
+    fn state_templates_render_at_any_depth() {
+        let prompt = prompt(
+            json!({
+                "doc": "{{text}}",
+                "meta": { "quoted": "[{{text}}]", "number": 42, "flag": true },
+            }),
+            "Does this need action within 24 hours?",
+            None,
+        );
+
+        let rendered = prompt
+            .render(&bindings(&[("text", "hello")]), &base_dir())
+            .expect("prompt should render");
+
+        assert_eq!(
+            rendered.state,
+            Some(json!({
+                "doc": "hello",
+                "meta": { "quoted": "[hello]", "number": 42, "flag": true },
+            }))
+        );
+    }
+
+    #[test]
+    fn questions_are_never_templated() {
+        // Questions are wire-shaped, user-authored text, deliberately kept out
+        // of Handlebars: option labels and criteria go to the server as written
+        // and are compared against there, so a stray (or missing) mustache in
+        // them must neither error nor silently disappear.
+        let prompt = prompt(
+            json!("{{text}}"),
+            "Does {{text}} stay? So does {{no_such_binding}}.",
+            None,
+        );
+
+        let rendered = prompt
+            .render(&bindings(&[("text", "hello")]), &base_dir())
+            .expect("prompt should render");
+
+        let Question::Noul {
+            instructions,
+            criteria: _,
+        } = &rendered.questions["urgent"]
+        else {
+            panic!("question kind should survive rendering");
+        };
+        assert_eq!(
+            instructions,
+            "Does {{text}} stay? So does {{no_such_binding}}."
+        );
+    }
+
+    #[test]
+    fn images_render_with_the_record_bindings() {
+        let prompt = prompt(
+            json!("some state"),
+            "Does this need action within 24 hours?",
+            Some(vec!["{{path}}".to_string(), "literal.png".to_string()]),
+        );
+
+        let rendered = prompt
+            .render(&bindings(&[("path", "images/a.png")]), &base_dir())
+            .expect("prompt should render");
+
+        assert_eq!(
+            rendered.images,
+            Some(vec!["images/a.png".to_string(), "literal.png".to_string()])
+        );
+    }
+}
