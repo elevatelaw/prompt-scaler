@@ -1,7 +1,7 @@
 //! Shared driver for "system one"-compatible APIs, like llama.cpp and Jev.
 //!
 //! Talks to `POST {base}/v1/systemone`. Configure with `SYSTEM_ONE_API_URL`
-//! (default `http://127.0.0.1:8080`) and the optional `SYSTEM_ONE_API_KEY`
+//! (default `http://localhost:8080`) and the optional `SYSTEM_ONE_API_KEY`
 //! (sent as a Bearer token).
 
 use std::{collections::BTreeMap, env, fmt};

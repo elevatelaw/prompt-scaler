@@ -34,6 +34,13 @@ The following variables can be specified in the environment, or using a `.env` f
 
 (Any other standard AWS credential source also works.)
 
+### Driver: `system_one` (the `decide` subcommand)
+
+- `SYSTEM_ONE_API_URL` (optional): Base URL of a `/v1/systemone`-compatible server, such as llama.cpp or Jev. Defaults to `http://localhost:8080`.
+- `SYSTEM_ONE_API_KEY` (optional): Sent as a Bearer token, for servers that require a key.
+
+See [`docs/decide.md`](docs/decide.md) for the whole subcommand.
+
 ### Debugging
 
 - `RUST_LOG` (optional): Set to `prompt_scaler=debug,warn` or `prompt_scaler=trace,warn` to produce detailed logs. This uses the [`env-logger` syntax](https://docs.rs/env_logger/latest/env_logger/).
@@ -85,8 +92,11 @@ You can run any of the following commands to see documentation for `prompt-scale
 prompt-scaler --help
 prompt-scaler chat --help
 prompt-scaler ocr --help
+prompt-scaler decide --help
 prompt-scaler schema --help
 ```
+
+For decision ("system one") models, which answer typed questions instead of writing text, see [`docs/decide.md`](docs/decide.md).
 
 ## Example usage
 
@@ -269,6 +279,10 @@ The output format is still being refined, but it currently contains the followin
 - `pages: (string | null)[]`: An array of strings or NULL values, containing the text for each page. May use Markdown formatting depending on the OCR model and prompt.
 
 More output fields will be added, possibly including such things as quality indicators or text bounding boxes, if available. And some field names may change. We may also add a "direct to CSV" output mode. But for now, see the scripts in [`scripts/`](./scripts/) for examples of how to convert the JSONL output to other formats.
+
+### Decision Models
+
+`prompt-scaler decide` talks to a *decision* ("system one") model. Instead of writing text, these models answer typed questions — `choice`, `noul` (true/false), and `score` — in a single pass, and return a probability for every possible answer plus a confidence value. This is cheaper and faster than `chat` when you only need labels. See [`docs/decide.md`](docs/decide.md) for the prompt format, the endpoint and credential settings, and examples.
 
 ## Developer setup
 
