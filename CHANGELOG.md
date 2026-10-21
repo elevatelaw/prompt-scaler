@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-10-21
+
+### Added
+
+- decide: New `decide` subcommand with support for "/v1/systemone"-style decision models (llama.cpp, Jev, etc.) See `docs/decide.md` for documentation.
+
+### Fixed
+
+- HTTP 529 "Overloaded" is now retried when HTTP APIs return it. This is a non-standard retry code used by several LLM APIs.
+
+### Security
+
+- Update dependencies for various Rust security alerts. None of the ones I saw looked likely to affect normal prompt-scaler deployments.
+
 ## [0.4.0] - 2026-09-01
 
 ### Added
