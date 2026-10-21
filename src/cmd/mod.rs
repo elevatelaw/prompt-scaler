@@ -9,6 +9,7 @@ use crate::{
 };
 
 pub mod chat;
+pub mod decide;
 pub mod ocr;
 pub mod schema;
 

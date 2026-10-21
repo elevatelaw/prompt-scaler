@@ -1,26 +1,33 @@
 # `decide` Subcommand (Decision / System One Models)
 
 > **Status**: Design agreed. Groundwork (Phase 0), the decision data types, the
-> `DecideDriver` trait and the **SystemOne transport (validated against a live llama.cpp
-> with Kev-4B)**, `DecideDriverType` and `verify_answers` are **landed**; the queue
-> body, the CLI and the Luna transport are still open. **Echo is on hold pending
-discussion** — it doesn't map cleanly onto `decide`, and item 11's offline-coverage
+> `DecideDriver` trait, the **SystemOne transport (validated against a live llama.cpp
+> with Kev-4B)**, `DecideDriverType`, `verify_answers`, and — with items 20 + 10 —
+> **the queue and the `decide` subcommand are landed**: `prompt-scaler decide -p
+> prompt.json -m MODEL < in.jsonl > out.jsonl` works end to end against a local
+> llama.cpp, and `tests/cli.rs` has a live happy-path test plus three
+> server-free ones. The Luna transport, image support, the `response` projection
+> and the published schema artifacts are still open.
+> **NEXT STEPS: item 25** (offline/credential-free test story — `decide`'s queue has
+> no CI-runnable coverage today), then 13 (SystemOne images) and 14 (Luna).
+> **Echo is on hold pending discussion** — it doesn't map cleanly onto `decide`, and item 11's offline-coverage
 > strategy needs revisiting as a result. Where this section and the original draft disagree, §Progress
 > wins. Background research lives in `docs/notes/systemone-decision-api.md` (research-stage
 > notes — do not edit; wire schemas are there, referenced by section below).
 
 ## Progress
 
-What exists in the tree as of `ff14cfc`, with the names as implemented:
+What exists in the tree (groundwork row baseline: `ff14cfc`), with the names as implemented:
 
 | What | Where | Notes |
 |---|---|---|
 | Chat prompt/driver split, type-state prompts | `src/prompts/{mod,chat}.rs`, `src/drivers/llm/`, `src/drivers/ocr/` | `PromptState`/`Template`/`Rendered`; OCR engines moved under `drivers/`. |
-| `DecidePrompt` (unwired) | `src/prompts/decide.rs` | `state: Option<Value>` + `images` + `questions`; questions are not templated. No `toml_span::Deserialize` impl yet ⇒ `.toml` prompts cannot load via `read_json_or_toml` (item 21). |
-| Canonical decision types | `src/drivers/decide/mod.rs` | `DecideRequest` is wire-shaped (consensus System One); `DecideResponse` is **canonical, not wire**: carries `token_usage: Option<TokenUsage>`, with the wire `Usage` driver-internal. `Question`/`Answer`. Still not usable from outside the module (item 20). |
-| `DecideDriver` trait + `DecideDriverType` (unwired) | `src/drivers/decide/mod.rs` | `decide()` → `Result<DecideResponse, DriverError>`; model rides inside the request. `DecideDriverType` (`SystemOne` default, `Display`/`ValueEnum`, `create_driver()`) feeds `DriverType::Decide(…)`. Echo on hold (item 25); `Limits` deferred (§Driver API). |
-| `SystemOne` driver (unwired) | `src/drivers/decide/system_one.rs` | llama.cpp/Jev transport over `reqwest`; driver-internal `SystemOneResponse`/`Usage`; usage normalization incl. the discrepancy `debug!` (item 16's rule, implemented early by agreement). Offline wire-format test passes; live `#[ignore]`d test `test_system_one_live_kev` **passed** against Kev-4B (all three question kinds, legend, probability sums, model echo, `prompt_tokens: 278` + normalized `completion_tokens`). Default server URL is `http://127.0.0.1:8080` (IPv4 literal: llama-server binds `127.0.0.1`; `localhost` may resolve to `::1`). |
-| Queue record types | `src/queues/decide.rs` | `DecideInput` (`state` + flattened bindings), `DecideOutput{answers: Option<BTreeMap<String, Answer>>}`. `SchemaType` variants wired; `schemas/*.json` + `Justfile` loops not (item 22). |
+| `DecidePrompt` | `src/prompts/decide.rs` | `state: Option<Value>` + `images` + `questions`; questions are not templated. **JSON-only**: no `toml_span::Deserialize` impl (item 21 stays deferred), so `cmd_decide` loads it with the new `async_utils::io::read_json` — `read_json_or_toml` cannot be used, because its `T: toml_span::Deserialize<'static>` bound rejects the type outright. |
+| Canonical decision types | `src/drivers/decide/mod.rs` | `DecideRequest` is wire-shaped (consensus /v1/systemone); `DecideResponse` is **canonical, not wire**: carries `token_usage: Option<TokenUsage>`, with the wire `Usage` driver-internal. `Question`/`Answer`. Fields are `pub` (item 20 landed inside 10), so the queue builds requests and reads answers directly. |
+| `DecideDriver` trait + `DecideDriverType` | `src/drivers/decide/mod.rs` | `decide()` → `Result<DecideResponse, DriverError>`; model rides inside the request. `DecideDriverType` (`SystemOne` default, `Display`/`ValueEnum`, `create_driver()`) feeds `DriverType::Decide(…)` and is selected by `--driver`. Echo on hold (item 25); `Limits` deferred (§Driver API). |
+| `DecideDriverOpts` | `src/drivers/decide/mod.rs` | The `decide` analog of `LlmOpts`, deliberately small: `--driver`, `--decide-timeout`, flattened `DriverOpts`, plus `decide_timeout_duration()`. Naming: `DecideDriverOpts`, not `DecideOpts`, because the subcommand's own clap struct is `cmd::decide::DecideOpts` (chat has the same split: `ChatOpts` + `LlmOpts`). `--driver`/`--model` are unprefixed (conceptually special); other decide flags take a `--decide-` prefix, leaving room for fallback drivers later. |
+| `SystemOne` driver | `src/drivers/decide/system_one.rs` | llama.cpp/Jev transport over `reqwest`; driver-internal `SystemOneResponse`/`Usage`; usage normalization incl. the discrepancy `debug!` (item 16's rule, implemented early by agreement). Offline wire-format test passes; live `#[ignore]`d test `test_system_one_live_kev` **passed** against Kev-4B (all three question kinds, legend, probability sums, model echo, `prompt_tokens: 278` + normalized `completion_tokens`). Default server URL is `http://127.0.0.1:8080` (IPv4 literal: llama-server binds `127.0.0.1`; `localhost` may resolve to `::1`). |
+| Queue + subcommand | `src/queues/decide.rs`, `src/cmd/decide.rs`, `src/main.rs` | `DecideInput` (verbatim `state` + flattened bindings), `DecideOutput{answers: Option<BTreeMap<String, Answer>>}` (now `Default`), `impl WorkResponse for DecideResponse`, `process_decide_stream` / `create_decide_work_queue` / `run_decide` / `run_decide_inner` on `CommonProcessorState`, `DecideStreamInfo`, `cmd_decide`, `Cmd::Decide`. Prepare failures abort the batch (item 23). `SchemaType` variants wired; `schemas/*.json` + `Justfile` loops not (item 22). |
 | Retry→record policy | `WorkOutput::from_resolved_result` (`src/queues/work.rs`) | Generic over a **`WorkResponse` trait**, not over a `(Data, Option<TokenUsage>)` tuple. See §Factoring. |
 | Shared processor state | `CommonProcessorState` (`src/queues/processor_state.rs`) | `{rate_limiter, mem_limiter, model_cost}` + `wait_on_rate_limiter()`. No ctor, no `model`/`timeout`/`base_dir`/driver tag. Smaller than the draft's `ProcessorCore` — on purpose. |
 | Cost lookup keyed by driver | `ModelKey.driver: Option<DriverType>` (`src/costs.rs`) | `DriverType` is a small shared enum in `drivers/mod.rs` (`Llm(LlmDriverType)`, later `Decide(…)`), parsed with `FromStr` so bad names still error and matching stays case-insensitive; `Display` on `LlmDriverType` supplies the tag. **Not** the draft's `String` tags — same effect, less exposure. |
@@ -33,13 +40,15 @@ ecosystem spelling: `SystemOne` (file `system_one.rs`), with a driver-internal
 `SystemOneResponse` for the wire shape.
 
 **Ordering (revised):** per the §Work Order escape hatch ("if earlier llama.cpp signal
-matters: land 1–4, jump to 12"), the `SystemOne` driver comes **first**: text-only
+matters: land 1–4, jump to 12"), the `SystemOne` driver came **first**: text-only
 `drivers/decide/system_one.rs` against a local llama.cpp, validated by `#[ignore]`d unit
-tests inside the driver module (item 20's private fields don't block a child module, and
-in-crate tests sidestep them too). Then 8 (`verify_answers`) → 10 (queue/CLI
-checkpoint), with `pub` visibility landing in the queue commit. Echo is on hold
-(item 25) — the offline coverage strategy for 11 is an open discussion; 21 is deferred
-(JSON-only prompts) and 22 stays open until the prompt-shape ergonomics review.
+tests inside the driver module (item 20's private fields didn't block a child module, and
+in-crate tests sidestep them too). Then 8 (`verify_answers`) → 10 + 20 (queue/CLI
+checkpoint), with `pub` visibility landing in the queue commit as planned. Echo is on hold
+(item 25) — the offline coverage strategy for 11 is still an open discussion, so today the
+queue's only end-to-end coverage is the live `#[ignore]`d test plus the server-free
+prepare-failure tests; 21 stays deferred (JSON-only prompts, now via `read_json`) and 22
+stays open until the prompt-shape ergonomics review.
 
 ## Problem
 
@@ -125,11 +134,14 @@ spec'd in §Deferred. It adds no constraints to any type, so deferring it is fre
   later addition; `OcrOutput::to_flat` is the precedent.
 - **As implemented** (`src/queues/decide.rs`): `answers` is `Option<BTreeMap<String,
   Answer>>`, keyed by question name, so the projection and flat-CSV export both remain
-  possible. But its element type is `drivers::decide::Answer` — the *wire* type — which
-  carries only server-supplied `confidence`, has no `refusal` variant, and emits `noul`
-  rather than `bool`. The two client-computed formulas therefore have no home yet: decide
-  whether to extend `Answer` or wrap it in an output-side type (item 24) *before* two
-  dialects and test fixtures consume it.
+  possible, and `DecideOutput` derives `Default` because `WorkOutput::from_resolved_result`
+  builds failure data from `Output: Default`. Its element type is `drivers::decide::Answer`
+  — the *wire* type — which carries only server-supplied `confidence`, has no `refusal`
+  variant, and emits `noul` rather than `bool`. **Item 24 is settled and implemented**: that
+  is the intended shape, so the two client-computed formulas (`confidence_typesafe`/
+  `confidence_entropy`) have no home and stay out; if they ever come back they belong in the
+  §Deferred post-processing bucket, not in `Answer`. The server-resolved response `model` is
+  dropped on the way to `DecideOutput`, as in `chat`.
 
 ## Prompt shape (to mock up for ergonomics — see §Work Order, commits 6–7)
 
@@ -139,7 +151,14 @@ format is simpler and becoming better-known than full-on `chat` + `json_schema`,
 prompt doubles as a near-copy of ecosystem examples; `toml_span`'s diagnostics are also
 exactly what JSON error reporting lacks, which item 21 would have to rebuild anyway.
 
-`read_json_or_toml` already accepts both, so ergonomics can be evaluated in JSON.
+**Correction to the draft:** `read_json_or_toml` does *not* "already accept both" for us —
+it is bound on `T: DeserializeOwned + toml_span::Deserialize<'static>`, which `DecidePrompt`
+does not satisfy, so `read_json_or_toml::<DecidePrompt>` fails to **compile** rather than
+failing gracefully on a `.toml` file. Item 10 therefore added `async_utils::io::read_json<T>`
+(next to `read_json_or_toml_as_json_value`, with the shared "open + slurp" step factored out)
+and `cmd_decide` calls it: a `.toml` decide prompt now gets a plain "TOML is not supported
+here" error, which is the behavior item 21 asked for without implementing the toml_span impl.
+Covered by `test_decide_rejects_toml_prompt`.
 
 ```toml
 [state]                      # three modes, explicit (NOT shape-detected from row keys)
@@ -169,8 +188,24 @@ State mode wart to resolve: a templated leaf always renders to a **string**, so
 expression, splice the binding's JSON value with its type intact (`{{to-string …}}`
 forces text). Shared win — also improves chat's `assistant.json` few-shot examples.
 
-**As implemented** (`src/prompts/decide.rs`) this is *not* the shape above yet: `state` is
-one `Option<Value>` (no `text`/`field`/`row`/`json` mode table), and `questions` is
+**As implemented** (`src/prompts/decide.rs`) this is *not* the shape above yet, and the mode
+table above is **superseded**: `state` is one `Option<Value>`, and there are exactly **two
+mutually exclusive ways to supply it** — zero or two sources is an error that stops the whole
+run (`queues::decide::assemble_state`). That is all the mode table was really for:
+
+| Mode | Source | Treatment |
+|---|---|---|
+| **a** | `state` field on the **input record** | sent **verbatim**, no template substitution |
+| **b** | `state` in the **prompt** | rendered with the record's bindings (`RenderTemplate for Value`: string leaves only, so the leaf-type splice wart above is still open) |
+
+Custom (flattened) fields are template bindings: in mode b they fill `state` (and `images`),
+in mode a only `images`. Bindings are never themselves the state, and unused bindings are not
+an error. That was on the table for a moment — "if neither side declares state, use the
+bindings object" — and was rejected: implicit state is the kind of magic that costs a reader
+twenty minutes six months out. If a richer mode table (`field = "doc"`, an explicit
+`state = "row"`) is ever wanted, it becomes a *new* prompt field rather than loosening this rule.
+
+The rest of the trade stands: `questions` is
 `BTreeMap<String, drivers::decide::Question>` — prompt type and wire type are the **same**
 type, which means the user-facing keyword is `noul`, not `bool`. That trade is now
 deliberate (one type, one validation path, prompts read like server payloads and like
@@ -178,6 +213,16 @@ ecosystem examples) and has two consequences to keep watching: per-model caps ca
 `Question` (caps are deferred — see §Driver API), and a dialect that
 can't carry criteria (OpenAI `predicate` has no criteria field) must fail loudly rather than
 silently drop them — silent small-model regression is still the worst failure mode here.
+
+**Images** (item 13, still open) are a `Vec<String>` of templates rendered with the record's
+bindings through the same `templates::TemplateEngine` that `chat` uses, so `image-data-url`
+and friends behave identically; the queue renders them and forwards them into
+`DecideRequest.images`, treating an empty list as "no images" so text-only requests stay
+wire-exact. What item 13 still owes is the `file:` → base64 conversion that chat drivers do
+themselves (`ImageFile::from_url(..).load(Base64, mem_limiter)`) plus dialect placement
+(`files` vs an `images` alias): `image-data-url` emits a `file:` URL for *late* loading rather
+than a data URL, so forwarding is not the same as supporting them. Nothing committed exercises
+images, and `MemLimiter::unlimited()` is inherited from `chat` meanwhile (landmine 1).
 
 ## Factoring: share the *policies*, not the per-row work fn
 
@@ -189,18 +234,20 @@ silently drop them — silent small-model regression is still the worst failure 
 | Handlebars setup (engine + escape fn + helpers + `render_template` ctx) | **DONE — `templates::TemplateEngine`** | One definition, both prompt types use it, so `image-data-url` semantics can't drift. Still built per rendered row; that's pre-existing and cheap next to network latency (see §Refactorings considered and declined). The leaf-type rule above is still unimplemented. |
 | `LlmOpts` (`drivers/mod.rs`) | **NOT split (for now) — extract base dir only** | The Transport/Generation split would let `decide` take `TransportOpts` and make meaningless flags unrepresentable, but it is held pending adapter-between-modes decisions and surveying other APIs in this space. Extract only the piece `decide` actually needs — `compute_canonical_base_dir` / `canonical_base_dir()` — as a free function or small struct (commit 3). Behavior, not taxonomy: keeps `decide` independent of `LlmOpts` and keeps the split reversible. |
 | `run_chat` / `run_chat_inner` (~200 ln) | **do NOT genericize — write a sibling** | Chat validates a *model-authored blob* against JSON Schema (failure ⇒ **transient** retry); decide *verifies answers against the questions sent* (failure ⇒ **fatal**) plus per-question partials. A shared hook invites the two retry policies to leak into each other. |
-| `cmd/chat.rs` / `cmd/ocr.rs` / `cmd/decide.rs` wiring (~60 ln × 3) | **extract *after* `decide` exists** | `run_stream_pipeline(...)` is feasible with today's `BoxedStream` types; don't design it for 1.3 real users. |
+| `cmd/chat.rs` / `cmd/ocr.rs` / `cmd/decide.rs` wiring (~60 ln × 3) | **extract *after* `decide` exists** — it now does; still declined | Three real users exist, so `run_stream_pipeline(...)` is finally designable, but it is still a refactor of ~60-line files that all work. Left alone: `decide` copied `chat`'s shape verbatim, so extraction is now a mechanical diff-able move whenever someone wants it. See §Deferred. |
 | `ChatInput` vs `DecideInput` | **duplicate (8 ln)** | Two published schema artifacts that will drift independently; aliasing couples public contracts for nothing. Keep parallel by convention + comment. |
 | `costs.rs` | **DONE — shared `DriverType` enum, not `String` tags** | `ModelKey.driver: Option<DriverType>`, where `DriverType` (`drivers/mod.rs`) wraps `LlmDriverType` and now also `Decide(DecideDriverType)`. The CSV `driver` column is parsed with `DriverType::from_str`, so unknown names still error at load and matching stays case-insensitive. Keeps the draft's goal (decision drivers never enter the *chat* driver enum) while avoiding a bare string that silently never matches. |
 | `WorkOutput::new_failed` | **open — cannot carry `token_usage`/`estimated_cost`** | Both hardcoded to `None`. Luna bills refused records, and every `GivenUp` in `chat` already under-bills. Needs a decision (carry usage on failure, or accept + document under-billing) before item 15. |
-| Prepare-failure semantics | **open — per-record vs batch abort** | `run_chat`'s `render(...)?` escapes the work fn and aborts the whole run (`Err` → `process_blocking` → `write_stream`'s `value?` → `cmd_chat`), while a fatal *driver* error becomes a `failed` record. decide's `state` assembly will hit that path on ordinary row data: "row `state` XOR prompt `state` XOR custom fields" is documented on `DecideInput` but enforceable nowhere in the types. See item 23. |
+| Prepare-failure semantics | **DONE — batch abort, as decided** | `run_chat`'s `render(...)?` escapes the work fn and aborts the whole run (`Err` → `process_blocking` → `write_stream`'s `value?` → `cmd_chat`), while a fatal *driver* error becomes a `failed` record. `run_decide` behaves identically, and the invariants are now enforceable where the types can't reach them: `assemble_state` rejects zero or two state sources. Abort costs no extra control flow (escaping with `?` *is* the abort), so the "keep it simple" tiebreak and the ideal answer coincided. Rationale lives on `run_decide`: a state conflict is a *setup* mistake, and per-record `failed` would hard-fail all 600,000 identically-shaped rows one JSONL record at a time instead of stopping once. Revisit only if a legitimate use case for mixed per-row conflicts appears. |
 | `WorkStreamInfo<T>` (`ChatStreamInfo` ≡ `OcrStreamInfo`), `WorkInput::into_parts`, `WorkOutput::new_ok`/`new_skipped` | **deferred, minor** | Three small deduplications in `queues/work.rs`; none blocks decide. Seven hand-built `WorkOutput {…}` literals remain, now concentrated in `work.rs` (2) + `chat.rs` (1, skipped) + the OCR tree (4). |
 
 Net: the hoisting that mattered is done (~120 lines moved into `work.rs` /
-`processor_state.rs` / `templates.rs` / `DriverOpts`); what's left to write is roughly
-1000 lines — SystemOne is in (tests included), Luna ~150; `queues/decide.rs` body ~180,
-`verify_answers` done (`Limits` deferred, arithmetic checks cut), CLI/tests ~250,
-plus prompt-shape churn.
+`processor_state.rs` / `templates.rs` / `DriverOpts`), and items 10 + 20 consumed most of
+the remaining budget: `queues/decide.rs` (~290 ln incl. docs), `cmd/decide.rs` (~100 ln),
+`DecideDriverOpts`, `read_json`, and four tests are in. SystemOne is in (tests included);
+what's left is Luna ~150, images ~100 plus the `MemLimiter` question (item 13), the
+projection flag (17), cost rows (18), the published schema artifacts (22), and prompt-shape
+churn from the ergonomics review (7).
 
 ## Driver API
 
@@ -294,7 +341,9 @@ src/drivers/decide/openai_decisions.rs  # /v1/decisions (Luna)
 
 1. **MemLimiter multi-image deadlock.** `cmd/chat.rs` passes `MemLimiter::unlimited()`
    with a TODO to pre-acquire permits for all images in a request. Vision `decide` at
-   high `--jobs` over PDF pages is precisely that workload. Fix properly, or inherit the
+   high `--jobs` over PDF pages is precisely that workload, and `cmd_decide` inherits the
+   same `unlimited()` workaround (with a comment pointing back at `cmd_chat`) — harmless
+   while decide is text-only, i.e. until item 13 actually loads images. Fix properly, or inherit the
    workaround?
 2. **Image placement isn't ours to control.** llama.cpp puts `files` *before* the state;
    chat lets authors position images with `image-data-url`. Now that `images` is a sibling
@@ -414,27 +463,27 @@ queue → JSONL offline, so each later transport diffs as a pure wire adapter.
 
 | # | Commit | Depends | St | Justification |
 |---|---|---|---|---|
-| 6 | `prompt: add DecidePrompt type (not yet wired)` | 2 | ◐ | Type exists with `state: Option<Value>` + `images` + `questions`. Still missing: the `text`/`field`/`row`/`json` state modes, the leaf-type splice rule, and a `toml_span::Deserialize` impl (item 21). This remains the artifact most likely to churn — and it has no consumers yet, which was the point. |
-| 7 | `schema: expose DecidePrompt/DecideInput/DecideOutput` | 6 | ◐ | `SchemaType` variants + titles exist. Missing: `schemas/Decide*.json` (item 22) and **the ergonomics review** — mock 3–4 prompts (whole-row JSON state, image + state, score, bool with polarities) and judge them. Expect a follow-up fix commit; that's why it sits here. |
+| 6 | `prompt: add DecidePrompt type (not yet wired)` | 2 | ✅ (as redefined) | `state: Option<Value>` + `images` + `questions`, now consumed by the queue. The `text`/`field`/`row`/`json` mode table was **replaced** by the two mutually exclusive state sources (§Prompt shape); the leaf-type splice rule is still unimplemented (string leaves), and the `toml_span::Deserialize` impl stays deferred (item 21). Still the artifact most likely to churn — but it now has consumers, so a shape change is a code change plus fixture edits, not a free edit. |
+| 7 | `schema: expose DecidePrompt/DecideInput/DecideOutput` | 6 | ◐ | `SchemaType` variants + titles exist. Missing: `schemas/Decide*.json` (item 22) and **the ergonomics review** — mock 3–4 prompts (whole-row JSON state, image + state, score, bool with polarities) and judge them. Expect a follow-up fix commit; that's why it sits here. `tests/fixtures/decide/{prompt.json,prompt_no_state.json}` are the first two such mocks, written for a JSON prompt with all three question kinds; they were written to be *tested against*, not reviewed, so the review is still owed. |
 | 8 | `drivers: canonical decision request/response + answer verification` | (9, CI) | ✅ | Types landed (request wire-shaped; `Answer` probabilities as maps, answers keyed by name). `verify_answers` landed and unit-tested, scoped to relational checks only — names, kinds, offered-choice membership; no probability arithmetic (see §Driver API). The remaining usability fixes moved to item 20. |
 
 New items found while implementing (numbered from 20 to leave 1–19 stable for cross-references):
 
 | # | Commit | Depends | St | Justification |
 |---|---|---|---|---|
-| 20 | `drivers: make the canonical decide types usable` | 8 | ◐ | Usage half resolved: `DecideResponse` is now canonical with `token_usage: Option<TokenUsage>`; the wire `Usage` is driver-internal (parsed inside e.g. `SystemOneResponse`). Still open: struct fields are private (`DecideRequest.{model,state,images,questions}`, `DecideResponse.{model,answers,token_usage}`, `DecideInput.*`, `DecideOutput.answers`) so `queues/decide.rs` can neither build a request nor read answers; `#![allow(dead_code)]` hides it. No longer blocks 9/12: child modules (`system_one.rs`) see private fields and its `#[ignore]`d tests live in-crate — `pub` lands with the queue commit. |
-| 21 | *(deferred)* `prompts: toml_span::Deserialize for DecidePrompt` | 6 | — | **Deferred by decision: decide ships with JSON prompts only** (see §Prompt shape). No `toml_span::Deserialize` impl means `read_json_or_toml` rejects `.toml` decide prompts — the desired behavior, but worth an explicit "decide prompts are JSON-only" error rather than a generic deserializer message. Requires `toml_span::Deserialize<'static>`, `ChatPrompt` (and `Message`) to implement it today; only needed if TOML comes back. |
+| 20 | `drivers: make the canonical decide types usable` **(`pub` landed inside 10)** | 8 | ✅ | Both halves done. `DecideResponse` is canonical with `token_usage: Option<TokenUsage>` and the wire `Usage` is driver-internal; `DecideRequest.{model,state,images,questions}`, `DecideResponse.{model,answers,token_usage}`, `DecideInput.{state,template_bindings}` and `DecideOutput.answers` are all `pub`, and the `#![allow(dead_code)]` / `#![expect(dead_code)]` attributes in `drivers/decide/mod.rs`, `queues/decide.rs` and `prompts/decide.rs` are gone. |
+| 21 | *(deferred)* `prompts: toml_span::Deserialize for DecidePrompt` | 6 | — | **Deferred by decision: decide ships with JSON prompts only** (see §Prompt shape). Note the draft's premise was wrong: the missing impl means `read_json_or_toml::<DecidePrompt>` *does not compile*, so item 10 added `async_utils::io::read_json` and the desired "JSON only" error is explicit there rather than coming from a deserializer. Still only needed if TOML comes back; `ChatPrompt` (and `Message`) implement `toml_span::Deserialize<'static>` today, which is all `read_json_or_toml` requires. |
 | 22 | `schema: emit Decide*.json + update Justfile model loops` | 7 | ☐ | Both model loops (`update-schemas`, `update-pydantic-models`) still list only the five pre-decide models, so the published artifacts silently omit decide. |
-| 23 | `decide: prepare-failure semantics + input invariants` | 10 | ☐ | Where the row/prompt state conflict is detected, and what happens there: `failed` record (probably right — user data) or batch abort (chat's current behaviour for render errors). Document the choice next to `WorkResponse`/`run_decide`. |
-| 24 | `decide: output answer type (computed confidences, refusal)` | 8, 10 | ☐ | `DecideOutput` currently publishes the wire `Answer`: no `confidence_typesafe`/`confidence_entropy`, no `refusal`, and `noul` naming. Extend `Answer` (published schema grows non-wire fields) or wrap it (two types) — settle before two dialects + fixtures consume it. |
+| 23 | `decide: prepare-failure semantics + input invariants` | 10 | ✅ | **Batch abort — implemented.** No separate commit: `run_decide`'s prepare step (`prompt.render` + `assemble_state`) returns `Err`, which escapes the work fn and stops the run; documented on `run_decide` (why abort beats 600,000 identically-shaped `failed` records) and on `DecideInput` (the two-source rule). Zero or two state sources are both covered by server-free tests. |
+| 24 | *(decided)* `decide: output answer type (computed confidences, refusal)` | 8, 10 | ✅ (decided) | **Ship the wire-format `Answer`, `noul` naming included.** Deliberate policy: expose new functionality as close to upstream conventions as possible — they're semi-standardizing at remarkable speed, and our output should read like a server's. Client-computed confidences (`confidence_typesafe`/`confidence_entropy`) are out; Luna `refusal` (item 15), when it lands, should follow the same rule — model it on the wire type, don't wrap. |
 
 ### Phase 2 — offline end-to-end
 
 | # | Commit | Depends | St | Justification |
 |---|---|---|---|---|
 | 9 | `drivers: decide driver trait + driver type` | 8, 20 | ◐ | `DecideDriver` trait landed (`decide()` → `Result<DecideResponse, DriverError>`, `Debug + Send + Sync + 'static`), plus `DecideDriverType` (`SystemOne` default, `ValueEnum`, `Display` → `system_one`, `create_driver()`) and the `DriverType::Decide(…)` variant with LLM-name-first `FromStr` (round-trip test added). Per-driver `Limits` dropped (see §Driver API): `Question::validate()` keeps the static floor (choice ≥2, score 2–10); per-model caps (52 vs 255 options; score 2–64) surface as non-retryable runtime errors. **Echo split out of this item and put on hold** — see item 25. |
-| 10 | `queues: decide work queue + decide subcommand` | 1,4,5,6,9 | ☐ | State assembly → request → `wait_on_rate_limiter()` + timeout → driver → verify → `DecideOutput`, on top of `CommonProcessorState` + `from_resolved_result`. First user-visible `decide`, fully testable offline. **Checkpoint.** |
-| 11 | `tests: cli coverage for decide` | 10, 25 | ☐ | Happy path, verify-failure ⇒ fatal, skip/passthrough, multi-question, state-from-row vs state-from-prompt. **Was "(echo)"**; the offline mechanism is unresolved now that echo is on hold (item 25), so this item depends on that discussion rather than on the queue alone. |
+| 10 | `queues: decide work queue + decide subcommand` **(with 20 + a `tests/cli.rs` integration test)** | 1,4,5,6,9 | ✅ | **Landed, and the feature is usable.** Item 20's `pub` visibility landed here and the stale `#![allow(dead_code)]`s are gone; state assembly follows the two-source rule (§Prompt shape: prompt `state` rendered via `DecidePrompt::render`, input `state` verbatim, zero/two ⇒ error); then request → `wait_on_rate_limiter()` + `with_timeout` → driver → `verify_answers` (fatal via `try_fatal!`, which is what retired that macro's `#[allow(unused_macros)]`) → `DecideOutput` via `from_resolved_result`, on `CommonProcessorState` + `DEFAULT_JITTER`. Prepare failures abort the batch (item 23) and answers are wire-format `Answer` (item 24). New: `read_json` (§Prompt shape), `DecideDriverOpts`, `cmd_decide`, `Cmd::Decide`, and `SYSTEM_ONE_API_URL`/`_API_KEY` in the root `--help`. Tests: `test_decide_questions_llama` (`#[ignore]`d, Kev-4B, all three question kinds, asserts `completion_tokens == question count`) plus three **server-free** ones — `test_decide_state_from_both_sources_fails`, `test_decide_state_from_neither_source_fails`, `test_decide_rejects_toml_prompt` — which fail during prepare, before any request, so they do run in CI. **Checkpoint passed.** |
+| 11 | `tests: cli coverage for decide` | 10, 25 | ◐ | Partially absorbed into 10: happy path with all three question kinds and `state` from the prompt (live, `#[ignore]`d), and three server-free prepare/validation tests that do run in CI. Remaining: verify-failure ⇒ fatal, skip/passthrough, mode a (state from the row) end to end, `--decide-timeout`. **Accepted CI gap** unchanged: with echo on hold (item 25) there is no credential-free *successful* `decide` path, so the success arm can't run in CI until 25 resolves an offline mechanism. |
 | 25 | `decide: offline test story (echo reconsidered)` | — | ☐ | Echo was planned as the credential-free end-to-end path (`test_chat_echo_driver` analog), but **the user judged that echo doesn't work as well for `decide`, for reasons to be discussed** — recorded here so the gap is explicit rather than silently inherited. Whatever replaces it must still let CI cover the queue with no server, since the live Kev test stays `#[ignore]`d. Candidates to weigh when the reasoning is on the table: a fake/in-process HTTP server; record-replay of real llama.cpp responses; a `DecideDriver` test impl that derives answers structurally from the questions; leaning on the `#[ignore]`d live test plus unit tests. |
 
 ### Phase 3 — transports, one variable at a time
@@ -501,6 +550,13 @@ Recorded so they don't get re-raised as oversights.
 
 - `cargo check` → `cargo test` after each step; `cargo test -- --include-ignored` for
   live-model tests only on request; `just check` before committing.
+- `decide` coverage today: `test_decide_questions_llama` (`#[ignore]`d, needs a decision
+  model — `ggml-org/Kev-4B-GGUF:Q4_K_M`, which reports `output_modalities:
+  ["decisions"]`; **not** the `LLAMA_SERVER_MODEL` the chat tests use) and three
+  server-free tests (state from both sources, state from neither, TOML prompt rejected)
+  that pass by failing during prepare, before any request is sent. Fixtures live in
+  `tests/fixtures/decide/`. Set `SYSTEM_ONE_API_URL` if your server isn't on 8080;
+  `localhost` is fine on this machine.
 - Offline coverage for `chat` rides the echo driver pattern (`test_chat_echo_driver` in
   `tests/cli.rs`), but echo is **on hold for `decide`** (item 25) — the credential-free
   coverage mechanism must come out of that discussion before item 11 can land.

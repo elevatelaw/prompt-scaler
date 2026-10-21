@@ -1,0 +1,30 @@
+{
+  "state": "{{text}}",
+  "questions": {
+    "category": {
+      "type": "choice",
+      "instructions": "What kind of document is this?",
+      "criteria": {
+        "invoice": "A bill for goods or services.",
+        "memo": "An internal memorandum."
+      }
+    },
+    "urgent": {
+      "type": "noul",
+      "instructions": "Does this document need action within 24 hours?",
+      "criteria": {
+        "true": "Payment or reply is due within 24 hours.",
+        "false": "Nothing is due within 24 hours."
+      }
+    },
+    "quality": {
+      "type": "score",
+      "instructions": "How clearly is this document written?",
+      "criteria": [
+        "Confusing or incomplete.",
+        "Understandable but sloppy.",
+        "Clear and precise."
+      ]
+    }
+  }
+}

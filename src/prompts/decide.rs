@@ -1,8 +1,5 @@
 //! The `decide` prompt data type.
 
-// Work in progress: Nothing calls this yet.
-#![expect(dead_code)]
-
 use std::{collections::BTreeMap, marker::PhantomData};
 
 use handlebars::Handlebars;
@@ -16,18 +13,25 @@ use crate::{
     templates::{RenderTemplate, TemplateEngine},
 };
 
-/// A chat completion prompt.
+/// A decision-model prompt.
+///
+/// Prompts are JSON  for now, so we omit an `impl` for [`toml_span::Deserialize`].
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct DecidePrompt<State: PromptState = Template> {
-    /// Optional, renderable `state`, which undergoes template rendering. plain
-    /// string, or JSON, which is rendered as a string. If `state` is missing,
-    /// it must be provided by the input. If this is present, then `state` in
-    /// the input is an error.
+    /// Optional, renderable `state`, which undergoes template rendering. This may be a
+    ///  simple string, or structured JSON data.
+    ///
+    /// Exactly one of this field and `state` on the input record must be
+    /// present. If this is present, the input record must not carry its own
+    /// `state`; if it is absent, state comes from the input record verbatim.
     pub state: Option<Value>,
 
-    /// Optional: Images to send to the remote API. Undergoes template
-    /// rendering. Not necessarily widely supported.
+    /// Optional: Images to send to the remote API. Each entry is a template
+    /// rendered with the record's bindings, usually via the `image-data-url`
+    /// helper. Not necessarily widely supported. This is normally expected to
+    /// be a local `file://` URL, which specific drivers will need to load and
+    /// transmit in some format.
     pub images: Option<Vec<String>>,
 
     /// Questions to answer. This will not undergo template rendering.

@@ -1,16 +1,13 @@
 //! Drivers for decision models.
 
-// We have not yet finished hooking this up.
-#![allow(dead_code)]
-
-use std::{collections::BTreeMap, fmt};
+use std::{collections::BTreeMap, fmt, time::Duration};
 
 use anyhow::ensure;
 use async_trait::async_trait;
-use clap::ValueEnum;
+use clap::{Args, ValueEnum};
 use schemars::JsonSchema;
 
-use super::{DriverError, TokenUsage};
+use super::{DriverError, DriverOpts, TokenUsage};
 use crate::prelude::*;
 
 pub mod system_one;
@@ -20,18 +17,22 @@ pub mod system_one;
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct DecideRequest {
     /// Model to use. Required by most APIs.
-    model: String,
+    pub model: String,
 
     /// The state to send.
-    state: Value,
+    pub state: Value,
 
-    /// Images to send, as data URLs. Only supported by limited number
-    /// of models, many served with llama.cpp.
+    /// Images to send, as rendered image references, which are normally
+    /// (typically `file:` URLs from the `image-data-url` template helper).
+    ///
+    /// Only a limited number of
+    /// models support images, many served with llama.cpp; each dialect decides
+    /// where to place them, and loads them as its API requires.
     #[serde(skip_serializing_if = "Option::is_none")]
-    images: Option<Vec<String>>,
+    pub images: Option<Vec<String>>,
 
     /// Questions to ask.
-    questions: BTreeMap<String, Question>,
+    pub questions: BTreeMap<String, Question>,
 }
 
 /// A question. This will not undergo template instantiation.
@@ -124,15 +125,15 @@ pub struct NoulCriteria {
 pub struct DecideResponse {
     /// The name of the model used. May be different from the requested model name, thanks
     /// to model name resolution.
-    model: String,
+    pub model: String,
 
     /// Answers to the questions.
-    answers: BTreeMap<String, Answer>,
+    pub answers: BTreeMap<String, Answer>,
 
     /// Token usage. `None` if the server reported no usage at all. In some
     /// cases, servers may return 0 output tokens used. We typically
     /// normalize this 1 token per answer.
-    token_usage: Option<TokenUsage>,
+    pub token_usage: Option<TokenUsage>,
 }
 
 /// An answer to a [`Question`].
@@ -197,6 +198,40 @@ impl fmt::Display for DecideDriverType {
         match self {
             Self::SystemOne => write!(f, "system_one"),
         }
+    }
+}
+
+/// Options for decide drivers.
+///
+/// This is the `decide` analog of
+/// [`LlmOpts`](crate::drivers::llm::LlmOpts), but deliberately much smaller:
+/// decision models generate one token per answer, so most generation options
+/// have no meaning here. `--model` lives with the subcommand, not here, because
+/// it is conceptually special (it rides inside the request, so a server's
+/// router can load models on demand).
+#[derive(Args, Clone, Debug)]
+pub struct DecideDriverOpts {
+    /// The decision-model driver to use. Defaults to `system_one`, which covers
+    /// llama.cpp, Jev, and other /v1/systemone-compatible servers.
+    #[clap(long, value_enum, default_value_t = DecideDriverType::default())]
+    pub driver: DecideDriverType,
+
+    /// A timeout, in seconds, for a decision request. Decision models answer in
+    /// a single pass, so this mostly guards against overloaded or runaway
+    /// servers. Note that even if a request times out, you'll probably still be
+    /// charged.
+    #[clap(long)]
+    pub decide_timeout: Option<u64>,
+
+    /// Shared driver options.
+    #[clap(flatten)]
+    pub driver_opts: DriverOpts,
+}
+
+impl DecideDriverOpts {
+    /// Get the timeout as a [`Duration`], if set.
+    pub fn decide_timeout_duration(&self) -> Option<Duration> {
+        self.decide_timeout.map(Duration::from_secs)
     }
 }
 

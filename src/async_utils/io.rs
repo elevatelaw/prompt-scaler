@@ -126,16 +126,50 @@ impl AsyncBufRead for SmartReader {
     }
 }
 
-/// Read JSON or TOML file as a [`Value`].
-pub async fn read_json_or_toml_as_json_value(path: &Path) -> Result<Value> {
+/// Read the whole contents of a small file as a [`String`], along with whether the
+/// file appears to be JSON (see [`SmartReader::is_json_like`]).
+///
+/// We read all at once because our parsing libraries don't do async I/O.
+///
+/// Do **not** use this, or any functions wrapping it, for loading potentially
+/// large I/O input streams that yield JSONL or CSV data. Those need to stream
+/// using our other mechanisms, because they may far execeed available RAM.
+async fn read_file_as_string(path: &Path) -> Result<(bool, String)> {
     let mut reader = SmartReader::new_from_path(path).await?;
+    let is_json_like = reader.is_json_like();
     let mut data = String::new();
-    // Read all at once because our parsing libraries don't do async I/O.
     reader
         .read_to_string(&mut data)
         .await
         .with_context(|| format!("Failed to read file at path: {path:?}"))?;
-    if reader.is_json_like() {
+    Ok((is_json_like, data))
+}
+
+/// Read a JSON file into `T`.
+///
+/// Unlike [`read_json_or_toml`], TOML is not accepted: some of our input files
+/// (like `decide` prompts) are JSON-only, and this says so plainly instead of
+/// reporting a confusing parse error for a `.toml` file.
+pub async fn read_json<T>(path: &Path) -> Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let (is_json_like, data) = read_file_as_string(path).await?;
+    if !is_json_like {
+        return Err(anyhow!(
+            "Expected a JSON file, but {} is not named like one: TOML is not \
+             supported for this input",
+            path.display()
+        ));
+    }
+    serde_json::from_str(&data)
+        .with_context(|| format!("Failed to parse JSON from file at path: {path:?}"))
+}
+
+/// Read JSON or TOML file as a [`Value`].
+pub async fn read_json_or_toml_as_json_value(path: &Path) -> Result<Value> {
+    let (is_json_like, data) = read_file_as_string(path).await?;
+    if is_json_like {
         serde_json::from_str(&data)
             .with_context(|| format!("Failed to parse JSON from file at path: {path:?}"))
     } else {
@@ -150,14 +184,8 @@ pub async fn read_json_or_toml<T>(path: &Path) -> Result<T>
 where
     T: serde::de::DeserializeOwned + toml_span::Deserialize<'static>,
 {
-    let mut reader = SmartReader::new_from_path(path).await?;
-    let mut data = String::new();
-    // Read all at once because our parsing libraries don't do async I/O.
-    reader
-        .read_to_string(&mut data)
-        .await
-        .with_context(|| format!("Failed to read file at path: {path:?}"))?;
-    if reader.is_json_like() {
+    let (is_json_like, data) = read_file_as_string(path).await?;
+    if is_json_like {
         serde_json::from_str(&data)
             .with_context(|| format!("Failed to parse JSON from file at path: {path:?}"))
     } else {
