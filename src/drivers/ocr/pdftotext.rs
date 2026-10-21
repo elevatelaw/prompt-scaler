@@ -7,10 +7,11 @@ use tokio::process::Command;
 use crate::{
     async_utils::{JoinWorker, check_for_command_failure},
     cmd::ocr::OcrOpts,
+    drivers::ocr::file::OcrFileEngine,
     page_iter::get_mime_type,
     prelude::*,
     queues::{
-        ocr::{OcrInput, OcrOutput, engines::file::OcrFileEngine},
+        ocr::{OcrInput, OcrOutput},
         work::{WorkInput, WorkOutput, WorkStatus},
     },
 };
@@ -44,7 +45,7 @@ impl OcrFileEngine for PdfToTextOcrFileEngine {
         ocr_input: WorkInput<OcrInput>,
     ) -> Result<WorkOutput<OcrOutput>> {
         // Fail all non-PDF files immediately.
-        let base_dir = self.ocr_opts.llm_opts.canonical_base_dir();
+        let base_dir = self.ocr_opts.llm_opts.driver_opts.canonical_base_dir();
         let resolved = ocr_input.data.resolved_path(base_dir);
         let mime_type = get_mime_type(&resolved)?;
         if mime_type != "application/pdf" {

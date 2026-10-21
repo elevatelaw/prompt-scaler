@@ -5,10 +5,10 @@ use futures::StreamExt;
 
 use crate::{
     async_utils::io::read_json_or_toml,
-    drivers::LlmOpts,
+    drivers::llm::LlmOpts,
     mem_limit::MemLimiter,
     prelude::*,
-    prompt::ChatPrompt,
+    prompts::chat::ChatPrompt,
     queues::{
         chat::{ChatInput, ChatStreamInfo, process_chat_stream},
         work::{WorkInput, WorkOutput},
@@ -48,6 +48,7 @@ pub struct ChatOpts {
 pub async fn cmd_chat(ui: &Ui, opts: &mut ChatOpts) -> Result<()> {
     // Compute our canonical base directory for relative paths in input and prompts.
     opts.llm_opts
+        .driver_opts
         .compute_canonical_base_dir(opts.input_path.as_deref())?;
 
     // Open up our input stream and convert to records.

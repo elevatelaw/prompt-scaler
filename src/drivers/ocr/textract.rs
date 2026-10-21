@@ -1,39 +1,50 @@
 //! OCR using AWS Textract.
 
-use std::collections::{HashMap, HashSet};
-use std::env;
-use std::sync::Arc;
+use std::{
+    collections::{HashMap, HashSet},
+    env,
+    sync::Arc,
+};
 
-use aws_sdk_textract::operation::get_document_analysis::GetDocumentAnalysisError;
-use aws_sdk_textract::operation::start_document_analysis::{
-    StartDocumentAnalysisError, StartDocumentAnalysisOutput,
+use aws_sdk_textract::{
+    operation::{
+        get_document_analysis::GetDocumentAnalysisError,
+        start_document_analysis::{
+            StartDocumentAnalysisError, StartDocumentAnalysisOutput,
+        },
+    },
+    primitives::Blob,
+    types::{
+        Block, BlockType, DocumentLocation, FeatureType, JobStatus, RelationshipType,
+        S3Object,
+    },
 };
-use aws_sdk_textract::types::{
-    Block, DocumentLocation, FeatureType, JobStatus, RelationshipType, S3Object,
-};
-use aws_sdk_textract::{primitives::Blob, types::BlockType};
 use leaky_bucket::RateLimiter;
 use tokio::time::{Duration, sleep};
 use uuid::Uuid;
 
-use crate::aws::load_aws_config;
-use crate::cmd::ocr::OcrOpts;
-use crate::drivers::LlmOpts;
-use crate::images::ImageEncoding;
-use crate::mem_limit::{MEM_PERMIT_DEADLOCK_TIMEOUT, MemLimiter};
-use crate::prelude::*;
-
-use crate::async_utils::JoinWorker;
-use crate::rate_limit::{RateLimit, RateLimitPeriod};
-use crate::retry::{
-    DEFAULT_JITTER, IsKnownTransient, retry_result_ok, retry_with_backoff,
-    try_potentially_transient,
+use super::{
+    file::OcrFileEngine,
+    page::{OcrPageEngine, OcrPageInput, OcrPageOutput},
 };
-
-use super::file::OcrFileEngine;
-use super::page::{OcrPageEngine, OcrPageInput, OcrPageOutput};
-use crate::queues::ocr::{OcrInput, OcrOutput};
-use crate::queues::work::{WorkInput, WorkOutput, WorkStatus};
+use crate::{
+    async_utils::JoinWorker,
+    aws::load_aws_config,
+    cmd::ocr::OcrOpts,
+    drivers::DriverOpts,
+    images::ImageEncoding,
+    mem_limit::{MEM_PERMIT_DEADLOCK_TIMEOUT, MemLimiter},
+    prelude::*,
+    queues::{
+        ocr::{OcrInput, OcrOutput},
+        work::{WorkInput, WorkOutput, WorkStatus},
+    },
+    rate_limit::{RateLimit, RateLimitPeriod},
+    retry::{
+        DEFAULT_JITTER, IsKnownTransient, retry_result_ok, retry_with_backoff,
+        try_potentially_transient,
+    },
+};
 
 /// Our estimated page cost, based on the options we use.
 const ESTIMATED_PAGE_COST: f64 = 0.004;
@@ -45,12 +56,15 @@ async fn create_textract_client() -> Result<aws_sdk_textract::Client> {
 }
 
 /// Create a rate limiter, defaulting as best we can.
-fn create_rate_limiter(concurrency_limit: usize, llm_opts: &LlmOpts) -> RateLimiter {
+fn create_rate_limiter(
+    concurrency_limit: usize,
+    driver_opts: &DriverOpts,
+) -> RateLimiter {
     // If we don't have a rate limit, set one based on the concurrency limit.
     //
     // TODO: FUTURE BREAKING: We may want to remove the default rate limit, but
     // that would be a breaking change.
-    let rate_limit = llm_opts
+    let rate_limit = driver_opts
         .rate_limit
         .clone()
         .unwrap_or_else(|| RateLimit::new(concurrency_limit, RateLimitPeriod::Second));
@@ -80,9 +94,11 @@ impl TextractOcrPageEngine {
         ocr_opts: Arc<OcrOpts>,
     ) -> Result<(Arc<dyn OcrPageEngine>, JoinWorker)> {
         let client = create_textract_client().await?;
-        let rate_limiter = create_rate_limiter(concurrency_limit, &ocr_opts.llm_opts);
+        let rate_limiter =
+            create_rate_limiter(concurrency_limit, &ocr_opts.llm_opts.driver_opts);
         let mem_limiter = ocr_opts
             .llm_opts
+            .driver_opts
             .page_memory_limit
             .as_ref()
             .map(|ml| ml.to_mem_limiter(Some(MEM_PERMIT_DEADLOCK_TIMEOUT)))
@@ -181,7 +197,8 @@ impl TextractOcrFileEngine {
         ocr_opts: Arc<OcrOpts>,
     ) -> Result<(Arc<dyn OcrFileEngine>, JoinWorker)> {
         let client = create_textract_client().await?;
-        let rate_limiter = create_rate_limiter(concurrency_limit, &ocr_opts.llm_opts);
+        let rate_limiter =
+            create_rate_limiter(concurrency_limit, &ocr_opts.llm_opts.driver_opts);
 
         if ocr_opts.page_iter_opts.max_pages.is_some()
             || ocr_opts.page_iter_opts.rasterize

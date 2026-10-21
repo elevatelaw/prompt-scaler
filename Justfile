@@ -46,3 +46,11 @@ update-pydantic-models: update-schemas
             --use-subclass-enum; \
     done
 
+# Sort our imports.
+sort-imports:
+    # Groups imports into std/external/local sections and merges imports from the
+    # same crate. These rustfmt options are nightly-only, so we pass them here
+    # rather than putting them in .rustfmt.toml, where stable `cargo fmt` (see
+    # `just check`) would warn about each one. Nightly unlocks them without
+    # `unstable_features = true`.
+    cargo +nightly fmt -- --config imports_granularity=Crate,group_imports=StdExternalCrate

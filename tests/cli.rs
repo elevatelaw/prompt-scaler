@@ -26,6 +26,12 @@ static LLAMA_SERVER_API_KEY: &str = "sk-1234";
 /// Default model to use for `llama-server` in tests. Should be a small, fast
 /// model with at least some very basic OCR abilities.
 static LLAMA_SERVER_MODEL: &str = "unsloth/gemma-4-E2B-it-GGUF:Q4_K_M";
+/// Base URL of the local `llama-server` for `decide`, which talks to
+/// `{base}/v1/systemone` rather than to the chat endpoint.
+static SYSTEM_ONE_ENDPOINT: &str = "http://localhost:8080";
+/// A decision model served by our local `llama-server` (one that reports
+/// `decisions` output modality). Small enough to keep the tests cheap.
+static SYSTEM_ONE_MODEL: &str = "ggml-org/Kev-4B-GGUF:Q4_K_M";
 
 /// Cheap models that route to their provider's native adapter (the default
 /// driver). Each requires the matching API key in `.env`.
@@ -77,6 +83,35 @@ impl LlamaServerCommandExt for Command {
         self.env("OPENAI_API_BASE", LLAMA_SERVER_ENDPOINT)
             .env("OPENAI_API_KEY", LLAMA_SERVER_API_KEY)
     }
+}
+
+/// Add `system_one` environment variables to a command, for testing `decide`
+/// against a local `llama-server` instance.
+trait SystemOneCommandExt {
+    fn with_system_one_env(&mut self) -> &mut Self;
+}
+
+impl SystemOneCommandExt for Command {
+    fn with_system_one_env(&mut self) -> &mut Self {
+        self.env("SYSTEM_ONE_API_URL", SYSTEM_ONE_ENDPOINT)
+    }
+}
+
+/// Run `decide` and return its stdout, panicking with stderr on failure.
+fn decide_output(args: &[&str]) -> String {
+    let output = cmd()
+        .with_system_one_env()
+        .arg("decide")
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("Failed to execute prompt-scaler decide");
+    if !output.status.success() {
+        eprintln!("STDERR:\n{}", String::from_utf8_lossy(&output.stderr));
+    }
+    assert!(output.status.success(), "`decide` did not succeed");
+    String::from_utf8(output.stdout).expect("Invalid UTF-8 on stdout")
 }
 
 #[test]
@@ -656,4 +691,130 @@ fn test_chat_echo_driver() {
     assert_eq!(record["id"], "1");
     assert_eq!(record["status"], "ok");
     assert_eq!(record["response"]["echo"], "Hello world");
+}
+
+//
+// `decide` tests.
+//
+
+#[test]
+#[ignore = "Needs llama-server running a decision model"]
+fn test_decide_questions_llama() {
+    // Covers the happy path with state supplied by the prompt and templated
+    // from each record, and all three question kinds.
+    let stdout = decide_output(&[
+        "tests/fixtures/decide/input.jsonl",
+        "--model",
+        SYSTEM_ONE_MODEL,
+        "--prompt",
+        "tests/fixtures/decide/prompt.json",
+    ]);
+
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "Should have 2 output records");
+
+    let records: Vec<serde_json::Value> = lines
+        .iter()
+        .map(|line| serde_json::from_str(line).expect("Failed to parse JSON"))
+        .collect();
+
+    for (record, id) in records.iter().zip(["invoice", "memo"]) {
+        assert_eq!(record["id"], id);
+        assert_eq!(record["status"], "ok", "{record:?}");
+
+        // One answer per question in the prompt, of the kind we asked for.
+        let answers = record["answers"]
+            .as_object()
+            .expect("answers should be an object");
+        assert_eq!(answers.len(), 3, "{record:?}");
+        assert_eq!(answers["category"]["type"], "choice");
+        assert_eq!(answers["urgent"]["type"], "noul");
+        assert_eq!(answers["quality"]["type"], "score");
+
+        // These models generate one token per answer, whatever the server says.
+        assert_eq!(record["token_usage"]["completion_tokens"], 3, "{record:?}");
+    }
+
+    // The choice should reflect the document.
+    assert_eq!(records[0]["answers"]["category"]["choice"], "invoice");
+    assert_eq!(records[1]["answers"]["category"]["choice"], "memo");
+}
+
+#[test]
+fn test_decide_state_from_both_sources_fails() {
+    // Our record supplies `state` and the prompt also defines it. This is a
+    // setup mistake, so it stops the whole run rather than becoming a `failed`
+    // record — and it does so before any request is sent, so it needs no
+    // server.
+    let output = cmd()
+        .arg("decide")
+        .arg("tests/fixtures/decide/input_with_state.jsonl")
+        .args(["--model", "unreachable-model"])
+        .arg("--prompt")
+        .arg("tests/fixtures/decide/prompt.json")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("Failed to execute prompt-scaler decide");
+
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        !output.status.success(),
+        "Should have failed, but succeeded: {stderr}"
+    );
+    assert!(
+        stderr.contains("Both the prompt and this record provide `state`"),
+        "Unexpected error: {stderr}"
+    );
+}
+
+#[test]
+fn test_decide_state_from_neither_source_fails() {
+    // The prompt has no `state` and the record supplies only template bindings.
+    let output = cmd()
+        .arg("decide")
+        .arg("tests/fixtures/decide/input.jsonl")
+        .args(["--model", "unreachable-model"])
+        .arg("--prompt")
+        .arg("tests/fixtures/decide/prompt_no_state.json")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("Failed to execute prompt-scaler decide");
+
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        !output.status.success(),
+        "Should have failed, but succeeded: {stderr}"
+    );
+    assert!(
+        stderr.contains("Neither the prompt nor this record provides `state`"),
+        "Unexpected error: {stderr}"
+    );
+}
+
+#[test]
+fn test_decide_rejects_toml_prompt() {
+    // `decide` prompts are JSON-only: we do not implement `toml_span::Deserialize`
+    // for `DecidePrompt`.
+    let output = cmd()
+        .arg("decide")
+        .arg("tests/fixtures/decide/input.jsonl")
+        .args(["--model", "unreachable-model"])
+        .arg("--prompt")
+        .arg("tests/fixtures/texts/prompt.toml")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("Failed to execute prompt-scaler decide");
+
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        !output.status.success(),
+        "Should have rejected a TOML prompt: {stderr}"
+    );
+    assert!(
+        stderr.contains("TOML is not supported"),
+        "Unexpected error: {stderr}"
+    );
 }

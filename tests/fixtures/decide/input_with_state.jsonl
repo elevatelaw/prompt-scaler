@@ -1,0 +1,2 @@
+{ "id": "invoice", "text": "used only when the prompt templates state", "state": "INVOICE #2026-041\nAcme Widgets Ltd.\n500x widget brackets, delivered 2026-10-01.\nTotal due: $4,250.00. Please pay within 7 days." }
+{ "id": "memo", "text": "used only when the prompt templates state", "state": "MEMO\nFrom: Facilities\nTo: All staff\nThe third-floor kitchen will be closed for cleaning starting Monday.\nNo action is required from you." }

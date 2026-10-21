@@ -1,0 +1,228 @@
+//! Our `chat` prompt data type.
+
+use std::marker::PhantomData;
+
+use handlebars::Handlebars;
+use schemars::JsonSchema;
+use toml_span::{
+    DeserError,
+    de_helpers::{TableHelper, expected},
+    value::ValueInner,
+};
+
+use super::{PromptState, Rendered, Template};
+use crate::{
+    async_utils::io::JsonObject,
+    prelude::*,
+    schema::Schema,
+    templates::{RenderTemplate, TemplateEngine},
+    toml_utils::JsonValue,
+};
+
+/// A chat completion prompt.
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct ChatPrompt<State: PromptState = Template> {
+    /// The developer (aka "system") message, if any.
+    pub developer: Option<String>,
+
+    /// Our schema.
+    pub response_schema: Schema,
+
+    /// Messages.
+    pub messages: Vec<Message>,
+
+    /// Zero-size placeholder to keep Rust happy by using [`State`] _somewhere_
+    /// in this type.
+    #[serde(default, skip)]
+    _phantom: PhantomData<State>,
+}
+
+impl ChatPrompt<Template> {
+    /// Make sure our messages appear in the order ((user, assistant)*, user).
+    fn validate(&self) -> Result<()> {
+        if self.messages.is_empty() {
+            return Err(anyhow!("No messages in prompt"));
+        }
+        let mut expect_user_message = true;
+        for message in &self.messages {
+            let ok = match message {
+                Message::User { text: None, images } if images.is_empty() => {
+                    return Err(anyhow!("User message must have either text or images"));
+                }
+                // TODO: Warn or optionally fail on empty user text?
+                Message::User { .. } if expect_user_message => true,
+                Message::Assistant { .. } if !expect_user_message => true,
+                _ => false,
+            };
+            if !ok {
+                return Err(anyhow!(
+                    "Expected alternating user and assistant messages in prompt, found {:?}",
+                    message
+                ));
+            }
+            expect_user_message = !expect_user_message;
+        }
+        if self.messages.len().is_multiple_of(2) {
+            return Err(anyhow!("Prompt must end with a user message"));
+        }
+        Ok(())
+    }
+
+    /// Render the prompt as a JSON object. This causes a state transition from
+    /// [`Template`] to [`Rendered`].
+    pub fn render(
+        &self,
+        bindings: &JsonObject,
+        base_dir: &Path,
+    ) -> Result<ChatPrompt<Rendered>> {
+        self.validate()?;
+        let engine = TemplateEngine::new(base_dir)?;
+        engine
+            .render(self, bindings)
+            .context("Could not render prompt")
+    }
+}
+
+impl<'de> toml_span::Deserialize<'de> for ChatPrompt<Template> {
+    fn deserialize(value: &mut toml_span::Value<'de>) -> Result<Self, DeserError> {
+        let mut th = TableHelper::new(value)?;
+        let developer = th.optional("developer");
+        let response_schema = th.required("response_schema")?;
+        let messages = th.required("messages")?;
+        th.finalize(None)?;
+        Ok(ChatPrompt {
+            developer,
+            response_schema,
+            messages,
+            _phantom: PhantomData,
+        })
+    }
+}
+
+/// A message, and optionally a response (represented as a JSON object).
+///
+/// We would also have a `State: PromptState` field here, but that interacts badly
+/// with the [`Deserialize`] trait from [`serde`]. So just pretend that this
+/// type exists in two versions: one [`Template`] and one [`Rendered`].
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum Message {
+    /// A user message.
+    User {
+        /// Text provided by the user.
+        #[serde(default)]
+        text: Option<String>,
+
+        /// Images to include with the user message, provided as URLs.
+        #[serde(default)]
+        images: Vec<String>,
+    },
+
+    /// An assistant message.
+    Assistant {
+        /// The assistant response. This is always a JSON [`Value`].
+        json: Value,
+    },
+}
+
+impl<'de> toml_span::Deserialize<'de> for Message {
+    fn deserialize(value: &mut toml_span::Value<'de>) -> Result<Self, DeserError> {
+        let value_inner = value.take();
+        let ValueInner::Table(mut table) = value_inner else {
+            return Err(expected("a table", value_inner, value.span).into());
+        };
+        if table.len() != 1 {
+            return Err(expected(
+                "a table with exactly one key ('user' or 'assistant')",
+                ValueInner::Table(table),
+                value.span,
+            )
+            .into());
+        }
+
+        if table.contains_key("user") {
+            let user = table.get_mut("user").expect("no user key");
+
+            let mut th = TableHelper::new(user)?;
+            let text = th.optional("text");
+            let images = th.optional::<Vec<_>>("images").unwrap_or_default();
+            th.finalize(None)?;
+            if images.is_empty() && text.is_none() {
+                return Err(expected(
+                    "a user message with either 'text' or 'images'",
+                    ValueInner::Table(table),
+                    value.span,
+                )
+                .into());
+            }
+            Ok(Message::User { text, images })
+        } else if table.contains_key("assistant") {
+            let assistant = table.get_mut("assistant").expect("no assistant key");
+
+            let mut th = TableHelper::new(assistant)?;
+            let json = th.required::<JsonValue>("json")?.into_json();
+            th.finalize(None)?;
+            Ok(Message::Assistant { json })
+        } else {
+            Err(expected(
+                "a table with either a 'user' or an 'assistant' key",
+                ValueInner::Table(table),
+                value.span,
+            )
+            .into())
+        }
+    }
+}
+
+impl RenderTemplate for ChatPrompt<Template> {
+    type Output = ChatPrompt<Rendered>;
+
+    fn render_template(
+        &self,
+        handlebars: &Handlebars,
+        bindings: &JsonObject,
+    ) -> Result<Self::Output> {
+        Ok(ChatPrompt {
+            developer: self
+                .developer
+                .as_deref()
+                .map(|developer| developer.render_template(handlebars, bindings))
+                .transpose()?,
+            response_schema: self.response_schema.clone(),
+            messages: self
+                .messages
+                .iter()
+                .map(|message| message.render_template(handlebars, bindings))
+                .collect::<Result<Vec<_>>>()?,
+            _phantom: PhantomData,
+        })
+    }
+}
+
+impl RenderTemplate for Message {
+    type Output = Message;
+
+    fn render_template(
+        &self,
+        handlebars: &Handlebars,
+        bindings: &JsonObject,
+    ) -> Result<Self::Output> {
+        match self {
+            Message::User { text, images } => Ok(Message::User {
+                text: text
+                    .as_ref()
+                    .map(|text| text.render_template(handlebars, bindings))
+                    .transpose()?,
+                images: images
+                    .iter()
+                    .map(|image| image.render_template(handlebars, bindings))
+                    .collect::<Result<Vec<_>, _>>()?,
+            }),
+            Message::Assistant { json } => {
+                let json = json.render_template(handlebars, bindings)?;
+                Ok(Message::Assistant { json })
+            }
+        }
+    }
+}

@@ -212,12 +212,62 @@ impl IsKnownTransient for reqwest::Error {
 
 impl IsKnownTransient for StatusCode {
     fn is_known_transient(&self) -> bool {
-        let transient_failures = [
+        // 529 "Overloaded" is non-standard; Jev and OpenAI use it with
+        // Retry-After, and exponential backoff honors the wait.
+        [
             StatusCode::TOO_MANY_REQUESTS,
             StatusCode::BAD_GATEWAY,
             StatusCode::SERVICE_UNAVAILABLE,
             StatusCode::GATEWAY_TIMEOUT,
-        ];
-        transient_failures.contains(self)
+        ]
+        .contains(self)
+            || [
+                // 529 is a non-standard status used by Jev and maybe
+                // some others.
+                529,
+            ]
+            .contains(&self.as_u16())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pressure_statuses_are_transient() {
+        // These mean "we liked your request; ask again later", so an
+        // exponential-backoff retry is the intended response.
+        for status in [
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::BAD_GATEWAY,
+            StatusCode::SERVICE_UNAVAILABLE,
+            StatusCode::GATEWAY_TIMEOUT,
+        ] {
+            assert!(status.is_known_transient(), "{status} should retry");
+        }
+
+        // 529 "Overloaded" is non-standard — Jev and OpenAI use it, with
+        // `Retry-After` — but it means the same thing.
+        let overloaded = StatusCode::from_u16(529).expect("529 is a valid status code");
+        assert!(overloaded.is_known_transient(), "529 should retry");
+    }
+
+    #[test]
+    fn unproven_statuses_are_not_transient() {
+        // Anything not observed in the wild and investigated stays fatal: we
+        // would rather fail a record quickly than burn a full retry budget on a
+        // request that can never succeed. This list is deliberately generous,
+        // including plain 500s, which we have not established as transient.
+        for status in [
+            StatusCode::BAD_REQUEST,
+            StatusCode::UNAUTHORIZED,
+            StatusCode::NOT_FOUND,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            StatusCode::NOT_IMPLEMENTED,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ] {
+            assert!(!status.is_known_transient(), "{status} should not retry");
+        }
     }
 }

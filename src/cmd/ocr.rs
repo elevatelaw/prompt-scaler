@@ -7,15 +7,12 @@ use futures::StreamExt;
 
 use crate::{
     async_utils::io::read_json_or_toml,
-    drivers::LlmOpts,
+    drivers::{llm::LlmOpts, ocr::llm::default_ocr_prompt},
     page_iter::PageIterOptions,
     prelude::*,
-    prompt::ChatPrompt,
+    prompts::chat::ChatPrompt,
     queues::{
-        ocr::{
-            OcrInput, OcrOutput, OcrStreamInfo, engines::llm::default_ocr_prompt,
-            ocr_files,
-        },
+        ocr::{OcrInput, OcrOutput, OcrStreamInfo, ocr_files},
         work::{WorkInput, WorkOutput},
     },
     ui::{ProgressConfig, Ui},
@@ -86,6 +83,7 @@ impl OcrOpts {
 pub async fn cmd_ocr(ui: &Ui, opts: &mut OcrOpts) -> Result<()> {
     // Compute our canonical base directory for relative paths in input and prompts.
     opts.llm_opts
+        .driver_opts
         .compute_canonical_base_dir(opts.input_path.as_deref())?;
 
     // Get our OCR prompt.

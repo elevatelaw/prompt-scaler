@@ -11,9 +11,10 @@ use tokio::io::AsyncWriteExt as _;
 use crate::{
     async_utils::io::create_writer,
     prelude::*,
-    prompt::ChatPrompt,
+    prompts::{chat::ChatPrompt, decide::DecidePrompt},
     queues::{
         chat::{ChatInput, ChatOutput},
+        decide::{DecideInput, DecideOutput},
         ocr::{OcrInput, OcrOutput},
         work::{WorkInput, WorkOutput},
     },
@@ -31,6 +32,12 @@ pub enum SchemaType {
     ChatOutput,
     /// Chat prompt.
     ChatPrompt,
+    /// Decison input.
+    DecideInput,
+    /// Decision output.
+    DecideOutput,
+    /// Decision prompt.
+    DecidePrompt,
     /// OCR input.
     OcrInput,
     /// OCR output.
@@ -73,6 +80,15 @@ pub async fn cmd_schema(schema_opts: &SchemaOpts) -> Result<()> {
         SchemaType::ChatPrompt => generator
             .into_root_schema_for::<ChatPrompt>()
             .with_title("ChatPrompt"),
+        SchemaType::DecideInput => generator
+            .into_root_schema_for::<WorkInput<DecideInput>>()
+            .with_title("DecideInput"),
+        SchemaType::DecideOutput => generator
+            .into_root_schema_for::<WorkOutput<DecideOutput>>()
+            .with_title("DecideOutput"),
+        SchemaType::DecidePrompt => generator
+            .into_root_schema_for::<DecidePrompt>()
+            .with_title("DecidePrompt"),
         SchemaType::OcrInput => generator
             .into_root_schema_for::<WorkInput<OcrInput>>()
             .with_title("OcrInput"),

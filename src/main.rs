@@ -17,9 +17,8 @@ use tracing_subscriber::{
     util::SubscriberInitExt as _,
 };
 
-use crate::async_utils::io::DiagnosticsError;
-
 use self::{prelude::*, ui::Ui};
+use crate::async_utils::io::DiagnosticsError;
 
 mod async_utils;
 mod aws;
@@ -31,11 +30,12 @@ mod images;
 mod mem_limit;
 mod page_iter;
 mod prelude;
-mod prompt;
+mod prompts;
 mod queues;
 mod rate_limit;
 mod retry;
 mod schema;
+mod templates;
 mod timeouts;
 mod toml_utils;
 mod ui;
@@ -65,6 +65,12 @@ Environment Variables (driver: vertex):
     endpoint. Set a region for data residency or regional quota.
   - GOOGLE_APPLICATION_CREDENTIALS: Path to the service account JSON.
 
+Environment Variables (decide subcommand, driver: system_one, the default):
+  - SYSTEM_ONE_API_URL: Base URL of a llama.cpp, Jev, or other "systemone"-compatible server, which we query at {base}/v1/systemone. Defaults to
+    http://localhost:8080.
+  - SYSTEM_ONE_API_KEY (optional): Bearer token, for servers configured to
+    require one.
+
 Environment Variables (drivers: bedrock, and textract for OCR):
   - AWS_DEFAULT_REGION
   - AWS_ACCESS_KEY_ID
@@ -85,6 +91,9 @@ struct Opts {
 enum Cmd {
     /// Prompt using the "/chat/completions" endpoint.
     Chat(cmd::chat::ChatOpts),
+    /// Ask typed questions of a decision ("systemone") model, which answers
+    /// them in a single pass with probabilities and confidence.
+    Decide(cmd::decide::DecideOpts),
     /// OCR images and PDFs. The input file should have `id` and `path` fields.
     Ocr(cmd::ocr::OcrOpts),
     /// Print schemas for input and output formats.
@@ -96,6 +105,7 @@ impl Cmd {
     fn using_stdout_for_output(&self) -> bool {
         match self {
             Cmd::Chat(opts) => opts.output_path.is_none(),
+            Cmd::Decide(opts) => opts.output_path.is_none(),
             Cmd::Ocr(opts) => opts.output_path.is_none(),
             Cmd::Schema(opts) => opts.output_path.is_none(),
         }
@@ -159,6 +169,9 @@ async fn real_main(ui: &Ui) -> Result<()> {
     match &mut opts.subcmd {
         Cmd::Chat(opts) => {
             cmd::chat::cmd_chat(ui, opts).await?;
+        }
+        Cmd::Decide(opts) => {
+            cmd::decide::cmd_decide(ui, opts).await?;
         }
         Cmd::Ocr(opts) => {
             cmd::ocr::cmd_ocr(ui, opts).await?;

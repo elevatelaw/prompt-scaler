@@ -19,12 +19,16 @@
 //! which are much more agnostic about what's going on. You won't normally need
 //! to work with these directly.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    iter,
+    sync::{Arc, Mutex},
+};
 
 use futures::{
     FutureExt, SinkExt as _, StreamExt,
     channel::{mpsc, oneshot},
 };
+use keen_retry::ResolvedResult;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 
@@ -34,6 +38,7 @@ use crate::{
         io::{read_jsonl_or_csv, write_output},
     },
     cmd::StreamOpts,
+    costs::ModelCost,
     drivers::TokenUsage,
     prelude::*,
     ui::Ui,
@@ -184,6 +189,87 @@ where
         write_output(path, output).await?;
         counters.finish(ui, stream_opts)
     }
+
+    /// Create a new output record from a [`ResolvedResult`].
+    pub fn from_resolved_result<Response>(
+        id: Value,
+        model_cost: Option<&ModelCost>,
+        result: ResolvedResult<(), (), Response, anyhow::Error>,
+        passthrough_data: Option<Value>,
+    ) -> Self
+    where
+        Response: WorkResponse<Output = T>,
+        Response::Output: Default,
+    {
+        let estimate_cost =
+            |usage: Option<&TokenUsage>| usage.and_then(|u| u.estimate_cost(model_cost));
+        let full_err = |err: anyhow::Error| format!("{err:?}");
+        match result {
+            ResolvedResult::Ok {
+                output: response, ..
+            } => WorkOutput {
+                id,
+                status: WorkStatus::Ok,
+                errors: vec![],
+                estimated_cost: estimate_cost(response.token_usage()),
+                token_usage: response.token_usage().cloned(),
+                passthrough_data,
+                data: response.to_output(),
+            },
+            ResolvedResult::Fatal { error, .. } => WorkOutput::new_failed(
+                id,
+                vec![full_err(error)],
+                Response::Output::default(),
+                passthrough_data,
+            ),
+            ResolvedResult::Recovered {
+                output: response,
+                retry_errors,
+                ..
+            } => WorkOutput {
+                id,
+                status: WorkStatus::Ok,
+                errors: retry_errors.into_iter().map(full_err).collect(),
+                estimated_cost: estimate_cost(response.token_usage()),
+                token_usage: response.token_usage().cloned(),
+                passthrough_data,
+                data: response.to_output(),
+            },
+            ResolvedResult::GivenUp {
+                retry_errors,
+                fatal_error,
+                ..
+            }
+            | ResolvedResult::Unrecoverable {
+                retry_errors,
+                fatal_error,
+                ..
+            } => WorkOutput::new_failed(
+                id,
+                retry_errors
+                    .into_iter()
+                    .map(full_err)
+                    .chain(iter::once(full_err(fatal_error)))
+                    .collect(),
+                Response::Output::default(),
+                passthrough_data,
+            ),
+        }
+    }
+}
+
+/// Trait for various `Reponse` types that can be passed to
+/// [`WorkOutput::from_resolved_result`].
+pub trait WorkResponse {
+    /// Associated output type.
+    type Output: Default;
+
+    /// Get the [`Self::Output`] value associated with this
+    /// response.
+    fn to_output(self) -> Self::Output;
+
+    /// Get the token usage associated with this response.
+    fn token_usage(&self) -> Option<&TokenUsage>;
 }
 
 /// Counters associated with a work item.

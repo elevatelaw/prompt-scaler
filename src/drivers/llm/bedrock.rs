@@ -17,17 +17,22 @@ use aws_smithy_types::{Document, Number};
 use genai::chat::ReasoningEffort;
 use uuid::Uuid;
 
+use super::LlmDriver;
 use crate::{
     aws::load_aws_config,
-    drivers::{ChatCompletionResponse, DriverError, LlmOpts, TokenUsage},
+    drivers::{
+        DriverError, TokenUsage,
+        llm::{ChatCompletionResponse, LlmOpts},
+    },
     images::{ImageEncoding, ImageFile},
     mem_limit::MemLimiter,
     prelude::*,
-    prompt::{ChatPrompt, Message, Rendered},
+    prompts::{
+        Rendered,
+        chat::{ChatPrompt, Message},
+    },
     retry::IsKnownTransient,
 };
-
-use super::Driver;
 
 /// The name of the tool we tell Bedrock to use for reporting results.
 static OUTPUT_TOOL_NAME: &str = "report_result";
@@ -50,7 +55,7 @@ impl BedrockDriver {
 }
 
 #[async_trait]
-impl Driver for BedrockDriver {
+impl LlmDriver for BedrockDriver {
     #[instrument(level = "debug", skip_all)]
     async fn chat_completion(
         &self,

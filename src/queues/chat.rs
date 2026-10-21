@@ -1,27 +1,29 @@
 //! Concurrent chat requests implemented as an async stream.
 
-use std::{iter, sync::Arc};
+use std::sync::Arc;
 
 use futures::FutureExt as _;
-use keen_retry::{ExponentialJitter, ResolvedResult};
-use leaky_bucket::RateLimiter;
+use keen_retry::ExponentialJitter;
 use schemars::JsonSchema;
 
-use super::work::{WorkInput, WorkOutput, WorkQueue, WorkStatus};
+use super::work::{WorkInput, WorkOutput, WorkQueue, WorkResponse, WorkStatus};
 use crate::{
     async_utils::{BoxedFuture, BoxedStream, JoinWorker, io::JsonObject},
-    costs::{ModelCost, ModelCostDatabase},
-    drivers::{ChatCompletionResponse, Driver, LlmOpts, LlmRetryResult, TokenUsage},
+    drivers::{
+        DriverRetryResult, DriverType, TokenUsage,
+        llm::{ChatCompletionResponse, LlmDriver, LlmOpts},
+    },
     mem_limit::MemLimiter,
     prelude::*,
-    prompt::{ChatPrompt, Rendered},
+    prompts::{Rendered, chat::ChatPrompt},
+    queues::processor_state::CommonProcessorState,
     retry::{
         retry_result_ok, retry_with_backoff, try_potentially_transient, try_transient,
     },
     timeouts::WithTimeout,
 };
 
-/// An input record.
+/// A chat input record.
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct ChatInput {
     /// Other fields. We keep these "flattened" in the record because they're
@@ -31,96 +33,25 @@ pub struct ChatInput {
     pub template_bindings: JsonObject,
 }
 
-/// An output record.
-#[derive(Clone, Debug, JsonSchema, Serialize)]
+/// A chat output record.
+#[derive(Clone, Debug, Default, JsonSchema, Serialize)]
 pub struct ChatOutput {
     /// The response from the LLM. If this is present, the request succeeded.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response: Option<Value>,
 }
 
-impl ChatOutput {
-    /// Create an empty chat output record for use when an error occurs.
-    pub fn empty_for_error() -> Self {
-        Self { response: None }
-    }
-}
+impl WorkResponse for ChatCompletionResponse {
+    type Output = ChatOutput;
 
-impl WorkOutput<ChatOutput> {
-    /// Create a new output record from a [`ResolvedResult`].
-    fn from_resolved_result(
-        id: Value,
-        model_cost: Option<&ModelCost>,
-        result: ResolvedResult<(), (), ChatCompletionResponse, anyhow::Error>,
-        passthrough_data: Option<Value>,
-    ) -> Self {
-        let estimate_cost =
-            |usage: Option<&TokenUsage>| usage.and_then(|u| u.estimate_cost(model_cost));
-        let full_err = |err: anyhow::Error| format!("{err:?}");
-        match result {
-            ResolvedResult::Ok {
-                output:
-                    ChatCompletionResponse {
-                        response,
-                        token_usage,
-                    },
-                ..
-            } => WorkOutput {
-                id,
-                status: WorkStatus::Ok,
-                errors: vec![],
-                estimated_cost: estimate_cost(token_usage.as_ref()),
-                token_usage,
-                passthrough_data,
-                data: ChatOutput {
-                    response: Some(response),
-                },
-            },
-            ResolvedResult::Fatal { error, .. } => WorkOutput::new_failed(
-                id,
-                vec![full_err(error)],
-                ChatOutput::empty_for_error(),
-                passthrough_data,
-            ),
-            ResolvedResult::Recovered {
-                output:
-                    ChatCompletionResponse {
-                        response,
-                        token_usage,
-                    },
-                retry_errors,
-                ..
-            } => WorkOutput {
-                id,
-                status: WorkStatus::Ok,
-                errors: retry_errors.into_iter().map(full_err).collect(),
-                estimated_cost: estimate_cost(token_usage.as_ref()),
-                token_usage,
-                passthrough_data,
-                data: ChatOutput {
-                    response: Some(response),
-                },
-            },
-            ResolvedResult::GivenUp {
-                retry_errors,
-                fatal_error,
-                ..
-            }
-            | ResolvedResult::Unrecoverable {
-                retry_errors,
-                fatal_error,
-                ..
-            } => WorkOutput::new_failed(
-                id,
-                retry_errors
-                    .into_iter()
-                    .map(full_err)
-                    .chain(iter::once(full_err(fatal_error)))
-                    .collect(),
-                ChatOutput::empty_for_error(),
-                passthrough_data,
-            ),
+    fn to_output(self) -> Self::Output {
+        ChatOutput {
+            response: Some(self.response),
         }
+    }
+
+    fn token_usage(&self) -> Option<&TokenUsage> {
+        self.token_usage.as_ref()
     }
 }
 
@@ -167,13 +98,9 @@ pub async fn create_chat_work_queue(
     let driver = llm_opts.driver.create_driver().await?;
 
     // Look up model cost data.
-    let cost_db = ModelCostDatabase::new(llm_opts.model_cost_data.as_deref());
-    let cost = cost_db.lookup(llm_opts.driver, &model).cloned();
-    if let Some(ref cost) = cost {
-        debug!(driver = ?llm_opts.driver, %model, ?cost, "Model cost info");
-    } else {
-        debug!(driver = ?llm_opts.driver, %model, "Model cost info not available");
-    }
+    let cost = llm_opts
+        .driver_opts
+        .cost_info(DriverType::Llm(llm_opts.driver), &model);
 
     // Read our schema.
     //
@@ -183,19 +110,21 @@ pub async fn create_chat_work_queue(
     let validator = jsonschema::validator_for(&schema)?;
 
     // Construct a rate limiter to control the rate of API requests.
-    let rate_limiter = llm_opts.rate_limit.as_ref().map(|rl| rl.to_rate_limiter());
+    let rate_limiter = llm_opts.driver_opts.rate_limiter();
 
     // Build our shared state.
-    let state = Arc::new(ProcessorState {
+    let state = Arc::new(ChatProcessorState {
+        common: CommonProcessorState {
+            rate_limiter,
+            mem_limiter,
+            model_cost: cost,
+        },
         driver,
-        rate_limiter,
-        mem_limiter,
         model,
         prompt,
         schema,
         validator,
         llm_opts,
-        model_cost: cost,
     });
 
     // Define worker function.
@@ -210,15 +139,12 @@ pub async fn create_chat_work_queue(
 
 /// Shared processor state.
 #[derive(Debug)]
-struct ProcessorState {
+struct ChatProcessorState {
+    /// State fields shared with other queue processor types.
+    common: CommonProcessorState,
+
     /// Our LLM client.
-    driver: Box<dyn Driver>,
-
-    /// A rate limiter to control API request rate.
-    rate_limiter: Option<RateLimiter>,
-
-    /// A memory limiter for image loading.
-    mem_limiter: MemLimiter,
+    driver: Box<dyn LlmDriver>,
 
     /// The model to use.
     model: String,
@@ -234,15 +160,12 @@ struct ProcessorState {
 
     /// The LLM options to use.
     llm_opts: LlmOpts,
-
-    /// Model cost information, if available.
-    model_cost: Option<ModelCost>,
 }
 
 /// Process a single JSON Object.
 #[instrument(level = "debug", skip_all, fields(id = %input_record.id))]
 async fn run_chat(
-    state: Arc<ProcessorState>,
+    state: Arc<ChatProcessorState>,
     input_record: WorkInput<ChatInput>,
 ) -> Result<WorkOutput<ChatOutput>> {
     let id = input_record.id.clone();
@@ -269,7 +192,7 @@ async fn run_chat(
     );
     let prompt = state.prompt.render(
         &input_record.data.template_bindings,
-        state.llm_opts.canonical_base_dir(),
+        state.llm_opts.driver_opts.canonical_base_dir(),
     )?;
 
     // Release the input data, because it adds up, especially for images.
@@ -291,7 +214,7 @@ async fn run_chat(
 
     Ok(WorkOutput::<ChatOutput>::from_resolved_result(
         id,
-        state.model_cost.as_ref(),
+        state.common.model_cost.as_ref(),
         result,
         passthrough_data,
     ))
@@ -300,13 +223,11 @@ async fn run_chat(
 /// Process the data portion of a record.
 #[instrument(level = "debug", skip_all)]
 async fn run_chat_inner(
-    state: Arc<ProcessorState>,
+    state: Arc<ChatProcessorState>,
     prompt: ChatPrompt<Rendered>,
-) -> LlmRetryResult<ChatCompletionResponse> {
+) -> DriverRetryResult<ChatCompletionResponse> {
     // If we have a rate limiter, acquire a permit for one request.
-    if let Some(rate_limiter) = state.rate_limiter.as_ref() {
-        rate_limiter.acquire(1).await;
-    }
+    state.common.wait_on_rate_limiter().await;
 
     // Call LLM.
     let completion_response = try_potentially_transient!(
@@ -317,7 +238,7 @@ async fn run_chat_inner(
                 &prompt,
                 state.schema.clone(),
                 &state.llm_opts,
-                &state.mem_limiter,
+                &state.common.mem_limiter,
             )
             .with_timeout(state.llm_opts.llm_timeout_duration())
             .await

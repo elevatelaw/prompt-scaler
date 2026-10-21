@@ -329,9 +329,8 @@ impl ToJsonSchema for ScalarType {
 
 #[cfg(test)]
 mod tests {
-    use crate::toml_utils::from_toml_str;
-
     use super::*;
+    use crate::toml_utils::from_toml_str;
 
     #[test]
     fn test_external_schema() {

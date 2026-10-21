@@ -5,12 +5,13 @@ use std::sync::Arc;
 use schemars::JsonSchema;
 use serde_json::Map;
 
+use super::page::{OcrPageEngine, OcrPageInput, OcrPageOutput};
 use crate::{
     async_utils::JoinWorker,
     cmd::ocr::OcrOpts,
     mem_limit::{MEM_PERMIT_DEADLOCK_TIMEOUT, MemLimiter},
     prelude::*,
-    prompt::ChatPrompt,
+    prompts::chat::ChatPrompt,
     queues::{
         chat::{ChatInput, ChatOutput, create_chat_work_queue},
         ocr::OcrAnalysis,
@@ -19,8 +20,6 @@ use crate::{
     schema::Schema,
     toml_utils::from_toml_str,
 };
-
-use super::page::{OcrPageEngine, OcrPageInput, OcrPageOutput};
 
 /// The default OCR prompt, used if no prompt is provided.
 const DEFAULT_OCR_PROMPT: &str = include_str!("llm/default_ocr_prompt.toml");
@@ -63,6 +62,7 @@ impl LlmOcrPageEngine {
         // one image, so there's no multi-image deadlock risk.
         let mem_limiter = ocr_opts
             .llm_opts
+            .driver_opts
             .page_memory_limit
             .as_ref()
             .map(|ml| ml.to_mem_limiter(Some(MEM_PERMIT_DEADLOCK_TIMEOUT)))

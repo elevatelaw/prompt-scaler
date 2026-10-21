@@ -5,8 +5,6 @@
 
 use std::{collections::BTreeMap, path::Path};
 
-use clap::ValueEnum;
-
 use crate::{drivers::DriverType, prelude::*};
 
 /// A key for looking up model costs, based on driver and model name. If the
@@ -19,7 +17,7 @@ struct ModelKey {
 }
 
 impl ModelKey {
-    /// Construct a key for a specific driver and model.
+    /// Construct a key for a specific chat driver and model.
     fn for_driver(driver: DriverType, model: &str) -> Self {
         Self {
             driver: Some(driver),
@@ -118,10 +116,7 @@ fn parse_model_costs_csv(csv_data: &str) -> Result<BTreeMap<ModelKey, ModelCost>
         let record = result.context("Failed to parse model cost record")?;
         let driver = match record.driver.as_deref() {
             None | Some("") => None,
-            Some(s) => Some(
-                DriverType::from_str(s, true)
-                    .map_err(|e| anyhow!("Unknown driver {s:?}: {e}"))?,
-            ),
+            Some(s) => Some(s.parse::<DriverType>()?),
         };
         let key = ModelKey {
             driver,
@@ -141,6 +136,8 @@ fn parse_model_costs_csv(csv_data: &str) -> Result<BTreeMap<ModelKey, ModelCost>
 
 #[cfg(test)]
 mod tests {
+    use crate::drivers::llm::LlmDriverType;
+
     use super::*;
 
     fn default_db() -> ModelCostDatabase {
@@ -161,7 +158,7 @@ mod tests {
     fn known_model_has_expected_cost() {
         let db = default_db();
         let cost = db
-            .lookup(DriverType::Native, "gpt-4o-mini")
+            .lookup(DriverType::Llm(LlmDriverType::Native), "gpt-4o-mini")
             .expect("gpt-4o-mini should be in database");
         assert!(
             (cost.input_cost_per_token - 0.00000015).abs() < 1e-12,
@@ -179,8 +176,11 @@ mod tests {
     fn unknown_model_returns_none() {
         let db = default_db();
         assert!(
-            db.lookup(DriverType::Native, "nonexistent-model-xyz")
-                .is_none()
+            db.lookup(
+                DriverType::Llm(LlmDriverType::Native),
+                "nonexistent-model-xyz"
+            )
+            .is_none()
         );
     }
 }
