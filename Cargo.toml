@@ -42,7 +42,7 @@ google-cloud-aiplatform-v1 = "1.10.0"
 google-cloud-gax = "1.9.1"
 handlebars = "6.3.2"
 handlebars-concat = "0.3.0"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 infer = "0.19.0"
 indicatif = { version = "0.17.11", features = ["futures"] }
 jsonschema = { version = "0.30.0", default-features = false }
