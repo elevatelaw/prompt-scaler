@@ -9,8 +9,9 @@ use aws_sdk_bedrockruntime::{
     types::{
         AnyToolChoice, ContentBlock, ConversationRole, ImageBlock, ImageFormat,
         ImageSource, InferenceConfiguration, Message as BedrockMessage, StopReason,
-        SystemContentBlock, Tool, ToolChoice, ToolConfiguration, ToolInputSchema,
-        ToolResultBlock, ToolResultContentBlock, ToolSpecification, ToolUseBlock,
+        SystemContentBlock, TokenUsage as BedrockTokenUsage, Tool, ToolChoice,
+        ToolConfiguration, ToolInputSchema, ToolResultBlock, ToolResultContentBlock,
+        ToolSpecification, ToolUseBlock,
     },
 };
 use aws_smithy_types::{Document, Number};
@@ -123,10 +124,7 @@ impl LlmDriver for BedrockDriver {
         }
 
         // Get the token usage.
-        let token_usage = output.usage().map(|usage| TokenUsage {
-            prompt_tokens: u64::try_from(usage.input_tokens).unwrap_or(0),
-            completion_tokens: u64::try_from(usage.output_tokens).unwrap_or(0),
-        });
+        let token_usage = output.usage().map(token_usage_from_bedrock);
 
         // Parse our converse output. This is an annoyingly multi-step process.
         let converse_output = output
@@ -449,6 +447,23 @@ fn value_to_aws_document(value: &serde_json::Value) -> Result<Document> {
     }
 }
 
+/// Convert Bedrock's token usage into ours.
+///
+/// Bedrock reports prompt tokens read from or written to its prompt cache
+/// separately from `input_tokens`, which counts only the uncached remainder.
+/// Some models (such as GPT-5.6 Luna) cache automatically, so nearly the whole
+/// prompt can land in the cache fields and `input_tokens` alone undercounts it
+/// many times over. All three together are the prompt.
+fn token_usage_from_bedrock(usage: &BedrockTokenUsage) -> TokenUsage {
+    let count = |tokens: i32| u64::try_from(tokens).unwrap_or(0);
+    TokenUsage {
+        prompt_tokens: count(usage.input_tokens)
+            + usage.cache_read_input_tokens.map_or(0, count)
+            + usage.cache_write_input_tokens.map_or(0, count),
+        completion_tokens: count(usage.output_tokens),
+    }
+}
+
 // Convert a [`aws_smithy_types::Document`] into a [`serde_json::Value`].
 fn aws_document_to_value(doc: &Document) -> Result<serde_json::Value> {
     match doc {
@@ -508,6 +523,43 @@ mod tests {
         ContentBlock::ReasoningContent(ReasoningContentBlock::RedactedContent(Blob::new(
             "opaque",
         )))
+    }
+
+    /// Build Bedrock token usage with the given cache counts.
+    fn bedrock_usage(
+        input: i32,
+        cache_read: Option<i32>,
+        cache_write: Option<i32>,
+    ) -> BedrockTokenUsage {
+        BedrockTokenUsage::builder()
+            .input_tokens(input)
+            .output_tokens(1846)
+            .total_tokens(0)
+            .set_cache_read_input_tokens(cache_read)
+            .set_cache_write_input_tokens(cache_write)
+            .build()
+            .expect("could not build token usage")
+    }
+
+    #[test]
+    fn counts_uncached_prompt_tokens() {
+        let usage = token_usage_from_bedrock(&bedrock_usage(2119, None, None));
+        assert_eq!(usage.prompt_tokens, 2119);
+        assert_eq!(usage.completion_tokens, 1846);
+    }
+
+    #[test]
+    fn counts_prompt_tokens_written_to_the_cache() {
+        // Observed from us.openai.gpt-5.6-luna on a first, uncached request.
+        let usage = token_usage_from_bedrock(&bedrock_usage(2, Some(0), Some(2117)));
+        assert_eq!(usage.prompt_tokens, 2119);
+    }
+
+    #[test]
+    fn counts_prompt_tokens_read_from_the_cache() {
+        // The same request repeated, now served from the cache.
+        let usage = token_usage_from_bedrock(&bedrock_usage(2, Some(2117), Some(0)));
+        assert_eq!(usage.prompt_tokens, 2119);
     }
 
     #[test]

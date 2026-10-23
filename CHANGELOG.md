@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- bedrock: `token_usage.prompt_tokens` now includes prompt tokens read from or written to Bedrock's prompt cache. Bedrock reports those separately from `inputTokens`, and models that cache automatically (such as `us.openai.gpt-5.6-luna`) put nearly the whole prompt there, so a 2,119-token prompt was reported as 2 tokens. `estimated_cost` prices cached tokens at the normal input rate.
+
 ## [0.4.1] - 2026-10-21
 
 ### Added
