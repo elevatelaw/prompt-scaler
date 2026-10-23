@@ -205,10 +205,9 @@ impl Message {
         match self {
             // We have images and maybe text.
             Message::User { text, images } if !images.is_empty() => {
+                // Images go before text. Gemini and Claude both recommend this,
+                // and OvisOCR3 sometimes skips most of a page without it.
                 let mut parts = vec![];
-                if let Some(text) = text {
-                    parts.push(ContentPart::Text(text.clone()));
-                }
                 for image in images {
                     let image_file = ImageFile::from_url(image)?;
                     let image_data =
@@ -223,6 +222,9 @@ impl Message {
                         Arc::from(base64_str),
                         None,
                     ));
+                }
+                if let Some(text) = text {
+                    parts.push(ContentPart::Text(text.clone()));
                 }
                 Ok(ChatMessage {
                     role: ChatRole::User,

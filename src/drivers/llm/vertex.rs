@@ -243,18 +243,17 @@ impl Message {
         let mut contents = vec![];
         match self {
             Message::User { text, images } => {
-                let mut parts = vec![];
-
-                // Add text if present.
-                if let Some(text) = text {
-                    // TODO: We may want to move this validation into the prompt.
-                    if text.trim().is_empty() {
-                        return Err(anyhow!("User message has empty text"));
-                    }
-                    parts.push(Part::new().set_text(text));
+                // TODO: We may want to move this validation into the prompt.
+                if let Some(text) = text
+                    && text.trim().is_empty()
+                {
+                    return Err(anyhow!("User message has empty text"));
                 }
 
-                // Add images if present.
+                let mut parts = vec![];
+
+                // Add images if present. Images go before text, which Gemini
+                // recommends for single-image prompts.
                 for image in images {
                     let image_file = ImageFile::from_url(image)?;
                     let image_data =
@@ -267,6 +266,12 @@ impl Message {
                         ),
                     );
                 }
+
+                // Add text if present.
+                if let Some(text) = text {
+                    parts.push(Part::new().set_text(text));
+                }
+
                 assert!(
                     !parts.is_empty(),
                     "User message has no content, which should be caught by prompt validation"
