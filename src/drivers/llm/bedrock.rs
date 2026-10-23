@@ -340,17 +340,17 @@ impl Message {
         match self {
             Message::User { text, images } => {
                 let mut builder = BedrockMessage::builder().role(ConversationRole::User);
-                if let Some(text) = text {
-                    if text.is_empty() || text.chars().all(|c| c.is_ascii_whitespace()) {
-                        // The Bedrock models we've tested don't like blank user messages
-                        // and they will return an error, so bail on it now.
-                        return Err(anyhow!(
-                            "User message is blank, which is not supported: {:?}",
-                            text
-                        ));
-                    }
-                    builder = builder.content(ContentBlock::Text(text.clone()));
+                if let Some(text) = text
+                    && (text.is_empty() || text.chars().all(|c| c.is_ascii_whitespace()))
+                {
+                    // The Bedrock models we've tested don't like blank user messages
+                    // and they will return an error, so bail on it now.
+                    return Err(anyhow!(
+                        "User message is blank, which is not supported: {:?}",
+                        text
+                    ));
                 }
+                // Images go before text, which Claude recommends.
                 for image in images {
                     let image_file = ImageFile::from_url(image)?;
                     let image_data =
@@ -365,6 +365,9 @@ impl Message {
                         .build()
                         .context("Cannot build Bedrock image block")?;
                     builder = builder.content(ContentBlock::Image(image_block));
+                }
+                if let Some(text) = text {
+                    builder = builder.content(ContentBlock::Text(text.clone()));
                 }
                 messages.push(builder.build().context("Cannot build Bedrock message")?);
             }
