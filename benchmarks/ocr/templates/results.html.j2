@@ -213,6 +213,14 @@
             </tr>
             {% endfor %}
 
+            {# Repeat the model names above the averages, for easy cropping. #}
+            <tr>
+                <th class="text" colspan=3></th>
+                {% for model in models %}
+                <th class="numeric">{{ model }}</th>
+                {% endfor %}
+                <th class="text"></th>
+            </tr>
             <tr>
                 <th class="numeric" colspan=3><strong>Average</strong></th>
                 {% for model in models %}
