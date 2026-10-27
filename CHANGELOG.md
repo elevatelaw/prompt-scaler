@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-10-27
+
+### Added
+
+- vertex: Support `us` and `eu` multi-region endpoints. For now, this can be selected using `GOOGLE_CLOUD_LOCATION=us`.
+- `llama-server-models.ini` shows how to serve small test models with `llama-server` for running unit tests. No GPU required!
+
+### Changed
+
+- chat: We now send the image part of a message _before_ the text message. This is recommended by all major inference APIs we know about. In theory, this shouldn't break anything, but it may change some models' behavior. Preliminary testing shows that some small models behave better, and larger models are mostly unaffected.
+
+### Security
+
+- Dependency updates including security fixes.
+
 ## [0.4.1] - 2026-10-21
 
 ### Added
