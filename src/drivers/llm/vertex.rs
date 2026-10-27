@@ -44,6 +44,9 @@ fn google_cloud_location() -> String {
 fn vertex_endpoint(location: &String) -> String {
     if *location == "global" {
         "https://aiplatform.googleapis.com".to_string()
+    } else if *location == "us" || *location == "eu" {
+        // Multi-region endpoints use a different hostname pattern.
+        format!("https://aiplatform.{location}.rep.googleapis.com")
     } else {
         format!("https://{location}-aiplatform.googleapis.com")
     }
@@ -307,4 +310,33 @@ fn extract_assistant_text(content: &Content) -> Result<String> {
         }
     }
     Err(anyhow!("No text response found in Vertex AI response"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vertex_endpoint_maps_locations_to_hosts() {
+        let cases = [
+            ("global", "https://aiplatform.googleapis.com"),
+            (
+                "us-central1",
+                "https://us-central1-aiplatform.googleapis.com",
+            ),
+            (
+                "europe-west4",
+                "https://europe-west4-aiplatform.googleapis.com",
+            ),
+            ("us", "https://aiplatform.us.rep.googleapis.com"),
+            ("eu", "https://aiplatform.eu.rep.googleapis.com"),
+        ];
+        for (location, expected) in cases {
+            assert_eq!(
+                vertex_endpoint(&location.to_string()),
+                expected,
+                "location: {location}"
+            );
+        }
+    }
 }
