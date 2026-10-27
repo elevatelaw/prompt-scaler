@@ -22,8 +22,8 @@ The following variables can be specified in the environment, or using a `.env` f
 
 ### Driver: `vertex`
 
-- `GCP_PROJECT`: Google Cloud project ID.
-- `GCP_LOCATION`: Google Cloud region.
+- `GOOGLE_CLOUD_PROJECT`: Google Cloud project ID. (`GCP_PROJECT` is accepted as a legacy alias.)
+- `GOOGLE_CLOUD_LOCATION` (optional): A Google Cloud region (e.g. `us-central1`), a multi-region (`us` or `eu`), or `global`. Defaults to `global`.
 - `GOOGLE_APPLICATION_CREDENTIALS`: Path to the service account JSON file.
 
 ### Drivers: `bedrock` (chat) and Textract (OCR)
