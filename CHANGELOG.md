@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- textract-async: Fetch every result page of a Textract job. Previously, only the first 1,000 blocks were read, so any document over roughly 900 words silently lost text or failed with "Textract child block ... not found". Text is written a document page at a time, so memory use stays low for long documents.
+- textract-async: Wait up to 2 hours for a Textract job instead of 5 minutes, so documents with hundreds of pages can finish. Use `--doc-timeout` for a tighter limit.
+
 ## [0.4.2] - 2026-10-27
 
 ### Added
