@@ -84,7 +84,6 @@ impl ImageFile {
     }
 
     /// Get the MIME type of the image.
-    #[allow(dead_code)]
     pub fn mime_type(&self) -> &str {
         &self.mime_type
     }
