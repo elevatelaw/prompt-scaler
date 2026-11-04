@@ -9,6 +9,7 @@ use crate::{
 
 pub mod file;
 pub mod llm;
+pub mod ovis;
 pub mod page;
 pub mod pdftotext;
 pub mod split_pages;
@@ -45,6 +46,9 @@ pub async fn ocr_engine_for_model(
         ),
         "textract-async" => {
             textract::TextractOcrFileEngine::new(concurrency_limit, ocr_opts).await?
+        }
+        model if ovis::is_ovis_model(model) => {
+            split_pages(ovis::OvisOcrPageEngine::new(concurrency_limit, ocr_opts).await?)
         }
         // Assume all other OCR models are LLMs.
         _ => split_pages(

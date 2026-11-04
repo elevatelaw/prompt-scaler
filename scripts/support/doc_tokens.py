@@ -9,13 +9,21 @@ agree. We omit punctuation, and we completely ignore token order
 
 from __future__ import annotations
 from dataclasses import dataclass
+import html
 import re
 
 MD_IMG_REGEX = re.compile(r"!\[.*?\]\(.*?\)", re.MULTILINE)
 
+# HTML tags, including tags with attributes like `<td colspan="2">`, which
+# some models use for tables.
+HTML_TAG_REGEX = re.compile(r"</?[A-Za-z_][A-Za-z0-9_]*(?:\s[^<>]*)?/?>")
+
 def text_to_tokens(text: str) -> list[str]:
-    """Convert text to tokens, stripping HTML tags.""" 
-    no_tags = re.sub(r"</?[a-zA-z_]+\s*/?>", " ", text)
+    """Convert text to tokens, stripping HTML tags and decoding entities."""
+    no_tags = re.sub(HTML_TAG_REGEX, " ", text)
+    # Decode entities like `&amp;` after stripping tags, so that `&lt;b&gt;`
+    # is treated as text.
+    no_tags = html.unescape(no_tags)
     no_tags_no_img = re.sub(MD_IMG_REGEX, " ", no_tags)
     return [ t.lower() for t in re.findall(r"\b\w+\b", no_tags_no_img) if not re.match(r"^_+$", t) ]
 
