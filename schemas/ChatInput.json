@@ -12,12 +12,7 @@
     },
     "passthrough_data": {
       "description": "Arbitrary data to pass through to output",
-      "default": null,
-      "type": [
-        "object",
-        "null"
-      ],
-      "additionalProperties": true
+      "default": null
     },
     "skip_processing": {
       "description": "Skip LLM processing and return status: \"skipped\"",

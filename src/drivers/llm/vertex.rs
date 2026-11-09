@@ -184,6 +184,7 @@ impl LlmDriver for VertexDriver {
             prompt_tokens: usage.prompt_token_count.try_into().unwrap_or(0),
             completion_tokens: usage.thoughts_token_count.try_into().unwrap_or(0)
                 + usage.candidates_token_count.try_into().unwrap_or(0),
+            ..TokenUsage::default()
         });
 
         Ok(ChatCompletionResponse {

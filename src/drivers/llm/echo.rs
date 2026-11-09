@@ -109,6 +109,7 @@ impl LlmDriver for EchoDriver {
             token_usage: Some(TokenUsage {
                 prompt_tokens: 0,
                 completion_tokens: 0,
+                ..TokenUsage::default()
             }),
         })
     }

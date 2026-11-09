@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `token_usage` now includes `cache_read_prompt_tokens` and `cache_write_prompt_tokens`, the parts of `prompt_tokens` read from or written to a prompt cache. The Bedrock driver fills them in; other drivers report 0.
+- Model costs: Bedrock prices for Claude Haiku 5.5, Claude Haiku 4.5, Claude Sonnet 5, Claude Sonnet 5.5 and Claude Sonnet 4.6, under their in-region IDs and their `us.` and `au.` profiles.
+- Model costs: a new `input_cost_per_cache_write_token` column. Anthropic's direct-API rows now include cache-write prices.
+
+### Fixed
+
+- bedrock: `prompt_tokens` now counts tokens read from or written to Bedrock's prompt cache. Models that cache automatically, such as GPT-5.6 Luna, were undercounted many times over.
+- `estimated_cost` now prices cache reads and writes at the model's cache prices instead of its normal input price.
+- Model costs: Bedrock rows used Anthropic's direct prices. Bedrock's in-region and geo prices are 10% higher.
+
 ## [0.4.3] - 2026-10-29
 
 ### Fixed

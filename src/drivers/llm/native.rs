@@ -141,6 +141,7 @@ impl LlmDriver for NativeDriver {
             Some(TokenUsage {
                 prompt_tokens: u64::try_from(prompt_tokens).unwrap_or_default(),
                 completion_tokens: u64::try_from(completion_tokens).unwrap_or_default(),
+                ..TokenUsage::default()
             })
         } else {
             None

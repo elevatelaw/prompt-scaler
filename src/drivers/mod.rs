@@ -333,8 +333,15 @@ impl DriverError {
 /// Token usage.
 #[derive(Clone, Debug, Default, JsonSchema, Serialize)]
 pub struct TokenUsage {
-    /// How many tokens were used in the prompt?
+    /// How many tokens were used in the prompt? Includes any tokens read from
+    /// or written to a prompt cache.
     pub prompt_tokens: u64,
+
+    /// How many of the prompt tokens were read from a prompt cache?
+    pub cache_read_prompt_tokens: u64,
+
+    /// How many of the prompt tokens were written to a prompt cache?
+    pub cache_write_prompt_tokens: u64,
 
     /// How many tokens were used in the response?
     pub completion_tokens: u64,
@@ -347,20 +354,34 @@ impl TokenUsage {
     }
 
     /// Estimate the cost of this token usage.
+    ///
+    /// Cache reads and writes use the model's cache prices where it has them,
+    /// and its normal input price otherwise.
     pub fn estimate_cost(&self, model_cost: Option<&ModelCost>) -> Option<f64> {
-        if let Some(cost) = model_cost {
-            let input_cost = self.prompt_tokens as f64 * cost.input_cost_per_token;
-            let output_cost = self.completion_tokens as f64 * cost.output_cost_per_token;
-            Some(input_cost + output_cost)
-        } else {
-            None
-        }
+        let cost = model_cost?;
+        let uncached_tokens = self
+            .prompt_tokens
+            .saturating_sub(self.cache_read_prompt_tokens)
+            .saturating_sub(self.cache_write_prompt_tokens);
+        let cache_read_cost_per_token = cost
+            .input_cost_per_cached_token
+            .unwrap_or(cost.input_cost_per_token);
+        let cache_write_cost_per_token = cost
+            .input_cost_per_cache_write_token
+            .unwrap_or(cost.input_cost_per_token);
+        let input_cost = uncached_tokens as f64 * cost.input_cost_per_token
+            + self.cache_read_prompt_tokens as f64 * cache_read_cost_per_token
+            + self.cache_write_prompt_tokens as f64 * cache_write_cost_per_token;
+        let output_cost = self.completion_tokens as f64 * cost.output_cost_per_token;
+        Some(input_cost + output_cost)
     }
 }
 
 impl AddAssign for TokenUsage {
     fn add_assign(&mut self, other: Self) {
         self.prompt_tokens += other.prompt_tokens;
+        self.cache_read_prompt_tokens += other.cache_read_prompt_tokens;
+        self.cache_write_prompt_tokens += other.cache_write_prompt_tokens;
         self.completion_tokens += other.completion_tokens;
     }
 }
