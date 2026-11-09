@@ -8,7 +8,7 @@ use std::{
 
 use aws_sdk_textract::{
     operation::{
-        get_document_analysis::GetDocumentAnalysisError,
+        get_document_analysis::{GetDocumentAnalysisError, GetDocumentAnalysisOutput},
         start_document_analysis::{
             StartDocumentAnalysisError, StartDocumentAnalysisOutput,
         },
@@ -157,8 +157,8 @@ impl OcrPageEngine for TextractOcrPageEngine {
                 trace!("Document response: {document:#?}");
 
                 // Create our output state and get our text.
-                let mut output = OutputState::new(document.blocks(), false);
-                output.write_analyzed_document()?;
+                let mut output = OutputState::new(false);
+                output.write_blocks(document.blocks())?;
                 let text = output.output;
                 debug!(%text, "Extracted text");
                 Ok(OcrPageOutput {
@@ -271,7 +271,7 @@ impl OcrFileEngine for TextractOcrFileEngine {
         // Poll for results.
         //
         // TODO: Integrate crate::retry support here.
-        let max_retries = 60; // 5 minutes max with 5-second intervals
+        let max_retries = 1440; // 2 hours max with 5-second intervals
         let mut retry_count = 0;
         let (status, response) = loop {
             let response = retry_with_backoff(DEFAULT_JITTER, move || async move {
@@ -326,18 +326,35 @@ impl OcrFileEngine for TextractOcrFileEngine {
 
         trace!("Document analysis response: {:#?}", response);
 
-        // Create our output state and get our text.
-        let mut output =
-            OutputState::new(response.blocks(), self.ocr_opts.include_page_breaks);
-        output.write_analyzed_document()?;
-        let text = output.output;
-        debug!(%text, "Extracted text");
-
         // Calculate estimated cost based on pages.
         let page_count = response
             .document_metadata()
             .and_then(|metadata| metadata.pages())
             .unwrap_or(0);
+
+        // Create our output state and get our text, fetching the rest of the
+        // result pages.
+        let mut output = OutputState::new(self.ocr_opts.include_page_breaks);
+        write_all_result_pages(&mut output, response, |next_token| async move {
+            retry_with_backoff(DEFAULT_JITTER, move || {
+                let next_token = next_token.clone();
+                async move {
+                    retry_result_ok(try_potentially_transient!(
+                        self.client
+                            .get_document_analysis()
+                            .job_id(job_id)
+                            .next_token(next_token)
+                            .send()
+                            .await
+                    ))
+                }
+            })
+            .await
+            .into_result()
+        })
+        .await?;
+        let text = output.output;
+        debug!(%text, "Extracted text");
         let estimated_cost = ESTIMATED_PAGE_COST * f64::from(page_count);
 
         Ok(WorkOutput {
@@ -379,6 +396,72 @@ impl IsKnownTransient for GetDocumentAnalysisError {
     }
 }
 
+/// Write the text of a finished Textract job, starting with `first_page` of its
+/// results and calling `fetch_page` with each `next_token` until there are no
+/// more result pages.
+///
+/// Each result page holds at most 1,000 blocks, and a long document can have
+/// hundreds of thousands, so we write each document page as soon as we have
+/// all of its blocks instead of keeping them all.
+///
+/// ASSUMPTION: Textract returns all of a document page's blocks before any
+/// blocks for the next page, and blocks only refer to blocks on their own page.
+/// Textract's documentation doesn't promise this, but it holds for real
+/// output, and AWS's own response parser (`amazon-textract-response-parser`)
+/// also relies on blocks being grouped by page. If the assumption ever fails,
+/// we fail this document with an error explaining why.
+async fn write_all_result_pages<F, Fut>(
+    output: &mut OutputState,
+    first_page: GetDocumentAnalysisOutput,
+    mut fetch_page: F,
+) -> Result<()>
+where
+    F: FnMut(String) -> Fut,
+    Fut: Future<Output = Result<GetDocumentAnalysisOutput>>,
+{
+    let mut page_blocks: Vec<Block> = vec![];
+    let mut result_page = first_page;
+    loop {
+        for block in result_page.blocks.unwrap_or_default() {
+            let current_page = page_blocks.last().and_then(|b| b.page);
+            if let (Some(current_page), Some(page)) = (current_page, block.page)
+                && page != current_page
+            {
+                if page < current_page {
+                    return Err(anyhow!(
+                        "Textract returned a block for page {} after blocks for page {}, \
+                         but textract-async needs each page's blocks together to write \
+                         text a page at a time",
+                        page,
+                        current_page
+                    ));
+                }
+                write_page(output, &page_blocks)?;
+                page_blocks.clear();
+            }
+            page_blocks.push(block);
+        }
+        let Some(next_token) = result_page.next_token else {
+            break;
+        };
+        result_page = fetch_page(next_token).await?;
+    }
+    write_page(output, &page_blocks)
+}
+
+/// Write the blocks of one document page, explaining the likely cause if a
+/// block refers to a block we don't have.
+fn write_page(output: &mut OutputState, page_blocks: &[Block]) -> Result<()> {
+    output.write_blocks(page_blocks).with_context(|| {
+        let page = page_blocks.first().and_then(|block| block.page);
+        format!(
+            "Failed to write Textract page {}. If a block refers to a block on \
+             another page, textract-async can't write text a page at a time",
+            page.map_or_else(|| "with no page number".to_owned(), |p| p.to_string())
+        )
+    })
+}
+
 /// Parse an S3 URI into bucket and key.
 fn parse_s3_uri(uri: &str) -> Result<(String, String)> {
     let uri = uri
@@ -397,7 +480,7 @@ fn parse_s3_uri(uri: &str) -> Result<(String, String)> {
 /// de-duplication, making sure we get all the relevant text, and get it only
 /// once.
 #[derive(Debug)]
-struct OutputState<'a> {
+struct OutputState {
     /// Should we include page breaks between pages?
     include_page_breaks: bool,
 
@@ -409,10 +492,10 @@ struct OutputState<'a> {
 
     /// Should we output debug information?
     debug: bool,
+}
 
-    /// Our document.
-    all_blocks: &'a [Block],
-
+/// The blocks passed to one [`OutputState::write_blocks`] call.
+struct BlockIndex<'a> {
     /// Blocks by ID. Used to look up child blocks and recurse over them.
     blocks_by_id: HashMap<&'a str, &'a Block>,
 
@@ -420,18 +503,9 @@ struct OutputState<'a> {
     printed_block_ids: HashSet<&'a str>,
 }
 
-impl<'a> OutputState<'a> {
+impl OutputState {
     /// Create a new output state.
-    fn new(all_blocks: &'a [Block], include_page_breaks: bool) -> Self {
-        // Build a table of blocks by ID.
-        let mut blocks_by_id = HashMap::new();
-        for block in all_blocks {
-            let Some(block_id) = block.id() else {
-                continue;
-            };
-            blocks_by_id.insert(block_id, block);
-        }
-
+    fn new(include_page_breaks: bool) -> Self {
         let debug = env::var("TEXTRACT_DEBUG").is_ok();
 
         Self {
@@ -439,9 +513,6 @@ impl<'a> OutputState<'a> {
             first_page: true,
             output: String::new(),
             debug,
-            all_blocks,
-            blocks_by_id,
-            printed_block_ids: HashSet::new(),
         }
     }
 
@@ -455,10 +526,24 @@ impl<'a> OutputState<'a> {
         self.output.push_str(text);
     }
 
-    /// Write an analyzed document.
-    fn write_analyzed_document<'d: 'a>(&mut self) -> Result<()> {
+    /// Write the text of some blocks of an analyzed document. Blocks may only
+    /// refer to other blocks in the same call, so a document may be written
+    /// all at once or a page at a time.
+    fn write_blocks(&mut self, blocks: &[Block]) -> Result<()> {
+        // Build a table of blocks by ID.
+        let mut index = BlockIndex {
+            blocks_by_id: HashMap::new(),
+            printed_block_ids: HashSet::new(),
+        };
+        for block in blocks {
+            let Some(block_id) = block.id() else {
+                continue;
+            };
+            index.blocks_by_id.insert(block_id, block);
+        }
+
         // Iterate over layout blocks and extract their child text.
-        for block in self.all_blocks {
+        for block in blocks {
             trace!(?block, "Textract block");
             let Some(block_type) = block.block_type() else {
                 continue;
@@ -487,7 +572,7 @@ impl<'a> OutputState<'a> {
 
             // Print the block.
             let bytes_written = self.bytes_written();
-            self.write_block(block, false)?;
+            self.write_block(&mut index, block, false)?;
             if self.bytes_written() > bytes_written {
                 // We wrote something, so add a newline.
                 self.write_text("\n");
@@ -497,10 +582,15 @@ impl<'a> OutputState<'a> {
     }
 
     /// Write a block recursively.
-    fn write_block(&mut self, block: &'a Block, printed_parent: bool) -> Result<()> {
+    fn write_block<'a>(
+        &mut self,
+        index: &mut BlockIndex<'a>,
+        block: &'a Block,
+        printed_parent: bool,
+    ) -> Result<()> {
         // Check to make sure we haven't already printed this block.
         if let Some(id) = block.id()
-            && !self.printed_block_ids.insert(id)
+            && !index.printed_block_ids.insert(id)
         {
             return Ok(());
         }
@@ -528,8 +618,8 @@ impl<'a> OutputState<'a> {
         for relationship in block.relationships() {
             if relationship.r#type() == Some(&RelationshipType::Child) {
                 for id in relationship.ids() {
-                    if let Some(child_block) = self.blocks_by_id.get(&id[..]) {
-                        self.write_block(child_block, printed_self)?;
+                    if let Some(child_block) = index.blocks_by_id.get(&id[..]) {
+                        self.write_block(index, child_block, printed_self)?;
                     } else {
                         return Err(anyhow!("Textract child block {} not found", id));
                     }
@@ -573,5 +663,208 @@ impl<'a> OutputState<'a> {
             }
             self.output.push('>');
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aws_sdk_textract::types::Relationship;
+
+    use super::*;
+
+    /// Build a block with an ID, a type, a page number, optional text and
+    /// optional children.
+    fn block(
+        id: &str,
+        block_type: BlockType,
+        page: Option<i32>,
+        text: Option<&str>,
+        child_ids: &[&str],
+    ) -> Block {
+        let mut builder = Block::builder()
+            .id(id)
+            .block_type(block_type)
+            .set_page(page)
+            .set_text(text.map(str::to_owned));
+        if !child_ids.is_empty() {
+            builder = builder.relationships(
+                Relationship::builder()
+                    .r#type(RelationshipType::Child)
+                    .set_ids(Some(child_ids.iter().map(|id| id.to_string()).collect()))
+                    .build(),
+            );
+        }
+        builder.build()
+    }
+
+    /// Build one result page of a finished job's `get_document_analysis`
+    /// output.
+    fn result_page(
+        blocks: Vec<Block>,
+        next_token: Option<&str>,
+    ) -> GetDocumentAnalysisOutput {
+        GetDocumentAnalysisOutput::builder()
+            .job_status(JobStatus::Succeeded)
+            .set_blocks(Some(blocks))
+            .set_next_token(next_token.map(str::to_owned))
+            .build()
+    }
+
+    /// Run [`write_all_result_pages`] over `first` and then `later` result
+    /// pages, checking that each `next_token` asks for the next one.
+    async fn write_result_pages(
+        first: GetDocumentAnalysisOutput,
+        later: Vec<(&str, GetDocumentAnalysisOutput)>,
+    ) -> Result<String> {
+        let mut later = later.into_iter();
+        let mut output = OutputState::new(true);
+        write_all_result_pages(&mut output, first, |token| {
+            let (expected_token, page) = later.next().expect("too many fetches");
+            assert_eq!(token, expected_token);
+            async move { Ok(page) }
+        })
+        .await?;
+        assert!(later.next().is_none(), "not every result page was fetched");
+        Ok(output.output)
+    }
+
+    /// A two-page document split over three result pages, in the order
+    /// Textract returns blocks: each page, then its lines, then its layout
+    /// blocks. The first page's layout block is on a later result page than
+    /// its line.
+    fn two_page_document() -> Vec<Block> {
+        vec![
+            block("p1", BlockType::Page, Some(1), None, &["l1", "lt1"]),
+            block("l1", BlockType::Line, Some(1), Some("first line"), &[]),
+            block("lt1", BlockType::LayoutText, Some(1), None, &["l1"]),
+            block("p2", BlockType::Page, Some(2), None, &["l2", "lt2"]),
+            block("l2", BlockType::Line, Some(2), Some("second line"), &[]),
+            block("lt2", BlockType::LayoutText, Some(2), None, &["l2"]),
+        ]
+    }
+
+    #[tokio::test]
+    async fn writes_every_result_page() {
+        let blocks = two_page_document();
+        let text = write_result_pages(
+            result_page(blocks[0..2].to_vec(), Some("token-2")),
+            vec![
+                (
+                    "token-2",
+                    result_page(blocks[2..4].to_vec(), Some("token-3")),
+                ),
+                ("token-3", result_page(blocks[4..].to_vec(), None)),
+            ],
+        )
+        .await
+        .unwrap();
+        assert_eq!(text, "first line\n\n\x0Csecond line\n\n");
+
+        // Writing a page at a time gives the same text as writing the whole
+        // document at once.
+        let mut whole = OutputState::new(true);
+        whole.write_blocks(&blocks).unwrap();
+        assert_eq!(text, whole.output);
+    }
+
+    #[tokio::test]
+    async fn first_result_page_alone_is_missing_text() {
+        let blocks = two_page_document();
+        let text = write_result_pages(result_page(blocks[0..2].to_vec(), None), vec![])
+            .await
+            .unwrap();
+        assert_eq!(text, "");
+    }
+
+    #[tokio::test]
+    async fn allows_result_pages_without_blocks() {
+        let first = GetDocumentAnalysisOutput::builder()
+            .job_status(JobStatus::Succeeded)
+            .next_token("token-2")
+            .build();
+        let text = write_result_pages(
+            first,
+            vec![("token-2", result_page(two_page_document(), None))],
+        )
+        .await
+        .unwrap();
+        assert_eq!(text, "first line\n\n\x0Csecond line\n\n");
+    }
+
+    #[tokio::test]
+    async fn writes_blocks_without_page_numbers_together() {
+        let text = write_result_pages(
+            result_page(
+                vec![block("l1", BlockType::Line, None, Some("a line"), &[])],
+                Some("token-2"),
+            ),
+            vec![(
+                "token-2",
+                result_page(
+                    vec![block("lt1", BlockType::LayoutText, None, None, &["l1"])],
+                    None,
+                ),
+            )],
+        )
+        .await
+        .unwrap();
+        assert_eq!(text, "a line\n\n");
+    }
+
+    #[tokio::test]
+    async fn fails_if_a_result_page_fails() {
+        let mut output = OutputState::new(true);
+        let err = write_all_result_pages(
+            &mut output,
+            result_page(two_page_document(), Some("token-2")),
+            |_| async { Err(anyhow!("simulated fetch failure")) },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.to_string(), "simulated fetch failure");
+    }
+
+    #[tokio::test]
+    async fn fails_on_pages_out_of_order() {
+        let err = write_result_pages(
+            result_page(
+                vec![
+                    block("p2", BlockType::Page, Some(2), None, &[]),
+                    block("p1", BlockType::Page, Some(1), None, &[]),
+                ],
+                None,
+            ),
+            vec![],
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Textract returned a block for page 1 after blocks for page 2, but \
+             textract-async needs each page's blocks together to write text a page \
+             at a time"
+        );
+    }
+
+    #[tokio::test]
+    async fn fails_on_children_from_another_page() {
+        let err = write_result_pages(
+            result_page(
+                vec![
+                    block("l1", BlockType::Line, Some(1), Some("a line"), &[]),
+                    block("lt2", BlockType::LayoutText, Some(2), None, &["l1"]),
+                ],
+                None,
+            ),
+            vec![],
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            format!("{err:#}"),
+            "Failed to write Textract page 2. If a block refers to a block on another \
+             page, textract-async can't write text a page at a time: Textract child \
+             block l1 not found"
+        );
     }
 }
