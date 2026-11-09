@@ -48,6 +48,9 @@
       "format": "uint",
       "minimum": 0.0
     },
+    "passthrough_data": {
+      "description": "Passthrough data from input"
+    },
     "path": {
       "description": "The input path.",
       "type": "string"
@@ -151,10 +154,24 @@
       "description": "Token usage.",
       "type": "object",
       "required": [
+        "cache_read_prompt_tokens",
+        "cache_write_prompt_tokens",
         "completion_tokens",
         "prompt_tokens"
       ],
       "properties": {
+        "cache_read_prompt_tokens": {
+          "description": "How many of the prompt tokens were read from a prompt cache?",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "cache_write_prompt_tokens": {
+          "description": "How many of the prompt tokens were written to a prompt cache?",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
         "completion_tokens": {
           "description": "How many tokens were used in the response?",
           "type": "integer",
@@ -162,7 +179,7 @@
           "minimum": 0.0
         },
         "prompt_tokens": {
-          "description": "How many tokens were used in the prompt?",
+          "description": "How many tokens were used in the prompt? Includes any tokens read from or written to a prompt cache.",
           "type": "integer",
           "format": "uint64",
           "minimum": 0.0
@@ -174,6 +191,7 @@
       "type": "string",
       "enum": [
         "ok",
+        "skipped",
         "incomplete",
         "failed"
       ]

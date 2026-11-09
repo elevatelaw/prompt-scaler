@@ -68,11 +68,10 @@ pub struct ModelCost {
     /// Cost of input tokens in USD. May be 0 for local models.
     pub input_cost_per_token: f64,
     /// Cost of cached input tokens in USD, if the provider supports it.
-    #[expect(
-        dead_code,
-        reason = "populated from CSV, will be used for cached-token-aware cost estimation"
-    )]
     pub input_cost_per_cached_token: Option<f64>,
+    /// Cost of input tokens written to a prompt cache in USD, if the provider
+    /// charges differently for them.
+    pub input_cost_per_cache_write_token: Option<f64>,
     /// Cost of output tokens in USD. May be 0 for local models.
     pub output_cost_per_token: f64,
 }
@@ -84,6 +83,7 @@ struct ModelCostRecord {
     model: String,
     input_cost_per_token: f64,
     input_cost_per_cached_token: Option<f64>,
+    input_cost_per_cache_write_token: Option<f64>,
     output_cost_per_token: f64,
     /// Not used at runtime — documentation only.
     #[allow(dead_code)]
@@ -127,6 +127,7 @@ fn parse_model_costs_csv(csv_data: &str) -> Result<BTreeMap<ModelKey, ModelCost>
             ModelCost {
                 input_cost_per_token: record.input_cost_per_token,
                 input_cost_per_cached_token: record.input_cost_per_cached_token,
+                input_cost_per_cache_write_token: record.input_cost_per_cache_write_token,
                 output_cost_per_token: record.output_cost_per_token,
             },
         );
@@ -136,7 +137,7 @@ fn parse_model_costs_csv(csv_data: &str) -> Result<BTreeMap<ModelKey, ModelCost>
 
 #[cfg(test)]
 mod tests {
-    use crate::drivers::llm::LlmDriverType;
+    use crate::drivers::{TokenUsage, llm::LlmDriverType};
 
     use super::*;
 
@@ -170,6 +171,67 @@ mod tests {
             "unexpected output cost: {}",
             cost.output_cost_per_token
         );
+    }
+
+    #[test]
+    fn bedrock_profiles_have_regional_prices() {
+        let db = default_db();
+        for model in [
+            "anthropic.claude-haiku-5-5",
+            "us.anthropic.claude-haiku-5-5",
+            "au.anthropic.claude-haiku-5-5",
+        ] {
+            let cost = db
+                .lookup(DriverType::Llm(LlmDriverType::Bedrock), model)
+                .unwrap_or_else(|| panic!("{model} should be in database"));
+            assert!((cost.input_cost_per_token - 0.00000011).abs() < 1e-15);
+            assert!((cost.output_cost_per_token - 0.00000055).abs() < 1e-15);
+        }
+    }
+
+    #[test]
+    fn cache_reads_and_writes_use_cache_prices() {
+        let db = default_db();
+        let cost = db
+            .lookup(
+                DriverType::Llm(LlmDriverType::Bedrock),
+                "us.anthropic.claude-haiku-5-5",
+            )
+            .expect("model should be in database");
+        let usage = TokenUsage {
+            prompt_tokens: 3_000_000,
+            cache_read_prompt_tokens: 1_000_000,
+            cache_write_prompt_tokens: 1_000_000,
+            completion_tokens: 1_000_000,
+        };
+        // $0.11 uncached + $0.011 cache read + $0.1375 cache write + $0.55 output.
+        let estimate = usage
+            .estimate_cost(Some(cost))
+            .expect("priced model should have an estimate");
+        assert!(
+            (estimate - 0.8085).abs() < 1e-9,
+            "unexpected cost: {estimate}"
+        );
+    }
+
+    #[test]
+    fn cache_tokens_fall_back_to_input_price() {
+        let cost = ModelCost {
+            input_cost_per_token: 0.000001,
+            input_cost_per_cached_token: None,
+            input_cost_per_cache_write_token: None,
+            output_cost_per_token: 0.0,
+        };
+        let usage = TokenUsage {
+            prompt_tokens: 3_000_000,
+            cache_read_prompt_tokens: 1_000_000,
+            cache_write_prompt_tokens: 1_000_000,
+            completion_tokens: 0,
+        };
+        let estimate = usage
+            .estimate_cost(Some(&cost))
+            .expect("priced model should have an estimate");
+        assert!((estimate - 3.0).abs() < 1e-9, "unexpected cost: {estimate}");
     }
 
     #[test]

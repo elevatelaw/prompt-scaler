@@ -11,6 +11,10 @@
     "id": {
       "description": "The unique ID of the work item."
     },
+    "passthrough_data": {
+      "description": "Arbitrary data to pass through to output",
+      "default": null
+    },
     "password": {
       "description": "The password to decrypt the PDF file, if any.",
       "default": null,
@@ -22,6 +26,14 @@
     "path": {
       "description": "The path to the PDF file.",
       "type": "string"
+    },
+    "skip_processing": {
+      "description": "Skip LLM processing and return status: \"skipped\"",
+      "default": null,
+      "type": [
+        "boolean",
+        "null"
+      ]
     }
   }
 }

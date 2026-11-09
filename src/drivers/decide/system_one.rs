@@ -128,6 +128,7 @@ impl DecideDriver for SystemOneDriver {
             TokenUsage {
                 prompt_tokens: usage.input_tokens,
                 completion_tokens,
+                ..TokenUsage::default()
             }
         });
 
