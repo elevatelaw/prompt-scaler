@@ -10,7 +10,7 @@ use super::work::{WorkInput, WorkOutput, WorkQueue, WorkResponse, WorkStatus};
 use crate::{
     async_utils::{BoxedFuture, BoxedStream, JoinWorker, io::JsonObject},
     drivers::{
-        DriverRetryResult, DriverType, TokenUsage,
+        DriverError, DriverErrorKind, DriverRetryResult, DriverType, TokenUsage,
         llm::{ChatCompletionResponse, LlmDriver, LlmOpts},
     },
     mem_limit::MemLimiter,
@@ -18,10 +18,32 @@ use crate::{
     prompts::{Rendered, chat::ChatPrompt},
     queues::processor_state::CommonProcessorState,
     retry::{
-        retry_result_ok, retry_with_backoff, try_potentially_transient, try_transient,
+        retry_result_fatal, retry_result_ok, retry_with_backoff, try_fatal,
+        try_potentially_transient, try_transient,
     },
-    timeouts::WithTimeout,
+    timeouts::{TimeoutError, WithTimeout},
 };
+
+/// Whether a chat queue retries a request whose generation was unusable: the
+/// model produced output that doesn't parse or match the schema, or ran past
+/// the timeout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BadGenerationRetries {
+    /// Retry with backoff. Right for models sampled with a temperature, where
+    /// another attempt usually produces different output.
+    Retry,
+    /// Fail at once, so the caller can fall back to something else. Right for
+    /// models decoded greedily, where a retry repeats the same output.
+    FailFast,
+}
+
+/// Was this error caused by what the model generated, rather than by the API?
+fn is_bad_generation(error: &TimeoutError<DriverError>) -> bool {
+    match error {
+        TimeoutError::Timeout => true,
+        TimeoutError::Native(err) => matches!(err.kind, DriverErrorKind::InvalidOutput),
+    }
+}
 
 /// A chat input record.
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -76,9 +98,15 @@ pub async fn process_chat_stream(
     mem_limiter: MemLimiter,
 ) -> Result<ChatStreamInfo> {
     // Create our work queue.
-    let (queue, worker) =
-        create_chat_work_queue(concurrency_limit, prompt, model, llm_opts, mem_limiter)
-            .await?;
+    let (queue, worker) = create_chat_work_queue(
+        concurrency_limit,
+        prompt,
+        model,
+        llm_opts,
+        mem_limiter,
+        BadGenerationRetries::Retry,
+    )
+    .await?;
     let handle = queue.handle();
     Ok(ChatStreamInfo {
         stream: handle.process_stream(input).await,
@@ -93,6 +121,7 @@ pub async fn create_chat_work_queue(
     model: String,
     llm_opts: LlmOpts,
     mem_limiter: MemLimiter,
+    bad_generation_retries: BadGenerationRetries,
 ) -> Result<(WorkQueue<ChatInput, ChatOutput>, JoinWorker)> {
     // Create our LLM client.
     let driver = llm_opts.driver.create_driver().await?;
@@ -125,6 +154,7 @@ pub async fn create_chat_work_queue(
         schema,
         validator,
         llm_opts,
+        bad_generation_retries,
     });
 
     // Define worker function.
@@ -160,6 +190,9 @@ struct ChatProcessorState {
 
     /// The LLM options to use.
     llm_opts: LlmOpts,
+
+    /// Whether to retry unusable generations.
+    bad_generation_retries: BadGenerationRetries,
 }
 
 /// Process a single JSON Object.
@@ -230,35 +263,57 @@ async fn run_chat_inner(
     state.common.wait_on_rate_limiter().await;
 
     // Call LLM.
-    let completion_response = try_potentially_transient!(
-        state
-            .driver
-            .chat_completion(
-                &state.model,
-                &prompt,
-                state.schema.clone(),
-                &state.llm_opts,
-                &state.common.mem_limiter,
-            )
-            .with_timeout(state.llm_opts.llm_timeout_duration())
-            .await
-    );
+    let result = state
+        .driver
+        .chat_completion(
+            &state.model,
+            &prompt,
+            state.schema.clone(),
+            &state.llm_opts,
+            &state.common.mem_limiter,
+        )
+        .with_timeout(state.llm_opts.llm_timeout_duration())
+        .await;
+    let result = match result {
+        Err(err)
+            if state.bad_generation_retries == BadGenerationRetries::FailFast
+                && is_bad_generation(&err) =>
+        {
+            return retry_result_fatal(err.into());
+        }
+        result => result,
+    };
+    let completion_response = try_potentially_transient!(result);
 
     // Validate the result using JSON Schema. Schema validation failure is
     // treated as a transient retry failure, because it may be caused by a dodgy
-    // implementation of `response_format` by a specific LLM endpoint.
-    try_transient!(
-        // Invalid JSON means the model didn't follow the schema. Let it try
-        // again using `try_transient!`.
-        state
-            .validator
-            .validate(&completion_response.response)
-            .map_err(|err| err.to_owned())
-            .with_context(|| format!(
-                "Failed to validate {}:",
-                completion_response.response
-            ))
-    );
+    // implementation of `response_format` by a specific LLM endpoint, unless
+    // the caller asked us to fail fast.
+    let validation = state
+        .validator
+        .validate(&completion_response.response)
+        .map_err(|err| err.to_owned())
+        .with_context(|| format!("Failed to validate {}:", completion_response.response));
+    match state.bad_generation_retries {
+        BadGenerationRetries::Retry => try_transient!(validation),
+        BadGenerationRetries::FailFast => try_fatal!(validation),
+    }
 
     retry_result_ok(completion_response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bad_generations_are_timeouts_and_invalid_output() {
+        assert!(is_bad_generation(&TimeoutError::Timeout));
+        assert!(is_bad_generation(&TimeoutError::Native(
+            DriverError::invalid_output_transient(anyhow!("EOF while parsing"))
+        )));
+        assert!(!is_bad_generation(&TimeoutError::Native(
+            DriverError::invalid_input(anyhow!("bad prompt"))
+        )));
+    }
 }

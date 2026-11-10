@@ -38,7 +38,7 @@ use crate::{
     prelude::*,
     prompts::chat::ChatPrompt,
     queues::{
-        chat::{ChatInput, ChatOutput, create_chat_work_queue},
+        chat::{BadGenerationRetries, ChatInput, ChatOutput, create_chat_work_queue},
         work::{WorkInput, WorkItemProcessor as _, WorkQueue},
     },
     retry::{
@@ -60,6 +60,16 @@ const PLAIN_OCR_PROMPT: &str = include_str!("ovis/plain_ocr.txt");
 /// contain much text, and a lower limit keeps repetition loops cheap.
 const FIGURE_MAX_COMPLETION_TOKENS: u32 = 4096;
 
+/// Maximum completion tokens for the structured pass over a page. Dense pages
+/// need about 1,000 to 2,500, so a response that reaches this is almost always
+/// a repetition loop, and is cut short before it eats the page's timeout.
+const STRUCTURED_MAX_COMPLETION_TOKENS: u32 = 4096;
+
+/// Maximum completion tokens for plain OCR of a whole page, used when the
+/// structured pass fails. Plain text needs fewer tokens than the same page as
+/// JSON blocks.
+const PAGE_FALLBACK_MAX_COMPLETION_TOKENS: u32 = 4096;
+
 /// Skip crops narrower or shorter than this many pixels.
 const MIN_CROP_PIXELS: u32 = 8;
 
@@ -70,8 +80,11 @@ const MIN_CROP_PIXELS: u32 = 8;
 const MIN_CROP_AREA: u64 = 32 * 32;
 
 /// Does `model` look like an OvisOCR model?
+///
+/// Case-insensitive, because servers pick their own model names: vLLM serves
+/// whatever `--served-model-name` says, often in lowercase.
 pub fn is_ovis_model(model: &str) -> bool {
-    model.contains("OvisOCR")
+    model.to_ascii_lowercase().contains("ovisocr")
 }
 
 /// The category of a block, as defined by OvisOCR3's structured prompt.
@@ -311,12 +324,24 @@ impl OvisOcrPageEngine {
             .map(|ml| ml.to_mem_limiter(Some(MEM_PERMIT_DEADLOCK_TIMEOUT)))
             .unwrap_or_else(MemLimiter::unlimited);
 
+        // OvisOCR3 decodes greedily, so a structured pass that loops loops
+        // again on every retry. Cap its length and fail fast instead, and let
+        // `ocr_page` fall back to plain OCR for that page.
+        let mut structured_opts = ocr_opts.llm_opts.clone();
+        structured_opts.max_completion_tokens = Some(
+            structured_opts
+                .max_completion_tokens
+                .map_or(STRUCTURED_MAX_COMPLETION_TOKENS, |max| {
+                    max.min(STRUCTURED_MAX_COMPLETION_TOKENS)
+                }),
+        );
         let (chat_queue, worker) = create_chat_work_queue(
             concurrency_limit,
             prompt,
             ocr_opts.model.clone(),
-            ocr_opts.llm_opts.clone(),
+            structured_opts,
             mem_limiter,
+            BadGenerationRetries::FailFast,
         )
         .await?;
 
@@ -379,7 +404,10 @@ impl OvisOcrPageEngine {
             // To support an `--ocr-image-output=data_url` mode, we could keep
             // `png` here and output it as a `data:image/png;base64,...` URL,
             // instead of (or as well as) the OCRed text.
-            match self.plain_ocr(&png).await {
+            match self
+                .plain_ocr("image/png", &png, FIGURE_MAX_COMPLETION_TOKENS)
+                .await
+            {
                 Ok((text, usage)) => {
                     blocks[idx].figure_text = Some(text);
                     if let Some(usage) = usage {
@@ -394,16 +422,22 @@ impl OvisOcrPageEngine {
         }
     }
 
-    /// Run OvisOCR3's plain OCR prompt on a PNG image.
-    #[instrument(level = "debug", skip_all)]
-    async fn plain_ocr(&self, png: &[u8]) -> Result<(String, Option<TokenUsage>)> {
+    /// Run OvisOCR3's plain OCR prompt on an image, generating at most
+    /// `max_completion_tokens` (or the user's lower limit).
+    #[instrument(level = "debug", skip_all, fields(mime_type))]
+    async fn plain_ocr(
+        &self,
+        mime_type: &str,
+        image: &[u8],
+        max_completion_tokens: u32,
+    ) -> Result<(String, Option<TokenUsage>)> {
         let req = ChatRequest {
             messages: vec![ChatMessage {
                 role: ChatRole::User,
                 content: MessageContent::from_parts(vec![
                     ContentPart::from_binary_base64(
-                        "image/png".to_owned(),
-                        Arc::from(BASE64_STANDARD.encode(png)),
+                        mime_type.to_owned(),
+                        Arc::from(BASE64_STANDARD.encode(image)),
                         None,
                     ),
                     ContentPart::Text(PLAIN_OCR_PROMPT.to_owned()),
@@ -418,9 +452,7 @@ impl OvisOcrPageEngine {
             max_tokens: Some(
                 llm_opts
                     .max_completion_tokens
-                    .map_or(FIGURE_MAX_COMPLETION_TOKENS, |max| {
-                        max.min(FIGURE_MAX_COMPLETION_TOKENS)
-                    }),
+                    .map_or(max_completion_tokens, |max| max.min(max_completion_tokens)),
             ),
             top_p: llm_opts.top_p.map(f64::from),
             ..ChatOptions::default()
@@ -456,6 +488,22 @@ impl OvisOcrPageEngine {
             None
         };
         Ok((text, token_usage))
+    }
+
+    /// Run plain OCR on a whole page image.
+    async fn plain_ocr_page(
+        &self,
+        image: &ImageFile,
+    ) -> Result<(String, Option<TokenUsage>)> {
+        let data = tokio::fs::read(&image.path).await.with_context(|| {
+            format!("failed to read page image {}", image.path.display())
+        })?;
+        self.plain_ocr(
+            image.mime_type(),
+            &data,
+            PAGE_FALLBACK_MAX_COMPLETION_TOKENS,
+        )
+        .await
     }
 }
 
@@ -498,14 +546,26 @@ impl OcrPageEngine for OvisOcrPageEngine {
                 .await;
                 Some(blocks_to_text(&blocks))
             }
-            // TODO: Fall back to something else here. We decode greedily, so
-            // when the structured pass loops until it runs out of tokens, the
-            // chat queue's retries just repeat the same loop. Other LLM engines
-            // usually escape a loop by retrying, so this costs us extra. We
-            // could retry with different sampler settings, or call the plain
-            // OCR or Markdown prompts directly, sharing code with
-            // `plain_ocr` and `clean_truncated_repeats`.
-            None => None,
+            // The structured pass failed, usually because it looped until it
+            // hit its token limit. The queue does not retry that, because we
+            // decode greedily and a retry repeats the loop. Read the page with
+            // the plain OCR prompt instead, which trims any repeated tail.
+            None => match self.plain_ocr_page(&input.image).await {
+                Ok((text, usage)) => {
+                    errors.push(
+                        "structured OCR failed, so this page was read with plain OCR"
+                            .to_owned(),
+                    );
+                    if let Some(usage) = usage {
+                        *token_usage.get_or_insert_default() += usage;
+                    }
+                    Some(text)
+                }
+                Err(err) => {
+                    errors.push(format!("plain OCR fallback failed: {err:#}"));
+                    None
+                }
+            },
         };
 
         Ok(OcrPageOutput {
@@ -522,6 +582,13 @@ impl OcrPageEngine for OvisOcrPageEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_is_ovis_model_ignores_case() {
+        assert!(is_ovis_model("ATH-MaaS/OvisOCR3"));
+        assert!(is_ovis_model("ovisocr3"));
+        assert!(!is_ovis_model("us.anthropic.claude-haiku-5-5"));
+    }
 
     #[test]
     fn test_prompt_parses() {
@@ -596,6 +663,25 @@ mod tests {
         let crops = crop_regions(&image, &[[0, 0, 500, 1000], [0, 0, 1, 1]]).unwrap();
         assert!(crops[0].is_some());
         assert!(crops[1].is_none());
+    }
+
+    #[test]
+    fn test_crop_regions_decodes_every_supported_page_type() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, format) in [
+            ("page.gif", ImageFormat::Gif),
+            ("page.png", ImageFormat::Png),
+            ("page.webp", ImageFormat::WebP),
+        ] {
+            let path = dir.path().join(name);
+            image::RgbaImage::new(100, 50)
+                .save_with_format(&path, format)
+                .unwrap();
+            let image = ImageFile::from_path(&path).unwrap();
+            let crops = crop_regions(&image, &[[0, 0, 500, 1000]])
+                .unwrap_or_else(|err| panic!("could not crop {name}: {err:#}"));
+            assert!(crops[0].is_some(), "no crop from {name}");
+        }
     }
 
     #[test]

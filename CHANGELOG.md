@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- ocr: An OvisOCR3 engine, chosen for any `--model` containing `ovisocr` (any case) and served through an OpenAI-compatible endpoint (`OPENAI_API_BASE`) such as vLLM or llama-server. It uses the model's own trained prompts instead of the generic OCR prompt: the structured-parsing prompt, constrained to the model's block format, plus the plain-OCR prompt for text inside charts and images. With the generic prompt, OvisOCR3 often copied the prompt's worked example instead of reading the page.
+- ocr: When OvisOCR3's structured pass loops or produces output that won't parse, the page is read again with the plain-OCR prompt, with repeated tails trimmed, instead of failing. The page notes the fallback in its errors. OvisOCR3 can crop figures out of PNG, JPEG, WebP and GIF pages.
+
+### Fixed
+
+- `--rasterize`: A PDF no longer fails to split when `pdftocairo` prints `Fontconfig error: No writable cache directories`. This happens whenever `$HOME` is read-only, as in a container running as an arbitrary uid; the pages still render.
+
 ## [0.4.3] - 2026-10-29
 
 ### Fixed
