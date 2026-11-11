@@ -31,8 +31,15 @@ const TIFF_MIME_TYPE: &str = "image/tiff";
 static ERROR_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)error").expect("failed to compile regex"));
 
+/// Error lines that do not mean the command failed.
+///
+/// - `xref num`: poppler reconstructs the cross-reference table and carries on.
+/// - `Fontconfig error`: fontconfig could not write its font cache, usually
+///   because `$HOME` is read-only, as in a container running as an arbitrary
+///   uid. Fonts still load; only the cache is skipped.
 static DOWNGRADE_TO_WARNING_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)error: xref num").expect("failed to compile regex")
+    Regex::new(r"(?i)error: xref num|^fontconfig error:")
+        .expect("failed to compile regex")
 });
 
 /// Does this line contain an error?
@@ -453,6 +460,12 @@ mod tests {
         assert!(!is_error_line("Warning: something is odd"));
         assert!(!is_error_line(
             "Internal Error: xref num 1234 not found but needed, document has changes, reconstruct aborted"
+        ));
+        assert!(!is_error_line(
+            "Fontconfig error: No writable cache directories"
+        ));
+        assert!(is_error_line(
+            "Syntax Error: Couldn't find trailer dictionary"
         ));
     }
 

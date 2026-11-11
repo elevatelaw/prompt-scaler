@@ -13,7 +13,7 @@ use crate::{
     prelude::*,
     prompts::chat::ChatPrompt,
     queues::{
-        chat::{ChatInput, ChatOutput, create_chat_work_queue},
+        chat::{BadGenerationRetries, ChatInput, ChatOutput, create_chat_work_queue},
         ocr::OcrAnalysis,
         work::{WorkInput, WorkItemProcessor as _, WorkQueue},
     },
@@ -75,6 +75,7 @@ impl LlmOcrPageEngine {
             ocr_opts.model.clone(),
             ocr_opts.llm_opts.clone(),
             mem_limiter,
+            BadGenerationRetries::Retry,
         )
         .await?;
 
