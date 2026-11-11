@@ -65,11 +65,6 @@ const FIGURE_MAX_COMPLETION_TOKENS: u32 = 4096;
 /// a repetition loop, and is cut short before it eats the page's timeout.
 const STRUCTURED_MAX_COMPLETION_TOKENS: u32 = 4096;
 
-/// Maximum completion tokens for plain OCR of a whole page, used when the
-/// structured pass fails. Plain text needs fewer tokens than the same page as
-/// JSON blocks.
-const PAGE_FALLBACK_MAX_COMPLETION_TOKENS: u32 = 4096;
-
 /// Skip crops narrower or shorter than this many pixels.
 const MIN_CROP_PIXELS: u32 = 8;
 
@@ -325,8 +320,8 @@ impl OvisOcrPageEngine {
             .unwrap_or_else(MemLimiter::unlimited);
 
         // OvisOCR3 decodes greedily, so a structured pass that loops loops
-        // again on every retry. Cap its length and fail fast instead, and let
-        // `ocr_page` fall back to plain OCR for that page.
+        // again on every retry. Cap its length and fail fast instead, so the
+        // page fails in one attempt rather than retrying until it times out.
         let mut structured_opts = ocr_opts.llm_opts.clone();
         structured_opts.max_completion_tokens = Some(
             structured_opts
@@ -404,10 +399,7 @@ impl OvisOcrPageEngine {
             // To support an `--ocr-image-output=data_url` mode, we could keep
             // `png` here and output it as a `data:image/png;base64,...` URL,
             // instead of (or as well as) the OCRed text.
-            match self
-                .plain_ocr("image/png", &png, FIGURE_MAX_COMPLETION_TOKENS)
-                .await
-            {
+            match self.plain_ocr(&png).await {
                 Ok((text, usage)) => {
                     blocks[idx].figure_text = Some(text);
                     if let Some(usage) = usage {
@@ -422,22 +414,16 @@ impl OvisOcrPageEngine {
         }
     }
 
-    /// Run OvisOCR3's plain OCR prompt on an image, generating at most
-    /// `max_completion_tokens` (or the user's lower limit).
-    #[instrument(level = "debug", skip_all, fields(mime_type))]
-    async fn plain_ocr(
-        &self,
-        mime_type: &str,
-        image: &[u8],
-        max_completion_tokens: u32,
-    ) -> Result<(String, Option<TokenUsage>)> {
+    /// Run OvisOCR3's plain OCR prompt on a PNG image.
+    #[instrument(level = "debug", skip_all)]
+    async fn plain_ocr(&self, png: &[u8]) -> Result<(String, Option<TokenUsage>)> {
         let req = ChatRequest {
             messages: vec![ChatMessage {
                 role: ChatRole::User,
                 content: MessageContent::from_parts(vec![
                     ContentPart::from_binary_base64(
-                        mime_type.to_owned(),
-                        Arc::from(BASE64_STANDARD.encode(image)),
+                        "image/png".to_owned(),
+                        Arc::from(BASE64_STANDARD.encode(png)),
                         None,
                     ),
                     ContentPart::Text(PLAIN_OCR_PROMPT.to_owned()),
@@ -452,7 +438,9 @@ impl OvisOcrPageEngine {
             max_tokens: Some(
                 llm_opts
                     .max_completion_tokens
-                    .map_or(max_completion_tokens, |max| max.min(max_completion_tokens)),
+                    .map_or(FIGURE_MAX_COMPLETION_TOKENS, |max| {
+                        max.min(FIGURE_MAX_COMPLETION_TOKENS)
+                    }),
             ),
             top_p: llm_opts.top_p.map(f64::from),
             ..ChatOptions::default()
@@ -488,22 +476,6 @@ impl OvisOcrPageEngine {
             None
         };
         Ok((text, token_usage))
-    }
-
-    /// Run plain OCR on a whole page image.
-    async fn plain_ocr_page(
-        &self,
-        image: &ImageFile,
-    ) -> Result<(String, Option<TokenUsage>)> {
-        let data = tokio::fs::read(&image.path).await.with_context(|| {
-            format!("failed to read page image {}", image.path.display())
-        })?;
-        self.plain_ocr(
-            image.mime_type(),
-            &data,
-            PAGE_FALLBACK_MAX_COMPLETION_TOKENS,
-        )
-        .await
     }
 }
 
@@ -547,25 +519,16 @@ impl OcrPageEngine for OvisOcrPageEngine {
                 Some(blocks_to_text(&blocks))
             }
             // The structured pass failed, usually because it looped until it
-            // hit its token limit. The queue does not retry that, because we
-            // decode greedily and a retry repeats the loop. Read the page with
-            // the plain OCR prompt instead, which trims any repeated tail.
-            None => match self.plain_ocr_page(&input.image).await {
-                Ok((text, usage)) => {
-                    errors.push(
-                        "structured OCR failed, so this page was read with plain OCR"
-                            .to_owned(),
-                    );
-                    if let Some(usage) = usage {
-                        *token_usage.get_or_insert_default() += usage;
-                    }
-                    Some(text)
-                }
-                Err(err) => {
-                    errors.push(format!("plain OCR fallback failed: {err:#}"));
-                    None
-                }
-            },
+            // hit its token limit. The page fails, with the queue's errors
+            // plus this note, rather than being retried into the same loop.
+            None => {
+                errors.push(format!(
+                    "OvisOCR3 produced no usable output for this page, usually because \
+                     it repeated itself until it reached its {STRUCTURED_MAX_COMPLETION_TOKENS}-token \
+                     limit; the page was not OCRed"
+                ));
+                None
+            }
         };
 
         Ok(OcrPageOutput {

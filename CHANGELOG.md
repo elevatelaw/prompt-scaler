@@ -9,7 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - ocr: An OvisOCR3 engine, chosen for any `--model` containing `ovisocr` (any case) and served through an OpenAI-compatible endpoint (`OPENAI_API_BASE`) such as vLLM or llama-server. It uses the model's own trained prompts instead of the generic OCR prompt: the structured-parsing prompt, constrained to the model's block format, plus the plain-OCR prompt for text inside charts and images. With the generic prompt, OvisOCR3 often copied the prompt's worked example instead of reading the page.
-- ocr: When OvisOCR3's structured pass loops or produces output that won't parse, the page is read again with the plain-OCR prompt, with repeated tails trimmed, instead of failing. The page notes the fallback in its errors. OvisOCR3 can crop figures out of PNG, JPEG, WebP and GIF pages.
+- ocr: When OvisOCR3's structured pass loops or produces output that won't parse, the page fails at once, with an error saying so, instead of being retried into the same loop until it times out. The structured pass is capped at 4,096 tokens so a loop ends quickly. OvisOCR3 can crop figures out of PNG, JPEG, WebP and GIF pages.
 
 ### Fixed
 
